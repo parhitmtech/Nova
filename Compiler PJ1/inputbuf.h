@@ -1,8 +1,4 @@
-/*
- * Copyright (C) Rida Bazzi
- *
- * Do not share this file with anyone
- */
+
 #ifndef __INPUT_BUFFER__H__
 #define __INPUT_BUFFER__H__
 
