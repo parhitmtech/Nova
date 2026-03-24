@@ -1,0 +1,12 @@
+﻿VAR i , x , result ;
+{
+  input x ;
+  i = 0 ;
+  result = 0 ;
+  WHILE i < 100 {
+    result = result + x * ( 3 * 4 + 2 * 5 - 10 / 2 ) ;
+    i = i + 1 ;
+  }
+  println result ;
+}
+3

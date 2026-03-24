@@ -14,16 +14,24 @@
 
 using namespace std;
 
+// must match TokenType enum order exactly
 string reserved[] = { "END_OF_FILE",
-    "VAR", "FOR", "IF", "WHILE", "SWITCH", "CASE", "DEFAULT", "INPUT", "OUTPUT", "ARRAY",
+    "FOR", "IF", "ELIF", "WHILE", "SWITCH", "CASE", "DEFAULT",
+    "INPUT", "ARRAY", "PRINT",
+    "DEF", "RETURN", "ELSE",
+    "AND", "OR", "NOT",
     "PLUS", "MINUS", "DIV", "MULT",
     "EQUAL", "COLON", "COMMA", "SEMICOLON",
     "LBRAC", "RBRAC", "LPAREN", "RPAREN", "LBRACE", "RBRACE",
     "NOTEQUAL", "GREATER", "LESS",
-    "NUM", "ID", "ERROR"
+    "NUM", "ID", "STRING", "ERROR"
 };
 
-#define KEYWORDS_COUNT 9
+// must match the number of keywords in TokenType enum
+// FOR, IF, ELIF, WHILE, SWITCH, CASE, DEFAULT,
+// INPUT, ARRAY, PRINT,
+// DEF, RETURN, ELSE, AND, OR, NOT
+#define KEYWORDS_COUNT 16
 
 void Token::Print()
 {
@@ -38,16 +46,67 @@ LexicalAnalyzer::LexicalAnalyzer()
     tmp.lexeme = "";
     tmp.line_no = 1;
     tmp.token_type = ERROR;
+    index = 0;
+    initialized = false;
+}
+
+void LexicalAnalyzer::Initialize()
+{
+    if (initialized) return;
+    initialized = true;
 
     Token token = GetTokenMain();
-    index = 0;
-
     while (token.token_type != END_OF_FILE)
     {
-        tokenList.push_back(token);     // push token into internal list
-        token = GetTokenMain();        // and get next token from standatd input
+        tokenList.push_back(token);
+        token = GetTokenMain();
     }
-    // pushes END_OF_FILE is not pushed on the token list
+}
+
+void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
+{
+    if (initialized) return;
+
+    // load file into InputBuffer directly — stdin stays untouched
+    if (!input.InitFromFile(filename))
+    {
+        cerr << "Error: could not open file '" << filename << "'\n";
+        exit(1);
+    }
+
+    initialized = true;
+
+    Token token = GetTokenMain();
+    while (token.token_type != END_OF_FILE)
+    {
+        tokenList.push_back(token);
+        token = GetTokenMain();
+    }
+}
+
+void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
+{
+    // reset all the states
+    tokenList.clear();
+    index = 0;
+    line_no = 1;
+    initialized = false;
+
+    tmp.lexeme = "";
+    tmp.line_no = 1;
+    tmp.token_type = ERROR;
+
+    // load string into input buffer
+    input.InitFromString(s);
+
+    //tokenize
+    initialized = true;
+    Token token = GetTokenMain();
+    while (token.token_type != END_OF_FILE)
+    {
+        tokenList.push_back(token);
+        token = GetTokenMain();
+    }
 }
 
 bool LexicalAnalyzer::SkipSpace()
@@ -64,7 +123,7 @@ bool LexicalAnalyzer::SkipSpace()
         line_no += (c == '\n');
     }
 
-    if (!input.EndOfInput()) {
+    if (c != '\0' && !isspace(c)) {
         input.UngetChar(c);
     }
     return space_encountered;
@@ -72,10 +131,18 @@ bool LexicalAnalyzer::SkipSpace()
 
 int LexicalAnalyzer::FindKeywordIndex(string s)
 {
-    string keyword[] = { "VAR", "FOR", "IF", "WHILE", "SWITCH", "CASE", "DEFAULT", "input", "output", "ARRAY" };
+    // keywords must match TokenType enum order exactly
+    // starting from index 1 (END_OF_FILE = 0)
+    string keyword[] = {
+        "for", "if", "elif", "while", "switch", "case", "default",
+        "input", "array", "print",
+        "def", "return", "else",
+        "and", "or", "not"
+    };
+
     for (int i = 0; i < KEYWORDS_COUNT; i++) {
         if (s == keyword[i]) {
-            return i + 1;
+            return i + 1;  // +1 because END_OF_FILE = 0
         }
     }
     return -1;
@@ -118,9 +185,10 @@ Token LexicalAnalyzer::ScanIdOrKeyword()
     char c;
     input.GetChar(c);
 
-    if (isalpha(c)) {
+    if (isalpha(c) || c == '_') {  // ← allow leading underscore (Python style)
         tmp.lexeme = "";
-        while (!input.EndOfInput() && isalnum(c)) {
+        // allow letters, digits, underscores — standard Python identifier rules
+        while (!input.EndOfInput() && (isalnum(c) || c == '_')) {
             tmp.lexeme += c;
             input.GetChar(c);
         }
@@ -143,34 +211,21 @@ Token LexicalAnalyzer::ScanIdOrKeyword()
     return tmp;
 }
 
-// GetToken() accesses tokens from the tokenList that is populated when a 
-// lexer object is instantiated
 Token LexicalAnalyzer::GetToken()
 {
     Token token;
-    if (index == tokenList.size()){       // return end of file if
-        token.lexeme = "";                // index is too large
+    if (index == tokenList.size()) {
+        token.lexeme = "";
         token.line_no = line_no;
         token.token_type = END_OF_FILE;
     }
-    else{
+    else {
         token = tokenList[index];
         index = index + 1;
     }
     return token;
 }
 
-// UngetToken() resets the index back by a amount equal to its argument 
-// "howMany". "howMany" should be positive and not larger than the 
-// actual number of valid tokens that were obtained using GetToken()
-//
-// NOTE 1: UngetToken() unget actual tokens. So, if you call GetToken() twice
-// and for both call you get END_OF_FILE UngetToken(2) will return the last 
-// two actual tokens (not END_OF_FILE). This might make the use of UngetToken()
-// awkward and potentially error-prone (see NOTE 2)
-//
-// NOTE 2: UngetToken() will not be needed if you use GetToken() and peek() 
-// judiciously
 void LexicalAnalyzer::UngetToken(int howMany)
 {
     if (howMany <= 0)
@@ -178,26 +233,24 @@ void LexicalAnalyzer::UngetToken(int howMany)
         cout << "LexicalAnalyzer:UngetToken:Error: non positive argument\n";
         exit(-1);
     }
-
-    index = index - howMany; // update index
-    if (index < 0)           // and panic if resulting index is negative
+    index = index - howMany;
+    if (index < 0)
     {
-        cout << "LexicalAnalyzer:UngetToken:Error: large  argument\n";
+        cout << "LexicalAnalyzer:UngetToken:Error: large argument\n";
         exit(-1);
     }
 }
 
-// peek requires that the argument "howFar" be positive.
 Token LexicalAnalyzer::peek(int howFar)
 {
-    if (howFar <= 0) {      // peeking backward or in place is not allowed
+    if (howFar <= 0) {
         cout << "LexicalAnalyzer:peek:Error: non positive argument\n";
         exit(-1);
     }
 
     int peekIndex = index + howFar - 1;
-    if (peekIndex > (tokenList.size()-1)) { // if peeking too far
-        Token token;                        // return END_OF_FILE
+    if (peekIndex > (int)(tokenList.size() - 1)) {
+        Token token;
         token.lexeme = "";
         token.line_no = line_no;
         token.token_type = END_OF_FILE;
@@ -241,11 +294,38 @@ Token LexicalAnalyzer::GetTokenMain()
                 tmp.token_type = LESS;
             }
             return tmp;
+
+        // ── string literals ───────────────────────────────────────────────────
+        case '"': {
+            tmp.lexeme = "";
+            char ch;
+            input.GetChar(ch);
+            while (!input.EndOfInput() && ch != '"')
+            {
+                tmp.lexeme += ch;
+                input.GetChar(ch);
+            }
+            tmp.token_type = STRING;
+            return tmp;
+        }
+
+        // ── single line comments  # comment ──────────────────────────────────
+        // Python-style comments — skip everything after # to end of line
+        case '#': {
+            char ch;
+            input.GetChar(ch);
+            while (!input.EndOfInput() && ch != '\n')
+                input.GetChar(ch);
+            line_no++;
+            // after skipping comment, get the next real token
+            return GetTokenMain();
+        }
+
         default:
             if (isdigit(c)) {
                 input.UngetChar(c);
                 return ScanNumber();
-            } else if (isalpha(c)) {
+            } else if (isalpha(c) || c == '_') {  // ← allow leading underscore
                 input.UngetChar(c);
                 return ScanIdOrKeyword();
             } else if (input.EndOfInput())

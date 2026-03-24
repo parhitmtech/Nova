@@ -1,0 +1,14 @@
+VAR x , y , result ;
+{
+  input x ;
+  input y ;
+  IF x > y {
+    result = x * 2 ;
+    println result ;
+  }
+  ELSE {
+    result = y + 10 ;
+    println result ;
+  }
+}
+5 3
