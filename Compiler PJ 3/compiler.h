@@ -9,15 +9,28 @@
 #include <string>
 #include <vector>
 
-extern int mem[1000];  // global memory
+extern std::vector<int> mem;  // int memory - grows on demand
 extern int next_available;
 
-extern std::string strMem[1000];  // global string memory
+extern std::vector<std::string> strMem;  // string memory - grows on demand
 extern int next_str_available;
 
-extern std::vector<int> inputs;
-extern int next_input;
+extern std::vector<int> freeList;  // recycled int slots
 
+// Slot Allocator
+// Use these everywhere instead of raw next_available++
+int alloc_slot();  // reuse freed slot grow mem
+void free_slot(int idx);  // return slot to free list
+
+// Variable type system 
+enum VarType {
+    TYPE_UNKNOWN = 0,   // untyped (auto-declared) — no type checking
+    TYPE_INT,           // int x = 5 ;
+    TYPE_BOOL,          // bool flag = true ;
+    TYPE_STRING         // string s = "hello" ;
+};
+
+// Arithmetic operators 
 enum ArithmeticOperatorType {
     OPERATOR_NONE = 123,
     OPERATOR_PLUS,
@@ -26,18 +39,23 @@ enum ArithmeticOperatorType {
     OPERATOR_DIV
 };
 
+// Condition operators 
 enum ConditionalOperatorType {
     CONDITION_GREATER = 345,
     CONDITION_LESS,
     CONDITION_NOTEQUAL
 };
 
+// ── IR instruction types ──────────────────────────────────────────────────────
 enum InstructionType
 {
     NOOP = 1000,
     IN, OUT, ASSIGN, CJMP, JMP, CALL, RET,
     ARRAY_READ,
-    ARRAY_WRITE
+    ARRAY_WRITE,
+    ALLOC,
+    STRCAT,
+    SCMP
 };
 
 struct InstructionNode
@@ -51,79 +69,84 @@ struct InstructionNode
             int left_hand_side_index;
             int operand1_index;
             int operand2_index;
-            
-            /*
-             * If op == OPERATOR_NONE then only operand1 is meaningful.
-             * Otherwise both operands are meaningful
-             */
             ArithmeticOperatorType op;
         } assign_inst;
-        
+
         struct
         {
             int var_index;
         } input_inst;
-        
+
         struct
         {
             int var_index;
-            bool is_string;  // true = print from strMem, false = print form mem
-            bool newline; // for println
+            bool is_string;      // true = string output (not int)
+            bool is_string_var;  // true = var_index is a mem slot holding a strMem index
+                                 //        (used for string variables)
+                                 // false = var_index is a direct strMem index
+                                 //        (used for string literals)
+            bool newline;
         } output_inst;
-        
+
         struct {
             ConditionalOperatorType condition_op;
             int operand1_index;
             int operand2_index;
-            struct InstructionNode * target;
+            struct InstructionNode* target;
         } cjmp_inst;
-        
+
         struct {
-            struct InstructionNode * target;
+            struct InstructionNode* target;
         } jmp_inst;
 
         struct {
             struct InstructionNode* function_head;
-            int ret_val_index;  // index of the local function stack
-            int func_slot_base;  // first local slot of function
-            int func_slot_count;  // total local slots to save/restore
+            int ret_val_index;
+            int func_slot_base;
+            int func_slot_count;
             int num_params;
-            int * param_slots;  // which slots are params
-            int * arg_val_slots;  // computed arg values to copy into params 
+            int* param_slots;
+            int* arg_val_slots;
         } call_inst;
 
         struct {
-            int ret_val_index;  // memory index of the return value in global stack
+            int ret_val_index;
         } ret_inst;
 
         struct {
-            int base_index;  // start of array in mem[]
-            int index_slot;  // mem slot containing the run time index value
-            int target_index;  // READ: where to store the result | Write: value to write
-            int array_size;  // for full runtime error checking
+            int base_slot;
+            int size_slot;
+        } alloc_inst;
+
+        struct {
+            int dest_slot;  // mem slot to store new strMem index
+            int left_slot;  // mem slot holding left string's strMem index
+            int right_slot;  // mem slot holding right string's strMem index
+        } strcat_inst;
+
+        struct {
+            ConditionalOperatorType condition_op;
+            int operand1_index;  // mem slot holding left strMem index
+            int operand2_index;  // mem slot handling right strMem index
+            struct InstructionNode* target;  // jump target on conditoin FAIL
+        } scmp_inst;
+
+        struct {
+            int base_index;
+            bool dynamic_base;
+            int index_slot;
+            int target_index;
+            int array_size;
+            int size_slot;
+            int line_no;
         } array_inst;
     };
 
-    struct InstructionNode * next; // next statement in the list or NULL
+    struct InstructionNode* next;
 };
 
 void debug(const char* format, ...);
 
-//---------------------------------------------------------
-// You should write the following function:
-
-struct InstructionNode * parse_generate_intermediate_representation();
-
-/*
-  NOTE:
-
-  You need to write a function with the above signature. This function
-  is supposed to parse the input program and generate an intermediate
-  representation for it. The output of this function is passed to the
-  execute_program function in main().
-
-  Write your code in a separate file and include this header file in
-  your code.
-*/
+struct InstructionNode* parse_generate_intermediate_representation();
 
 #endif /* _COMPILER_H_ */

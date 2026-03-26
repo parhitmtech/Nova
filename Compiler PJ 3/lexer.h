@@ -13,32 +13,34 @@
 
 using namespace std;
 
-// ------- token types -------------------
+// token types 
 
 typedef enum { END_OF_FILE = 0,
 
-    // ── keywords ──────────────────────────────────────────────────────────────
-    // old: VAR, FOR, IF, WHILE, SWITCH, CASE, DEFAULT, INPUT, OUTPUT, ARRAY,
-    //      PRINT, PRINTLN, FUNC, RETURN, ELSE, AND, OR, NOT
-    // new: lowercase python-like keywords, VAR removed, OUTPUT/PRINTLN removed,
-    //      FUNC → DEF, ELSE IF → ELIF added
-
+    // keywords 
     FOR, IF, ELIF, WHILE, SWITCH, CASE, DEFAULT,
     INPUT, ARRAY, PRINT,
     DEF, RETURN, ELSE,
     AND, OR, NOT,
 
-    // ── operators ─────────────────────────────────────────────────────────────
+    // type keywords (new) 
+    INT_TYPE, BOOL_TYPE, STRING_TYPE,
+    TRUE, FALSE,
+
+    // operators 
     PLUS, MINUS, DIV, MULT,
 
-    // ── punctuation ───────────────────────────────────────────────────────────
+    // punctuation 
     EQUAL, COLON, COMMA, SEMICOLON,
     LBRAC, RBRAC, LPAREN, RPAREN, LBRACE, RBRACE,
 
-    // ── comparison ────────────────────────────────────────────────────────────
+    // comparison 
     NOTEQUAL, GREATER, LESS,
 
-    // ── literals + misc ───────────────────────────────────────────────────────
+    // arrow operator (for function return type) 
+    ARROW,
+
+    // literals + misc 
     NUM, ID, STRING, ERROR
 
 } TokenType;
@@ -58,9 +60,9 @@ class LexicalAnalyzer {
     void UngetToken(int);
     Token peek(int);
     LexicalAnalyzer();
-    void Initialize();  // reads all tokens after freopen (CLI fix)
-    void InitializeFromFile(const string& filename);  // to handle input from file
-    void ReinitializeFromString(const std::string& s);  // to handle REPL mode
+    void Initialize();
+    void InitializeFromFile(const std::string& filename);
+    void ReinitializeFromString(const std::string& s);
 
   private:
     std::vector<Token> tokenList;

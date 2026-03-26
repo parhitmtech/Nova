@@ -16,22 +16,38 @@ using namespace std;
 
 // must match TokenType enum order exactly
 string reserved[] = { "END_OF_FILE",
+    // control flow
     "FOR", "IF", "ELIF", "WHILE", "SWITCH", "CASE", "DEFAULT",
+    // I/O
     "INPUT", "ARRAY", "PRINT",
+    // function keywords
     "DEF", "RETURN", "ELSE",
+    // logical
     "AND", "OR", "NOT",
+    // type keywords (new)
+    "INT_TYPE", "BOOL_TYPE", "STRING_TYPE",
+    // bool literals (new)
+    "TRUE", "FALSE",
+    // arithmetic
     "PLUS", "MINUS", "DIV", "MULT",
+    // punctuation
     "EQUAL", "COLON", "COMMA", "SEMICOLON",
     "LBRAC", "RBRAC", "LPAREN", "RPAREN", "LBRACE", "RBRACE",
+    // comparison
     "NOTEQUAL", "GREATER", "LESS",
+    // arrow (new)
+    "ARROW",
+    // literals + misc
     "NUM", "ID", "STRING", "ERROR"
 };
 
-// must match the number of keywords in TokenType enum
-// FOR, IF, ELIF, WHILE, SWITCH, CASE, DEFAULT,
-// INPUT, ARRAY, PRINT,
-// DEF, RETURN, ELSE, AND, OR, NOT
-#define KEYWORDS_COUNT 16
+// FOR IF ELIF WHILE SWITCH CASE DEFAULT      (7)
+// INPUT ARRAY PRINT                          (3)
+// DEF RETURN ELSE                            (3)
+// AND OR NOT                                 (3)
+// INT_TYPE BOOL_TYPE STRING_TYPE             (3)  ← new
+// TRUE FALSE                                 (2)  ← new
+#define KEYWORDS_COUNT 21
 
 void Token::Print()
 {
@@ -67,7 +83,6 @@ void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
 {
     if (initialized) return;
 
-    // load file into InputBuffer directly — stdin stays untouched
     if (!input.InitFromFile(filename))
     {
         cerr << "Error: could not open file '" << filename << "'\n";
@@ -86,7 +101,6 @@ void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
 
 void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
 {
-    // reset all the states
     tokenList.clear();
     index = 0;
     line_no = 1;
@@ -96,10 +110,8 @@ void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
     tmp.line_no = 1;
     tmp.token_type = ERROR;
 
-    // load string into input buffer
     input.InitFromString(s);
 
-    //tokenize
     initialized = true;
     Token token = GetTokenMain();
     while (token.token_type != END_OF_FILE)
@@ -132,12 +144,20 @@ bool LexicalAnalyzer::SkipSpace()
 int LexicalAnalyzer::FindKeywordIndex(string s)
 {
     // keywords must match TokenType enum order exactly
-    // starting from index 1 (END_OF_FILE = 0)
+    // starting at index 1 (END_OF_FILE = 0)
     string keyword[] = {
+        // 1–7
         "for", "if", "elif", "while", "switch", "case", "default",
+        // 8–10
         "input", "array", "print",
+        // 11–13
         "def", "return", "else",
-        "and", "or", "not"
+        // 14–16
+        "and", "or", "not",
+        // 17–19  ← new type keywords
+        "int", "bool", "string",
+        // 20–21  ← new bool literals
+        "true", "false"
     };
 
     for (int i = 0; i < KEYWORDS_COUNT; i++) {
@@ -185,9 +205,8 @@ Token LexicalAnalyzer::ScanIdOrKeyword()
     char c;
     input.GetChar(c);
 
-    if (isalpha(c) || c == '_') {  // ← allow leading underscore (Python style)
+    if (isalpha(c) || c == '_') {
         tmp.lexeme = "";
-        // allow letters, digits, underscores — standard Python identifier rules
         while (!input.EndOfInput() && (isalnum(c) || c == '_')) {
             tmp.lexeme += c;
             input.GetChar(c);
@@ -218,8 +237,7 @@ Token LexicalAnalyzer::GetToken()
         token.lexeme = "";
         token.line_no = line_no;
         token.token_type = END_OF_FILE;
-    }
-    else {
+    } else {
         token = tokenList[index];
         index = index + 1;
     }
@@ -269,7 +287,21 @@ Token LexicalAnalyzer::GetTokenMain()
     input.GetChar(c);
     switch (c) {
         case '+':   tmp.token_type = PLUS;      return tmp;
-        case '-':   tmp.token_type = MINUS;     return tmp;
+
+        // ── '-' or '->' ───────────────────────────────────────────────────────
+        case '-': {
+            char next;
+            input.GetChar(next);
+            if (next == '>') {
+                tmp.lexeme = "->";
+                tmp.token_type = ARROW;
+            } else {
+                if (!input.EndOfInput()) input.UngetChar(next);
+                tmp.token_type = MINUS;
+            }
+            return tmp;
+        }
+
         case '/':   tmp.token_type = DIV;       return tmp;
         case '*':   tmp.token_type = MULT;      return tmp;
         case '=':   tmp.token_type = EQUAL;     return tmp;
@@ -288,9 +320,7 @@ Token LexicalAnalyzer::GetTokenMain()
             if (c == '>') {
                 tmp.token_type = NOTEQUAL;
             } else {
-                if (!input.EndOfInput()) {
-                    input.UngetChar(c);
-                }
+                if (!input.EndOfInput()) input.UngetChar(c);
                 tmp.token_type = LESS;
             }
             return tmp;
@@ -309,15 +339,13 @@ Token LexicalAnalyzer::GetTokenMain()
             return tmp;
         }
 
-        // ── single line comments  # comment ──────────────────────────────────
-        // Python-style comments — skip everything after # to end of line
+        // ── Python-style comments: # ... ──────────────────────────────────────
         case '#': {
             char ch;
             input.GetChar(ch);
             while (!input.EndOfInput() && ch != '\n')
                 input.GetChar(ch);
             line_no++;
-            // after skipping comment, get the next real token
             return GetTokenMain();
         }
 
@@ -325,7 +353,7 @@ Token LexicalAnalyzer::GetTokenMain()
             if (isdigit(c)) {
                 input.UngetChar(c);
                 return ScanNumber();
-            } else if (isalpha(c) || c == '_') {  // ← allow leading underscore
+            } else if (isalpha(c) || c == '_') {
                 input.UngetChar(c);
                 return ScanIdOrKeyword();
             } else if (input.EndOfInput())
