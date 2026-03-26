@@ -33,11 +33,34 @@ struct CallFrame {
     vector<int> savedSlots;
 };
 
-int mem[1000];
+// Global memory vectors
+
+vector<int> mem;
 int next_available = 0;
 
-std::string strMem[1000];
+vector<std::string> strMem;
 int next_str_available = 0;
+
+vector<int> freeList;
+
+// Slot allocator
+int alloc_slot()
+{
+    if (!freeList.empty())
+    {
+        int idx = freeList.back();
+        freeList.pop_back();
+        mem[idx] = 0;
+        return idx; 
+    }
+    mem.push_back(0);
+    return next_available++;
+}
+
+void free_slot(int idx)
+{
+    freeList.push_back(idx);
+}
 
 // ── Input replay buffer ───────────────────────────────────────────────────────
 // Used only during benchmark mode — captures inputs from first run
@@ -97,7 +120,12 @@ void execute_program(struct InstructionNode* program)
                 if (!suppress_output)
                 {
                     if (pc->output_inst.is_string)
-                        printf("%s", strMem[pc->output_inst.var_index].c_str());
+                    {
+                        // is_string_var: var_index is a mem slot holding a strMem index
+                        // !is_string_var: var_index is a direct strMem index (literal)
+                        int strIdx = pc->output_inst.is_string_var ? mem[pc->output_inst.var_index] : pc->output_inst.var_index;
+                        printf("%s", strMem[strIdx].c_str());
+                    }
                     else
                         printf("%d", mem[pc->output_inst.var_index]);
                     if (pc->output_inst.newline)
@@ -205,24 +233,45 @@ void execute_program(struct InstructionNode* program)
                 }
                 CallFrame frame = callStack.top();
                 callStack.pop();
-
+                
+                // capture return value before restoring slots
                 int ret_val = mem[pc->ret_inst.ret_val_index];
 
+                // restore function-local slots to their pre-call  values
                 for (int i = 0; i < (int)frame.savedSlots.size(); i++)
                     mem[frame.slot_base + i] = frame.savedSlots[i];
 
+                // write return value - caller reads this in the very next ASSIGN
                 mem[frame.dest_index] = ret_val;
+
+                // free all function-local slots EXCEPT dest_index
+                // dest_index must survive until the callers ASSIGN copies to it
+                // that ASSIGN emits no alloc_slot calls, so dest_index is dafe
+                int count = (int)frame.savedSlots.size();
+                for (int i = 0;i < count;i++)
+                {
+                    int slot = frame.slot_base + i;
+                    if (slot != frame.dest_index)
+                    {
+                        free_slot(slot);
+                    }
+                }
                 pc = frame.returnAddress;
                 break;
             }
 
             case ARRAY_READ:
             {
-                int base = pc->array_inst.base_index;
+                int base = pc->array_inst.dynamic_base
+                           ? mem[pc->array_inst.base_index]
+                           : pc->array_inst.base_index;
+                int size = (pc->array_inst.size_slot >= 0)
+                           ? mem[pc->array_inst.size_slot]
+                           : pc->array_inst.array_size;
                 int idx  = mem[pc->array_inst.index_slot];
-                if (idx < 0)
+                if (idx < 0 || idx >= size)
                 {
-                    printf("Runtime error: array index %d is negative\n", idx);
+                    printf("Runtime error at line %d: array index %d out of bounds (size %d)\n", pc->array_inst.line_no, idx, size);
                     exit(1);
                 }
                 mem[pc->array_inst.target_index] = mem[base + idx];
@@ -232,16 +281,67 @@ void execute_program(struct InstructionNode* program)
 
             case ARRAY_WRITE:
             {
-                int base = pc->array_inst.base_index;
+                int base = pc->array_inst.dynamic_base
+                           ? mem[pc->array_inst.base_index]
+                           : pc->array_inst.base_index;
+                int size = (pc->array_inst.size_slot >= 0)
+                           ? mem[pc->array_inst.size_slot]
+                           : pc->array_inst.array_size;
                 int idx  = mem[pc->array_inst.index_slot];
-                if (idx < 0 || idx >= pc->array_inst.array_size)
+                if (idx < 0 || idx >= size)
                 {
-                    printf("Runtime error: array index %d out of bounds (size %d)\n",
-                           idx, pc->array_inst.array_size);
+                    printf("Runtime error at line %d: array index %d out of bounds (size %d)\n",
+                           pc->array_inst.line_no, idx, pc->array_inst.array_size);
                     exit(1);
                 }
                 mem[base + idx] = mem[pc->array_inst.target_index];
                 pc = pc->next;
+                break;
+            }
+
+            case ALLOC:
+            {
+                int size = mem[pc->alloc_inst.size_slot];
+                if (size <= 0)
+                {
+                    printf("Runtime error: array size must > 0, got %d\n", size);
+                    exit(1);
+                }
+                int base = next_available;
+                for (int i = 0;i < size;i++)
+                {
+                    alloc_slot();
+                }
+                mem[pc->alloc_inst.base_slot] = base;
+                pc = pc->next;
+                break;
+            }
+
+            case STRCAT:
+            {
+                int leftIdx = mem[pc->strcat_inst.left_slot];
+                int rightIdx = mem[pc->strcat_inst.right_slot];
+                strMem.push_back(strMem[leftIdx] + strMem[rightIdx]);
+                int dest = next_str_available++;
+                mem[pc->strcat_inst.dest_slot] = dest;
+                pc = pc->next;
+                break;
+            }
+
+            case SCMP:
+            {
+                int leftIdx = mem[pc->scmp_inst.operand1_index];
+                int rightIdx = mem[pc->scmp_inst.operand2_index];
+                string& left = strMem[leftIdx];
+                string& right = strMem[rightIdx];
+                bool pass = false;
+                switch (pc->scmp_inst.condition_op)
+                {
+                    case CONDITION_GREATER: pass = (left > right); break;
+                    case CONDITION_LESS: pass = (left < right); break;
+                    case CONDITION_NOTEQUAL: pass = (left != right); break;
+                }
+                pc = pass ? pc->next : pc->scmp_inst.target;
                 break;
             }
 
@@ -253,13 +353,15 @@ void execute_program(struct InstructionNode* program)
     }
 }
 
-// ── Constant folding ──────────────────────────────────────────────────────────
+// Constant folding 
 
-static bool constant_slots[1000] = {false};
+static vector<bool> constant_slots;
 
 void mark_constants(struct InstructionNode* program)
 {
-    int write_count[1000] = {0};
+    int n = next_available;
+    vector<int> write_count(n, 0);
+    constant_slots.assign(n, true);
     struct InstructionNode* pc = program;
     while (pc != nullptr)
     {
@@ -272,8 +374,10 @@ void mark_constants(struct InstructionNode* program)
         pc = pc->next;
     }
 
-    for (int i = 0; i < 1000; i++) constant_slots[i] = true;
-    for (int i = 0; i < 1000; i++) if (write_count[i] > 1) constant_slots[i] = false;
+    for (int i = 0;i < n;i++)
+    {
+        if (write_count[i] > 1) constant_slots[i] = false;
+    }
 
     pc = program;
     while (pc != nullptr)
@@ -449,6 +553,26 @@ void dump_ir(struct InstructionNode* program)
                     pc->array_inst.target_index, pc->array_inst.base_index,
                     pc->array_inst.index_slot);
                 break;
+            case ALLOC:
+                printf("ALLOC       base->mem[%d]  size=mem[%d]\n",
+                    pc->alloc_inst.base_slot, pc->alloc_inst.size_slot);
+                break;
+            case STRCAT:
+                printf("STRCAT      mem[%d] <- strMem[mem[%d]] + strMem[mem[%d]]\n",
+                    pc->strcat_inst.dest_slot,
+                    pc->strcat_inst.left_slot,
+                    pc->strcat_inst.right_slot);
+                break;
+            case SCMP:
+            {
+                const char* condStr =
+                    pc->scmp_inst.condition_op == CONDITION_GREATER ? ">"  :
+                    pc->scmp_inst.condition_op == CONDITION_LESS    ? "<"  : "<>";
+                printf("SCMP        if strMem[mem[%d]] %s strMem[mem[%d]]  pass->next  fail->node@%p\n",
+                    pc->scmp_inst.operand1_index, condStr,
+                    pc->scmp_inst.operand2_index, (void*)pc->scmp_inst.target);
+                break;
+            }
             default: printf("UNKNOWN     type=%d\n", pc->type); break;
         }
         pc = pc->next;
@@ -592,7 +716,7 @@ int main(int argc, char* argv[])
         run_repl();
         return 0;
     }
-    
+
     // ── file mode ─────────────────────────────────────────────────────────────
     if (!inputFile.empty())
     {
