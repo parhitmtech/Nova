@@ -268,7 +268,10 @@ app.post("/compare", async (req, res) => {
 
     const normalStats    = parseBenchStats(normalBench.stdout,    normalBench.stderr);
     const optimizedStats = parseBenchStats(optimizedBench.stdout, optimizedBench.stderr);
-    const outputMismatch = normalRun.stdout.trim() !== optimizedRun.stdout.trim();
+    console.log("NORMAL:", JSON.stringify(normalRun.stdout));
+    console.log("OPTIMIZED:", JSON.stringify(optimizedRun.stdout));
+    const normalize = s => s.trim().replace(/\r\n/g, '\n');
+    const outputMismatch = normalize(normalRun.stdout) !== normalize(optimizedRun.stdout);
 
     log("info", "Compare finished", {
       normalUs: normalStats.us, optimizedUs: optimizedStats.us,
