@@ -148,5 +148,6 @@ struct InstructionNode
 void debug(const char* format, ...);
 
 struct InstructionNode* parse_generate_intermediate_representation();
+void generate_x86(struct InstructionNode* program, const std::string& outputFile);
 
 #endif /* _COMPILER_H_ */

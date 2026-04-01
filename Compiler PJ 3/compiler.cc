@@ -12,6 +12,9 @@
 #include <string>
 #include <stack>
 #include <chrono>
+#include <map>
+#include <set>
+#include <algorithm>
 #include "lexer.h"
 #include "compiler.h"
 
@@ -463,6 +466,862 @@ int remove_self_copies(struct InstructionNode* head)
     return removed;
 }
 
+int algaebric_simplify(struct InstructionNode* program)
+{
+    int simplified = 0;
+    int n = (int)constant_slots.size();
+
+    // pre-allocate a zero slot for zero-product results
+    int zero_slot = alloc_slot();
+    mem[zero_slot] = 0;
+
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == ASSIGN && pc->assign_inst.op != OPERATOR_NONE)
+        {
+            int op1 = pc->assign_inst.operand1_index;
+            int op2 = pc->assign_inst.operand2_index;
+            int dst = pc->assign_inst.left_hand_side_index;
+
+            bool op1_const = (op1 < n && constant_slots[op1]);
+            bool op2_const = (op2 < n && constant_slots[op2]);
+            int op1_val = op1_const ? mem[op1] : 0;
+            int op2_val = op2_const ? mem[op2] : 0;
+
+            ArithmeticOperatorType op = pc->assign_inst.op;
+            bool did_simplify = true;
+
+            if (op == OPERATOR_PLUS)
+            {
+                if (op2_const && op2_val == 0)  // x + 0 = x
+                {
+                    pc->assign_inst.operand1_index = op1;
+                }
+                else if (op1_const && op1_val == 0)  // 0 + x = x
+                {
+                    pc->assign_inst.operand1_index = op2;
+                }
+                else 
+                {
+                    did_simplify = false;
+                }
+            }
+            else if (op == OPERATOR_MINUS)
+            {
+                if (op2_const && op2_val == 0)  // x - 0 = x
+                {
+                    pc->assign_inst.operand1_index = op1;
+                }
+                else if (op1 == op2)  // x - x = 0
+                {
+                    pc->assign_inst.operand1_index = zero_slot;
+                }
+                else
+                {
+                    did_simplify = false;
+                }
+            }
+            else if (op == OPERATOR_MULT)
+            {
+                if (op2_const && op2_val == 1)  // x * 1 = x
+                {
+                    pc->assign_inst.operand1_index = op1;
+                }
+                else if (op1_const && op1_val == 1)  // 1 * x = x
+                {
+                    pc->assign_inst.operand1_index = op2;
+                }
+                else if (op2_const && op2_val == 0)  // x * 0 = 0
+                {
+                    pc->assign_inst.operand1_index = zero_slot;
+                }
+                else if (op1_const && op1_val == 0)  // 0 * x = 0
+                {
+                    pc->assign_inst.operand1_index = zero_slot;
+                }
+                else
+                {
+                    did_simplify = false;
+                }
+            }
+            else if (op == OPERATOR_DIV)
+            {
+                if (op2_const && op2_val == 1)
+                {
+                    pc->assign_inst.operand1_index = op1;
+                }
+                else 
+                {
+                    did_simplify = false;
+                }
+            }
+            else
+            {
+                did_simplify = false;
+            }
+
+            if (did_simplify)
+            {
+                pc->assign_inst.op = OPERATOR_NONE;
+                simplified++;
+            }
+        }
+        pc = pc->next;
+    }
+    return simplified;
+}
+
+int copy_propogate(struct InstructionNode* program)
+{
+    int n = next_available;
+
+    // count writes per slot since slots written more than once are undafe to propogate
+    vector<int> write_count(n, 0);
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == ASSIGN)
+        {
+            write_count[pc->assign_inst.left_hand_side_index]++;
+        }
+        if (pc->type == IN)
+        {
+            write_count[pc->input_inst.var_index]++;
+        }
+        if (pc->type == ARRAY_READ)
+        {
+            write_count[pc->array_inst.target_index]++;
+        }
+        pc = pc->next;
+    }
+
+    // copy_map[slot] = slot it is a direct copy of
+    vector<int> copy_map(n, -1);  // -1 = not a copy
+
+    auto resolve = [&](int slot) -> int {
+        if (slot < n && copy_map[slot] != -1) return copy_map[slot];
+        return slot;
+    };
+
+    int propogated = 0;
+    pc = program;
+    while (pc != nullptr)
+    {
+        switch (pc->type)
+        {
+            case ASSIGN: 
+            {
+                int dst = pc->assign_inst.left_hand_side_index;
+                if (pc->assign_inst.op == OPERATOR_NONE)
+                {
+                    // resolve src through map first
+                    int src = resolve(pc->assign_inst.operand1_index);
+                    pc->assign_inst.operand1_index = src;
+
+                    // only record as a copy if slot is written exactly once
+                    if (dst != src && dst < n && write_count[dst] == 1 && (src >= n || write_count[src] == 1))
+                    {
+                        copy_map[dst] = src;
+                    }
+                    else
+                    {
+                        copy_map[dst] = -1; // unsafe, so invalidate
+                    }
+                }
+                else
+                {
+                    // arithmetic node - resolve both operands
+                    int op1 = resolve(pc->assign_inst.operand1_index);
+                    int op2 = resolve(pc->assign_inst.operand2_index);
+                    if (op1 != pc->assign_inst.operand1_index) 
+                    {
+                        pc->assign_inst.operand1_index = op1;
+                        propogated++;
+                    }
+                    if (op2 != pc->assign_inst.operand2_index)
+                    {
+                        pc->assign_inst.operand2_index = op2;
+                    }
+                    // dst is now computed - no longer a simple copy
+                    if (dst < n) copy_map[dst] = -1;
+                }
+                break;
+            }
+            case IN:
+                // runtime input - invalidate
+                if (pc->input_inst.var_index < n)
+                {
+                    copy_map[pc->input_inst.var_index] = -1;
+                }
+                break;
+            
+            case OUT:
+            {
+                int resolved = resolve(pc->output_inst.var_index);
+                if (resolved != pc->output_inst.var_index)
+                {
+                    pc->output_inst.var_index = resolved;   
+                    propogated++;
+                }
+                break;
+            }
+            case CJMP:
+            {
+                int op1 = resolve(pc->cjmp_inst.operand1_index);
+                int op2 = resolve(pc->cjmp_inst.operand2_index);
+                if (op1 != pc->cjmp_inst.operand1_index)
+                {
+                    pc->cjmp_inst.operand1_index = op1;
+                    propogated++;
+                }
+                if (op2 != pc->cjmp_inst.operand2_index)
+                {
+                    pc->cjmp_inst.operand2_index = op2;
+                    propogated++;
+                }
+                break;
+            }
+            case SCMP:
+            {
+                int op1 = resolve(pc->scmp_inst.operand1_index);
+                int op2 = resolve(pc->scmp_inst.operand2_index);    
+                if (op1 != pc->scmp_inst.operand1_index)
+                {
+                    pc->scmp_inst.operand1_index = op1;
+                    propogated++;
+                }
+                if (op2 != pc->scmp_inst.operand2_index)
+                {
+                    pc->scmp_inst.operand2_index = op2;
+                    propogated++;
+                }
+                break;
+            }
+            case ARRAY_READ:
+            {
+                int resolved = resolve(pc->array_inst.index_slot);
+                if (resolved != pc->array_inst.index_slot)
+                {
+                    pc->array_inst.index_slot = resolved;
+                    propogated++;
+                }
+                if (pc->array_inst.target_index < n)
+                {
+                    copy_map[pc->array_inst.target_index] = -1;
+                }
+                break;
+            }
+            case ARRAY_WRITE:
+            {
+                int idx = resolve(pc->array_inst.index_slot);
+                int val = resolve(pc->array_inst.target_index);
+                if (idx != pc->array_inst.index_slot)
+                {
+                    pc->array_inst.index_slot = idx;
+                    propogated++;
+                }
+                if (val != pc->array_inst.target_index)
+                {
+                    pc->array_inst.target_index = val;
+                    propogated++;
+                }
+                break;
+            }
+            case CALL:
+            {
+                for (int i = 0;i < pc->call_inst.num_params;i++)
+                {
+                    int resolved = resolve(pc->call_inst.arg_val_slots[i]);
+                    if (resolved != pc->call_inst.arg_val_slots[i])
+                    {
+                        pc->call_inst.arg_val_slots[i] = resolved;  
+                        propogated++;
+                    }
+                    // param slots get new values - invalidate
+                    int p = pc->call_inst.param_slots[i];
+                    if (p < n) copy_map[p] = -1;
+                }
+                break;
+            }
+            case RET:
+            {
+                int resolved = resolve(pc->ret_inst.ret_val_index);
+                if (resolved != pc->ret_inst.ret_val_index)
+                {
+                    pc->ret_inst.ret_val_index = resolved;
+                    propogated++;
+                }
+                break;
+            }
+            default: break;
+        }
+        pc = pc->next;
+    }
+    return propogated;
+}
+
+int dead_code_eliminate(struct InstructionNode* program)
+{
+    int n = next_available;
+
+    // Pass 1 - mark all slots that are read anywhere
+    vector<bool> is_read(n, false);
+    
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        switch (pc->type)
+        {
+            case ASSIGN:
+            {
+                if (pc->assign_inst.op == OPERATOR_NONE)
+                {
+                    int src = pc->assign_inst.operand1_index;
+                    if (src < n)
+                    {
+                        is_read[src] = true;
+                    }
+                }
+                else 
+                {
+                    int op1 = pc->assign_inst.operand1_index;
+                    int op2 = pc->assign_inst.operand2_index;
+                    if (op1 < n) is_read[op1] = true;
+                    if (op2 < n) is_read[op2] = true;
+                }
+                break;
+            }
+            case OUT:
+            {
+                if (pc->output_inst.var_index < n)
+                {
+                    is_read[pc->output_inst.var_index] = true;
+                }
+                break;
+            }
+            case CJMP:
+            {
+                if (pc->cjmp_inst.operand1_index < n) is_read[pc->cjmp_inst.operand1_index] = true;
+                if (pc->cjmp_inst.operand2_index < n) is_read[pc->cjmp_inst.operand2_index] = true;
+                break;
+            }
+            case SCMP:
+            {
+                if (pc->scmp_inst.operand1_index < n) is_read[pc->scmp_inst.operand1_index] = true;
+                if (pc->scmp_inst.operand1_index < n) is_read[pc->scmp_inst.operand1_index] = true;
+                break;
+            }
+            case ARRAY_READ:
+            {
+                if (pc->array_inst.index_slot < n) is_read[pc->array_inst.index_slot] = true;
+                if (pc->array_inst.base_index < n) is_read[pc->array_inst.base_index] = true;
+                if (pc->array_inst.size_slot >= 0 && pc->array_inst.size_slot < n)
+                {
+                    is_read[pc->array_inst.size_slot] = true;
+                }
+                break;
+            }
+            case ARRAY_WRITE:
+            {
+                if (pc->array_inst.index_slot < n) is_read[pc->array_inst.index_slot] = true;
+                if (pc->array_inst.target_index < n) is_read[pc->array_inst.target_index] = true;
+                if (pc->array_inst.base_index < n) is_read[pc->array_inst.base_index] = true;
+                if (pc->array_inst.size_slot >= 0 && pc->array_inst.size_slot < n)
+                {
+                    is_read[pc->array_inst.size_slot] = true;
+                }
+                break;
+            }
+            case CALL:
+            {
+                for (int i = 0;i < pc->call_inst.num_params;i++)
+                {
+                    if (pc->call_inst.arg_val_slots[i] < n)
+                    {
+                        is_read[pc->call_inst.arg_val_slots[i]] = true;
+                    }
+                }
+                if (pc->call_inst.ret_val_index < n)
+                {
+                    is_read[pc->call_inst.ret_val_index] = true;
+                }
+                break;  
+            }
+            case RET:
+            {
+                if (pc->ret_inst.ret_val_index < n)
+                {
+                    is_read[pc->ret_inst.ret_val_index] = true;
+                }
+                break;
+            }
+            case ALLOC:
+            {
+                if (pc->alloc_inst.size_slot < n) is_read[pc->alloc_inst.size_slot] = true;
+                if (pc->alloc_inst.base_slot < n) is_read[pc->alloc_inst.base_slot] = true;
+                break;
+            }
+            case STRCAT:
+            {
+                if (pc->strcat_inst.left_slot < n) is_read[pc->strcat_inst.left_slot] = true;
+                if (pc->strcat_inst.right_slot < n) is_read[pc->strcat_inst.right_slot] = true;
+                break;
+            }
+            default: break;
+        }
+        pc = pc->next;
+    }
+
+    // Pass 2 - eliminate OPERATOR_NONE assignments to unread slots
+    int eliminated = 0;
+    pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == ASSIGN && pc->assign_inst.op == OPERATOR_NONE)
+        {
+            int dst = pc->assign_inst.left_hand_side_index;
+            if (dst < n && !is_read[dst])
+            {
+                pc->type = NOOP;
+                eliminated++;
+            }
+        }
+        pc = pc->next;
+    }
+    return eliminated;
+}
+ 
+// Considers nested loop structures as well
+int loop_invariant_code_motion(struct InstructionNode* program)
+{
+    int hoisted = 0;
+
+    // Step 1: number all nodes by position
+    map<struct InstructionNode*, int> nodeIndex;
+    vector<struct InstructionNode*> nodeList;
+    struct InstructionNode* pc = program;
+    int idx = 0;
+    while (pc != nullptr)
+    {
+        nodeIndex[pc] = idx++;
+        nodeList.push_back(pc);
+        pc = pc->next;
+    }
+    int total = idx;
+
+    // Step 2: find all back-edges (loops)
+    // Back edge: a jmp node whose whose target has a lower index than itself
+    // Process loops from inner most to outermost by sorting the header index descendant
+    struct LoopInfo {
+        int header_idx;  // index of loop header
+        int jmp_idx;  // index of the back-edge JMP node
+    };
+    vector<LoopInfo> loops;
+
+    for (int i = 0;i < total;i++)
+    {
+        struct InstructionNode* node = nodeList[i];
+        if (node->type == JMP)
+        {
+            struct InstructionNode* target = node->jmp_inst.target;
+            if (target != nullptr && nodeIndex.count(target))
+            {
+                int target_idx = nodeIndex[target];
+                if (target_idx < i)  // back-edge 
+                {
+                    loops.push_back({target_idx, i});
+                }
+            }
+        }
+    }
+
+    // sort innermost first (highest header index = deepest nesting)
+    sort(loops.begin(), loops.end(), [](const LoopInfo& a, const LoopInfo& b) {
+        return a.header_idx > b.header_idx;
+    });
+
+    // Step 3: process each loop
+    for (auto& loop : loops)
+    {
+        struct InstructionNode* header = nodeList[loop.header_idx];
+        struct InstructionNode* jmpNode = nodeList[loop.jmp_idx];
+
+        int body_start = loop.header_idx;
+        int body_end = loop.jmp_idx;
+
+        // collect set of slots written anywhere in the loop body
+        set<int> written_in_loop;
+        for (int i = body_start;i <= body_end;i++)
+        {
+            struct InstructionNode* n = nodeList[i];
+            if (n->type == ASSIGN)
+            {
+                written_in_loop.insert(n->assign_inst.left_hand_side_index);
+            }
+            if (n->type == IN)
+            {
+                written_in_loop.insert(n->input_inst.var_index);
+            }
+            if (n->type == ARRAY_READ)
+            {
+                written_in_loop.insert(n->array_inst.target_index);
+            }
+        }   
+
+        // count writes per slot within the loop body
+        map<int, int> loop_write_count;
+        for (int i = body_start;i <= body_end;i++)
+        {
+            struct InstructionNode* n = nodeList[i];
+            if (n->type == ASSIGN)
+            {
+                loop_write_count[n->assign_inst.left_hand_side_index]++;
+            }
+        }
+
+        // Step 4 - find and hoist invariant nodes
+        // iterate body_start+1 to body_end-1 (skip header and jump itself)
+        for (int i = body_start+1;i < body_end;i++)
+        {
+            struct InstructionNode* n = nodeList[i];
+            if (n->type != ASSIGN || n->assign_inst.op == OPERATOR_NONE)
+            {
+                continue;
+            }
+
+            int op1 = n->assign_inst.operand1_index;
+            int op2 = n->assign_inst.operand2_index;
+            int dst = n->assign_inst.left_hand_side_index;
+
+            // invariant condition: neither operand is written in loop and dst is written exactly once in loop 
+            bool op1_safe = (written_in_loop.find(op1) == written_in_loop.end());
+            bool op2_safe = (written_in_loop.find(op2) == written_in_loop.end());
+            bool dst_once = (loop_write_count[dst] == 1);
+
+            if (!op1_safe || !op2_safe || !dst_once) continue;
+
+            // hoist: remove from loop body, insert before header
+
+            // find the node just before n in the linked list
+            struct InstructionNode* prev = nullptr;
+            struct InstructionNode* curr = program;
+            while (curr != nullptr && curr->next != n)
+            {
+                prev = curr;
+                curr = curr->next;
+            }
+            if (prev == nullptr) continue;  // cannot hoist first node
+
+            // unlink n from its current position
+            prev->next = curr->next;
+
+            // find the node just before header
+            struct InstructionNode* beforeHeader = nullptr;
+            curr = program;
+
+            while (curr != nullptr && curr->next != nullptr)
+            {
+                beforeHeader = curr;
+                curr = curr->next;
+            }
+
+            if (beforeHeader == nullptr)
+            {
+                // header is the program start - insert at very beginning
+                n->next = program;
+                program = n;
+            }
+            else
+            {
+                // insert n between beforeHeader and header
+                n->next = header;
+                beforeHeader->next = n;
+            }
+
+            // update nodeIndex and nodeList to reflect new position
+            // rebuild from scratch to stay accurate for remaining iterations
+            nodeIndex.clear();
+            nodeList.clear();
+
+            curr = program;
+            idx = 0;
+
+            while (curr != nullptr) {nodeIndex[curr] = idx++; nodeList.push_back(curr); curr = curr->next;}
+            total = idx;
+
+            // update loop bounds since positions shifted
+            loop.header_idx = nodeIndex[header];
+            loop.jmp_idx = nodeIndex[jmpNode];
+            body_start = loop.header_idx;
+            body_end = loop.jmp_idx;
+
+            // recompute written_in_loop and loop_write_count for updated body
+            written_in_loop.clear();
+            loop_write_count.clear();
+            for (int j = body_start;j <= body_end;j++)
+            {
+                struct InstructionNode* m = nodeList[j];
+                if (m->type == ASSIGN)
+                {
+                    written_in_loop.insert(m->assign_inst.left_hand_side_index);
+                    loop_write_count[m->assign_inst.left_hand_side_index]++;
+                }
+                if (m->type == IN)
+                {
+                    written_in_loop.insert(m->input_inst.var_index);
+                }
+                if (m->type == ARRAY_READ)
+                {
+                    written_in_loop.insert(m->array_inst.target_index);
+                }
+            }
+
+            // restart body scan from the beginning since positions changed
+            i = body_start;
+            hoisted++;
+        }
+    }
+    return hoisted;
+}
+
+int inline_functions(struct InstructionNode*& program)
+{
+    const int MAX_CALL_SITES = 3;
+    const int MAX_BODY_NODES = 20;
+
+    int inlined = 0;
+
+    // Step 1: gather info about every function
+    // count call sites and body size for each function head pointer
+
+    map<struct InstructionNode*, int> callSiteCount;
+    map<struct InstructionNode*, int> bodySize;
+
+    // count call sites
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == CALL && pc->call_inst.function_head != nullptr)
+        {
+            callSiteCount[pc->call_inst.function_head]++;
+        }
+        pc = pc->next;
+    }
+
+    // measure body size (up to and including RET)
+    for (auto& kv : callSiteCount)
+    {
+        struct InstructionNode* head = kv.first;
+        int count = 0;
+        struct InstructionNode* n = head;
+        while (n != nullptr)
+        {
+            count++;
+            if (n->type == RET) break;
+            n = n->next;
+        }
+        bodySize[head] = count;
+    }
+
+    // detect recursive functions - scan body for a CALL back to itself
+    set<struct InstructionNode*> isRecursive;
+    for (auto& kv : callSiteCount)
+    {
+        struct InstructionNode* head = kv.first;
+        struct InstructionNode* n = head;
+        int sz = bodySize.count(head) ? bodySize[head] : 0;
+        for (int i = 0;i < sz && n != nullptr;i++, n = n->next)
+        {
+            if (n->type == CALL && n->call_inst.function_head == head)
+            {
+                isRecursive.insert(head);
+                break;
+            }
+        } 
+    }
+
+    // Step 2: Inline eligible call sites
+    // we need a pointer to the node before each call to rewire the list
+    // We can iterate with a prev pointer
+
+    struct InstructionNode* prev = nullptr;
+    pc = program;
+
+    while (pc != nullptr)
+    {
+        if (pc->type != CALL || pc->call_inst.function_head == nullptr)
+        {
+            prev = pc;
+            pc = pc->next;  
+            continue;
+        }
+
+        struct InstructionNode* funcHead = pc->call_inst.function_head;
+        
+        bool hasControlFlow = false;
+        {
+            struct InstructionNode* bodyCheck = funcHead;
+            int sz = bodySize.count(funcHead) ? bodySize[funcHead] : 0;
+            for (int i = 0;i < sz && bodyCheck != nullptr; i++, bodyCheck = bodyCheck->next)
+            {
+                if (bodyCheck->type == CJMP || bodyCheck->type == JMP || bodyCheck->type == SCMP)
+                {
+                    hasControlFlow = true;
+                    break;
+                }
+            }
+        }
+
+        // check eligibility
+        bool eligible = !isRecursive.count(funcHead) && !hasControlFlow && callSiteCount[funcHead] <= MAX_CALL_SITES && bodySize[funcHead] <= MAX_BODY_NODES;
+
+        if (!eligible)
+        {
+            prev = pc;
+            pc = pc->next;
+            continue;
+        }
+
+        // Step 3: build slot remapping
+        int base = pc->call_inst.func_slot_base;
+        int count = pc->call_inst.func_slot_count;
+        int retValIdx = pc->call_inst.ret_val_index;
+
+        map<int, int>slotMap;
+        for (int i = 0;i < count;i++)
+        {
+            int newSlot = alloc_slot();
+            mem[newSlot] = mem[base + i];
+            slotMap[base + i] = newSlot;
+        }
+
+        // remap helper
+        auto remap = [&](int slot) -> int {
+            auto it = slotMap.find(slot);
+            return (it != slotMap.end()) ? it->second : slot;
+        };
+
+        // Step 4: emit arg copies into remapped param slots
+        // Build a small chain of ASSIGN nodes: remapped_param <- arg_val
+        struct InstructionNode* chainHead = nullptr;
+        struct InstructionNode* chainTracker = nullptr;
+
+        auto chain_append = [&](struct InstructionNode* node) {
+            node->next = nullptr;
+            if (chainHead == nullptr) chainHead = chainTracker = node;
+            else {chainTracker->next = node; chainTracker = node;}
+        };
+
+        for (int i = 0;i < pc->call_inst.num_params;i++)
+        {
+            int remappedParam = remap(pc->call_inst.param_slots[i]);
+            int argSlot = pc->call_inst.arg_val_slots[i];
+
+            struct InstructionNode* argCopy = new InstructionNode();
+            argCopy->type = ASSIGN;
+            argCopy->assign_inst.left_hand_side_index = remappedParam;
+            argCopy->assign_inst.operand1_index = argSlot;
+            argCopy->assign_inst.op = OPERATOR_NONE;
+            chain_append(argCopy);
+        }
+
+        // Step 5: deep copy function with slot remapping
+        struct InstructionNode* callNext = pc->next;
+        int destSlot = pc->call_inst.ret_val_index;  // where caller expects result
+
+        struct InstructionNode* bodyNode = funcHead;
+        while (bodyNode != nullptr)
+        {
+            struct InstructionNode* clone = new InstructionNode();
+            *clone = *bodyNode;  // shallow copy all fields
+            clone->next = nullptr;
+
+            if (clone->type == ASSIGN)
+            {
+                clone->assign_inst.left_hand_side_index = remap(clone->assign_inst.left_hand_side_index);
+                clone->assign_inst.operand1_index = remap(clone->assign_inst.operand1_index);
+                if (clone->assign_inst.op != OPERATOR_NONE)
+                {
+                    clone->assign_inst.operand2_index = remap(clone->assign_inst.operand2_index);
+                }
+            }
+            else if (clone->type == RET)
+            {
+                // convert RET -> ASSIGN: destslot <- remapped ret val
+                clone->type = ASSIGN;
+                clone->assign_inst.left_hand_side_index = destSlot;
+                clone->assign_inst.operand1_index = remap(bodyNode->ret_inst.ret_val_index);
+                clone->assign_inst.op = OPERATOR_NONE;
+                chain_append(clone);
+                break;  // stop at first REt
+            }
+            else if (clone->type == CJMP)
+            {
+                clone->cjmp_inst.operand1_index = remap(clone->cjmp_inst.operand1_index);
+                clone->cjmp_inst.operand2_index = remap(clone->cjmp_inst.operand2_index);
+            }
+            else if (clone->type == SCMP)
+            {
+                clone->scmp_inst.operand1_index = remap(clone->scmp_inst.operand1_index);
+                clone->scmp_inst.operand2_index = remap(clone->scmp_inst.operand2_index);
+            }
+            else if (clone->type == IN)
+            {
+                clone->input_inst.var_index = remap(clone->input_inst.var_index);   
+            }
+            else if (clone->type == OUT)
+            {
+                clone->output_inst.var_index = remap(clone->output_inst.var_index);
+            }
+            else if (clone->type == ARRAY_READ)
+            {
+                clone->array_inst.base_index = remap(clone->array_inst.base_index);
+                clone->array_inst.index_slot = remap(clone->array_inst.index_slot);
+                clone->array_inst.target_index = remap(clone->array_inst.target_index);
+            }
+            else if (clone->type == ARRAY_WRITE)
+            {
+                clone->array_inst.base_index = remap(clone->array_inst.base_index);
+                clone->array_inst.index_slot = remap(clone->array_inst.index_slot);
+                clone->array_inst.target_index = remap(clone->array_inst.target_index);
+            }
+
+            chain_append(clone);
+
+            if (bodyNode->type == RET)
+            {
+                break;
+            }
+            bodyNode = bodyNode->next;
+        }
+
+        // Step 6: wire the cloned chain into the IR
+        // chainTracker->callNext (skip the original CALL node)
+        if (chainTracker != nullptr)
+        {
+            chainTracker->next = callNext;
+        }
+
+        if (prev == nullptr)
+        {
+            program = chainHead;  // inlining at very start of the program
+        }
+        else
+        {
+            prev->next = chainHead;
+        }
+
+        // original CALL node is now bypassed - move forward
+        pc = callNext;
+        // prev stays pointing to chainTracker (last inlined node)
+        prev = chainTracker;
+
+        inlined++;
+    }
+    return inlined;
+}
+
 int count_ir_nodes(struct InstructionNode* program)
 {
     int count = 0;
@@ -583,6 +1442,260 @@ void dump_ir(struct InstructionNode* program)
     printf("===================================================\n\n");
 }
 
+// x86-64 Code Generation (Linux System V ABI, NASM Intel Syntax)
+
+// Maps a mem slot index to its stack offset string for NASM
+static std::string slot(int idx)
+{
+    return "qword [rbp - " + std::to_string((idx + 1) * 8) + "]";
+}
+
+void generate_x86(struct InstructionNode* program, const std::string& outputFile)
+{
+    FILE* out = fopen(outputFile.c_str(), "w");
+    if (!out)
+    {
+        fprintf(stderr, "Error: could not open output file '%s'\n", outputFile.c_str());
+        exit(1);
+    }
+
+    // collect all unique label targets
+    // we need a label for every node that is a jump target
+    map<struct InstructionNode*, int> labelMap;
+    int labelCounter = 0;
+
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == CJMP && pc->cjmp_inst.target != nullptr)
+        {
+            if (!labelMap.count(pc->cjmp_inst.target))
+            {
+                labelMap[pc->cjmp_inst.target] = labelCounter++;
+            }
+        }
+        if (pc->type == JMP && pc->jmp_inst.target != nullptr)
+        {
+            if (!labelMap.count(pc->cjmp_inst.target))
+            {
+                labelMap[pc->cjmp_inst.target] = labelCounter++;
+            }
+        }
+        pc = pc->next;
+    }
+
+    // stack frame size
+    int frameSize = (next_available + 1) * 8;
+    // align to 16 bytes (ABI requirement)
+    if (frameSize % 16 != 0) frameSize += 16 - (frameSize % 16);
+
+    // data section
+    fprintf(out, "section  .data\n");
+    fprintf(out, "    fmt_out_int  db \"%%d\", 10, 0\n");  // %d\n
+    fprintf(out, "    fmt_in_int   db \"%%d\", 0\n");      // %d
+
+    // emit string literals from strMem
+    for (int i = 0;i < next_str_available;i++)
+    {
+        fprintf(out, "    strlit_%d db ", i);
+        for (unsigned char ch : strMem[i])
+        {
+            fprintf(out, "%d, ", (int)ch);
+        }
+        fprintf(out, "0\n");
+    }
+
+    // text section
+    fprintf(out, "\nsection .text\n");
+    fprintf(out, "    extern printf\n");
+    fprintf(out, "    extern scanf\n");
+    fprintf(out, "    global main\n\n");
+
+    // main entry point
+    fprintf(out, "main:\n");
+    fprintf(out, "    push rbp\n");
+    fprintf(out, "    mov  rbp, rsp\n");
+    fprintf(out, "    sub  rsp, %d\n\n", frameSize);
+
+    // initialize all slots to 0
+    fprintf(out, "   ; zero-initialize all mem slots\n");
+    for (int i = 0;i < next_available;i++)
+    {
+        if (mem[i] != 0)
+        {
+            fprintf(out, "    mov  %s, %d\n", slot(i).c_str(), mem[i]);
+        }
+        else
+        {
+            fprintf(out, "    mov %s, 0\n", slot(i).c_str());
+        }
+        fprintf(out, "\n");
+    }
+
+    // emit IR instructions
+    pc = program;
+    while (pc != nullptr)
+    {
+        // emit label if this node is a jump target
+        if (labelMap.count(pc))
+        {
+            fprintf(out, ".L%d:\n", labelMap[pc]);
+        }
+
+        switch (pc->type)
+        {
+            case NOOP:
+                break;
+
+            case ASSIGN:
+            {
+                if (pc->assign_inst.op == OPERATOR_NONE)
+                {
+                    fprintf(out, "    mov  rax, %s\n", slot(pc->assign_inst.operand1_index).c_str());
+                    fprintf(out, "    mov  %s, rax\n", slot(pc->assign_inst.left_hand_side_index).c_str());
+                }
+                else
+                {
+                    fprintf(out, "    mov  rax, %s\n", slot(pc->assign_inst.operand1_index).c_str());
+                    switch (pc->assign_inst.op)
+                    {
+                        case OPERATOR_PLUS:
+                        {
+                            fprintf(out, "    add  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            break;
+                        }
+                        case OPERATOR_MINUS:
+                        {
+                            fprintf(out, "    sub  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            break;
+                        }
+                        case OPERATOR_MULT:
+                        {
+                            fprintf(out, "    imul  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            break;
+                        }
+                        case OPERATOR_DIV:
+                        {
+                            fprintf(out, "    cqo\n");  // sign-extend rax into rdx:rax
+                            fprintf(out, "    mov  rcx, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            fprintf(out, "    idiv rcx\n");
+                            break;
+                        }
+                        default: break;
+                    }
+                    fprintf(out, "    mov  %s, rax\n", slot(pc->assign_inst.left_hand_side_index).c_str());
+                }
+                break;
+            }
+
+            case IN:
+            {
+                fprintf(out, "    lea  rdi, [rel fmt_in_int]\n");
+                fprintf(out, "    lea  rsi, %s\n", slot(pc->input_inst.var_index).c_str());
+                fprintf(out, "    xor  eax, eax\n");
+                fprintf(out, "    call scanf\n");
+                break;
+            }
+            
+            case OUT:
+            {
+                if (!pc->output_inst.is_string)
+                {
+                    fprintf(out, "   lea  rdi, [rel fmt_out_int]\n]");
+                    fprintf(out, "   mov  rsi, %s\n", slot(pc->output_inst.var_index).c_str());
+                    fprintf(out, "   xor  eax, eax\n");
+                    fprintf(out, "   call printf\n");
+                }
+                else
+                {
+                    int strIdx = pc->output_inst.is_string_var
+                                 ? mem[pc->output_inst.var_index]
+                                 : pc->output_inst.var_index;
+                    fprintf(out, "   lea  rdi, [rel strlit_%d]\n", strIdx);
+                    fprintf(out, "   xor  eax, eax\n");
+                    fprintf(out, "   call printf\n");
+                }
+                break;
+            }
+
+            case CJMP:
+            {
+                fprintf(out, "    mov  rax, %s\n", slot(pc->cjmp_inst.operand1_index).c_str());
+                fprintf(out, "    cmp  rax, %s\n", slot(pc->cjmp_inst.operand2_index).c_str());
+                int targetLabel = labelMap[pc->cjmp_inst.target];
+                switch (pc->cjmp_inst.condition_op)
+                {
+                    case CONDITION_GREATER:
+                    {
+                        // pass if op1 > op2 -> jump to target if op1 <= op2
+                        fprintf(out, "    jle  .L%d\n", targetLabel);
+                        break;
+                    }
+                    case CONDITION_LESS:
+                    {
+                        // pass if op1 < op2 -> jump to target if op1 >= op2
+                        fprintf(out, "    jge  .L%d\n", targetLabel);
+                        break;
+                    }
+                    case CONDITION_NOTEQUAL:
+                    {
+                        // pass if op1 != op2 -> jump to target if op1 == op2
+                        fprintf(out, "    je  .L%d\n", targetLabel);
+                        break;
+                    }
+                }
+                break;
+            }
+
+            case JMP:
+            {
+                int targetLabel = labelMap[pc->jmp_inst.target];
+                fprintf(out, "    jmp  .L%d\n", targetLabel);   
+                break;
+            }
+
+            case CALL:
+            {
+                // save caller-saved registers used by us
+                fprintf(out, "    jle  .L%d\n", (void*)pc->call_inst.function_head);
+                // copy args into param slots before jumping
+                for (int i = 0;i < pc->call_inst.num_params;i++)
+                {
+                    fprintf(out, "    mov  rax, %s\n", slot(pc->call_inst.arg_val_slots[i]).c_str());
+                    fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.param_slots[i]).c_str());
+                }
+                // we use label-based call for now - functions labels emitted separately
+                fprintf(out, "    call func_%p\n", (void*)pc->call_inst.function_head);
+                fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.ret_val_index).c_str());
+                break;
+            }
+
+            case RET:
+            {
+                fprintf(out, "    call func_%p\n", slot(pc->ret_inst.ret_val_index).c_str());
+                fprintf(out, "    leave\n");
+                fprintf(out, "    ret\n");
+                break;
+            }
+            default:
+            {
+                fprintf(out, "    ; unhandled IR type %d\n", pc->type);
+                break;
+            }
+        }
+        pc = pc->next;
+    }
+
+    // main exit
+    fprintf(out, "\n    ; program exit\n");
+    fprintf(out, "    xor  eax, eax\n");
+    fprintf(out, "    leave\n");
+    fprintf(out, "    ret\n");
+
+    fclose(out);
+    printf("Assembly written to: %s\n", outputFile.c_str());
+}
+
 void run_repl()
 {
     printf("\n");
@@ -688,6 +1801,9 @@ int main(int argc, char* argv[])
     bool flag_benchmark = false;
     bool flag_repl = false;
     int  bench_iters    = 10000;
+    bool flag_emit_asm = false;
+    bool flag_build = false;
+    string asmFile = "";
 
     for (int i = 1; i < argc; i++)
     {
@@ -695,6 +1811,8 @@ int main(int argc, char* argv[])
         if (arg == "--dump-ir")   { flag_dump_ir   = true; continue; }
         if (arg == "--optimize")  { flag_optimize  = true; continue; }
         if (arg == "--benchmark") { flag_benchmark = true; continue; }
+        if (arg == "--emit-asm")  { flag_emit_asm  = true; continue; }
+        if (arg == "--build")     { flag_build     = true; continue; }
         if (arg == "--repl") { flag_repl = true; continue; }
         if (arg[0] != '-')       { inputFile = arg; continue; }
 
@@ -745,8 +1863,61 @@ int main(int argc, char* argv[])
     {
         int folds   = constant_fold(program);
         int removed = remove_self_copies(program);
-        fprintf(stderr, "FOLDS:%d\n",   folds);
+        int simplified = algaebric_simplify(program);
+        removed += remove_self_copies(program);
+        int propogated = copy_propogate(program);
+        removed += remove_self_copies(program);
+        int eliminated = dead_code_eliminate(program);
+        removed += remove_self_copies(program);
+        int hoisted = loop_invariant_code_motion(program);
+        int inlined = inline_functions(program);
+        // removed += remove_self_copies(program);
+        fprintf(stderr, "FOLDS:%d\n", folds);
         fprintf(stderr, "REMOVED:%d\n", removed);
+        fprintf(stderr, "SIMPLIFIED:%d\n", simplified);
+        fprintf(stderr, "PROPAGATED:%d\n", propogated);
+        fprintf(stderr, "ELIMINATED:%d\n", eliminated);
+        fprintf(stderr, "HOISTED:%d\n", hoisted);
+        fprintf(stderr, "INLINED:%d\n", inlined);
+    }
+
+    if (flag_emit_asm)
+    {
+        // derive output Filename from input (program.csl -> program.asm)
+        asmFile = inputFile;
+        size_t dot = asmFile.rfind('.');
+        if (dot != string::npos) asmFile = asmFile.substr(0, dot);
+        asmFile += ".asm";
+
+        generate_x86(program, asmFile);
+
+        if (flag_build)
+        {
+            // nasm -> object file
+            string objFile = asmFile.substr(0, asmFile.rfind('.')) + ".o";
+            string binFile = asmFile.substr(0, asmFile.rfind('.'));
+
+            string nasmCmd = "nasm -f elf64 " + asmFile + " -o " + objFile;
+            string linkCmd = "gcc -o " + binFile + " " + objFile + " -no-pie";
+
+            fprintf(stderr, "Assembling: %s\n", nasmCmd.c_str());
+            int r1 = system(nasmCmd.c_str());
+            if (r1 != 0) 
+            {
+                fprintf(stderr, "nasm failed\n");
+                return 1;
+            }
+
+            fprintf(stderr, "Linking:    %s\n", linkCmd.c_str());
+            int r2 = system(linkCmd.c_str());
+            if (r2 != 0)
+            {
+                fprintf(stderr, "gcc link failed\n");
+                return 1;
+            }
+
+            fprintf(stderr, "Binary:     %s\n", binFile.c_str());   
+        }
     }
 
     // ── IR dump ───────────────────────────────────────────────────────────────
