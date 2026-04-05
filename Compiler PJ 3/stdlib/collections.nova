@@ -1,0 +1,23 @@
+class Stack {
+    int data_0 ;
+    int data_1 ;
+    int data_2 ;
+    int data_3 ;
+    int data_4 ;
+    int data_5 ;
+    int data_6 ;
+    int data_7 ;
+    int data_8 ;
+    int data_9 ;
+    int top ;
+
+    def init() {
+        self.top = 0;
+    }
+    def push(int val) {
+        self.top = self.top + 1;
+    }
+    def size() -> int {
+        return self.top;
+    }
+}

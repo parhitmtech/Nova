@@ -15,6 +15,8 @@
 #include <map>
 #include <set>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
 #include "lexer.h"
 #include "compiler.h"
 
@@ -36,6 +38,20 @@ struct CallFrame {
     vector<int> savedSlots;
 };
 
+// Map Definitions for Class 
+map<string, ClassDef> classTable;
+map<string, string> varClassType;
+map<string, map<string, int>> classFieldSlots;
+map<string, map<string, VarType>> classFieldTypes;
+map<string, map<string, InstructionNode*>> classMethodTable;
+map<string, map<string, vector<string>>> classMethodParams;
+map<string, map<string, vector<VarType>>> classMethodParamTypes;
+map<string, map<string, VarType>> classMethodReturnType;
+int currentSelfBase = -1;
+string currentSelfName = "";
+map<string, map<string, map<string, int>>> classMethodSelfSlots;
+map<string, map<string, map<string, VarType>>> classMethodSelfTypes;
+
 // Global memory vectors
 
 vector<int> mem;
@@ -45,6 +61,12 @@ vector<std::string> strMem;
 int next_str_available = 0;
 
 vector<int> freeList;
+
+vector<float> fmem;
+int next_float_available = 0;
+
+vector<double> dmem;
+int next_double_available = 0;
 
 // Slot allocator
 int alloc_slot()
@@ -65,6 +87,18 @@ void free_slot(int idx)
     freeList.push_back(idx);
 }
 
+int alloc_float_slot()
+{
+    fmem.push_back(0.0f);
+    return next_float_available++;
+}
+
+int alloc_double_slot()
+{
+    dmem.push_back(0.0);
+    return next_double_available++;
+}
+
 // ── Input replay buffer ───────────────────────────────────────────────────────
 // Used only during benchmark mode — captures inputs from first run
 // and replays them for subsequent timed runs
@@ -82,6 +116,121 @@ void debug(const char* format, ...)
         vfprintf(stdout, format, args);
         va_end(args);
     }
+}
+
+string read_file(const string& path)
+{
+    ifstream f(path);
+    if (!f.is_open())
+    {
+        cerr << "Error: cannot open file '" << path << "'\n";
+        return "";
+    }
+    ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+string get_stdlib_path()
+{
+    const char* nova_home = getenv("NOVA_HOME");
+    if (!nova_home)
+    {
+        cerr << "Error: NOVA_HOME environment variable is not set.\n";
+        cerr << "       Set it to your Nova install directory (e.g. export NOVA_HOME=/usr/local/nova)\n";
+        return "";
+    }
+    string path = string(nova_home);
+    // normalize: strip trailing slash if present
+    if (!path.empty() && (path.back() == '/' || path.back() == '\\'))
+    {
+        path.pop_back();
+    }
+    return path + "/stdlib";
+}
+
+string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported)
+{
+    string result;
+    istringstream stream(src);
+    string line;
+
+    while (getline(stream, line))
+    {
+        // trim leading whitespace for matching
+        string trimmed = line;
+        size_t start = trimmed.find_first_not_of(" \t");
+        if (start != string::npos) trimmed = trimmed.substr(start);
+
+        // mathc: import "file.nova";
+        if (trimmed.size() > 8 && trimmed.substr(0, 7) == "import " && trimmed[7] == '"')
+        {
+            size_t close = trimmed.find('"', 8);
+            if (close != string::npos)
+            {
+                string filename = trimmed.substr(8, close - 8);
+                string full_path = base_dir + "/" + filename;
+
+                if (already_imported.count(full_path))
+                {
+                    // already included, skip silently
+                    continue;
+                }
+                already_imported.insert(full_path);
+
+                string file_src = read_file(full_path);
+                if (file_src.empty()) continue;
+
+                // get the directory of the imported file for nested imports
+                string imported_dir = full_path;
+                size_t last_slash = imported_dir.find_last_of("/\\");
+                if (last_slash != string::npos)
+                {
+                    imported_dir = imported_dir.substr(0, last_slash);
+                }
+                else
+                {
+                    imported_dir = ".";
+                }
+
+                string inlined = preprocess_import(file_src, imported_dir, already_imported);
+                result += inlined + "\n";
+                continue;
+            }
+        }
+
+        // match: import <package> ;
+        if (trimmed.size() > 8 && trimmed.substr(0, 7) == "import " && trimmed[7] == '<')
+        {
+            size_t close = trimmed.find('>', 8);
+            if (close != string::npos)
+            {
+                string pkg_name = trimmed.substr(8, close - 8);
+                string stdlib_dir = get_stdlib_path();
+                if (stdlib_dir.empty()) continue;
+
+                string full_path = stdlib_dir + "/" + pkg_name + ".nova";
+
+                if (already_imported.count(full_path))
+                {
+                    continue;
+                }
+                already_imported.insert(full_path);
+
+                string file_src = read_file(full_path);
+                if (file_src.empty()) continue;
+
+                string inlined = preprocess_import(file_src, stdlib_dir, already_imported);
+                result += inlined + "\n";
+                continue;
+            }
+        }
+
+        // not an import line - keep it as it is
+        result += line + "\n";
+    }
+
+    return result;
 }
 
 void execute_program(struct InstructionNode* program)
@@ -129,8 +278,18 @@ void execute_program(struct InstructionNode* program)
                         int strIdx = pc->output_inst.is_string_var ? mem[pc->output_inst.var_index] : pc->output_inst.var_index;
                         printf("%s", strMem[strIdx].c_str());
                     }
+                    else if (pc->output_inst.value_type == TYPE_FLOAT)
+                    {
+                        printf("%f", fmem[pc->output_inst.var_index]);
+                    }
+                    else if (pc->output_inst.value_type == TYPE_DOUBLE)
+                    {
+                        printf("%lf", dmem[pc->output_inst.var_index]);
+                    }
                     else
+                    {
                         printf("%d", mem[pc->output_inst.var_index]);
+                    }
                     if (pc->output_inst.newline)
                         printf("\n");
                     else
@@ -345,6 +504,98 @@ void execute_program(struct InstructionNode* program)
                     case CONDITION_NOTEQUAL: pass = (left != right); break;
                 }
                 pc = pass ? pc->next : pc->scmp_inst.target;
+                break;
+            }
+
+            case ASSIGN_F:
+            {
+                float op1f, op2f, resultf;
+                switch (pc->assign_f_inst.op)
+                {
+                    case OPERATOR_PLUS: 
+                    {
+                        resultf = fmem[pc->assign_f_inst.operand1_index] + fmem[pc->assign_f_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_MINUS:
+                    {
+                        resultf = fmem[pc->assign_f_inst.operand1_index] - fmem[pc->assign_f_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_MULT:
+                    {
+                        resultf = fmem[pc->assign_f_inst.operand1_index] * fmem[pc->assign_f_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_DIV:
+                    {
+                        resultf = fmem[pc->assign_f_inst.operand1_index] / fmem[pc->assign_f_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_NONE:
+                    {
+                        resultf = fmem[pc->assign_f_inst.operand1_index];
+                        break;
+                    }
+                }
+                fmem[pc->assign_f_inst.left_hand_side_index] = resultf;
+                pc = pc->next;
+                break;
+            }
+
+            case ASSIGN_D:
+            {
+                double op1d, op2d, resultd;
+                switch (pc->assign_d_inst.op)
+                {
+                    case OPERATOR_PLUS:
+                    {
+                        resultd = dmem[pc->assign_d_inst.operand1_index] + dmem[pc->assign_d_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_MINUS:
+                    {
+                        resultd = dmem[pc->assign_d_inst.operand1_index] - dmem[pc->assign_d_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_MULT:
+                    {
+                        resultd = dmem[pc->assign_d_inst.operand1_index] * dmem[pc->assign_d_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_DIV:
+                    {
+                        resultd = dmem[pc->assign_d_inst.operand1_index] / dmem[pc->assign_d_inst.operand2_index];
+                        break;
+                    }
+                    case OPERATOR_NONE:
+                    {
+                        resultd = dmem[pc->assign_d_inst.operand1_index];
+                        break;
+                    }
+                } 
+                dmem[pc->assign_d_inst.left_hand_side_index] = resultd;
+                pc = pc->next;
+                break;
+            }
+
+            case CAST:
+            {
+                int si = pc->cast_inst.src_index;
+                int di = pc->cast_inst.dst_index;
+                VarType st = pc->cast_inst.src_type;
+                VarType dt = pc->cast_inst.dst_type;
+
+                double val = 0.0;
+                if (st == TYPE_INT) val = (double)mem[si];
+                else if (st == TYPE_FLOAT) val = (float)fmem[si];
+                else if (st == TYPE_DOUBLE) val = (double)dmem[si];
+
+                if (dt == TYPE_INT) mem[di] = (int)val;
+                else if (dt == TYPE_FLOAT) fmem[di] = (float)val;
+                else if (dt == TYPE_DOUBLE) dmem[di] = (double)val;
+
+                pc = pc->next;
                 break;
             }
 
@@ -1791,7 +2042,7 @@ void run_repl()
     }
 }
 
-// ── main ──────────────────────────────────────────────────────────────────────
+// main 
 
 int main(int argc, char* argv[])
 {
@@ -1828,14 +2079,14 @@ int main(int argc, char* argv[])
         return 1;
     }
 
-    // ── REPL mode ───────────────────────────────────────────
+    // REPL mode 
     if (flag_repl)
     {
         run_repl();
         return 0;
     }
 
-    // ── file mode ─────────────────────────────────────────────────────────────
+    // file mode 
     if (!inputFile.empty())
     {
         if (inputFile.size() < 5 ||
@@ -1852,13 +2103,29 @@ int main(int argc, char* argv[])
         }
         fclose(test);
 
-        lexer.InitializeFromFile(inputFile);
+        string raw_source = read_file(inputFile);
+        string base_dir = inputFile;
+        size_t last_slash = base_dir.find_last_of("/\\");
+        base_dir = (last_slash != string::npos) ? base_dir.substr(0, last_slash) : ".";
+        set<string> already_imported;
+        string processed = preprocess_import(raw_source, base_dir, already_imported);
+        lexer.ReinitializeFromString(processed);
+    }
+    else
+    {
+        // stdin mode (./compiler < program.csl)
+        ostringstream raw_stream;
+        raw_stream << cin.rdbuf();
+        string raw_source = raw_stream.str();
+        set<string> already_imported;
+        string processed = preprocess_import(raw_source, ".", already_imported);
+        lexer.ReinitializeFromString(processed);
     }
 
-    // ── parse ─────────────────────────────────────────────────────────────────
+    // parse 
     struct InstructionNode* program = parse_generate_intermediate_representation();
 
-    // ── optimize ──────────────────────────────────────────────────────────────
+    // optimize 
     if (flag_optimize)
     {
         int folds   = constant_fold(program);
@@ -1920,11 +2187,11 @@ int main(int argc, char* argv[])
         }
     }
 
-    // ── IR dump ───────────────────────────────────────────────────────────────
+    // IR dump 
     if (flag_dump_ir)
         dump_ir(program);
 
-    // ── benchmark mode ────────────────────────────────────────────────────────
+    // benchmark mode 
     if (flag_benchmark)
     {
         int nodeCount = count_ir_nodes(program);
@@ -1956,7 +2223,7 @@ int main(int argc, char* argv[])
     }
     else
     {
-        // ── normal single execution ───────────────────────────────────────────
+        // normal single execution 
         input_replay_index = -1;  // live stdin mode
         execute_program(program);
     }

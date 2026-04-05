@@ -8,6 +8,8 @@
 
 #include <string>
 #include <vector>
+#include <map>
+#include <string>
 
 extern std::vector<int> mem;  // int memory - grows on demand
 extern int next_available;
@@ -17,17 +19,28 @@ extern int next_str_available;
 
 extern std::vector<int> freeList;  // recycled int slots
 
+extern std::vector<float> fmem;
+extern int next_float_available;
+
+extern std::vector<double> dmem;
+extern int next_double_available;
+
 // Slot Allocator
 // Use these everywhere instead of raw next_available++
 int alloc_slot();  // reuse freed slot grow mem
 void free_slot(int idx);  // return slot to free list
+int alloc_float_slot();  // reuse freed slot grow fmem
+int alloc_double_slot();  // reuse freed slot grow dmem
 
 // Variable type system 
 enum VarType {
-    TYPE_UNKNOWN = 0,   // untyped (auto-declared) — no type checking
-    TYPE_INT,           // int x = 5 ;
-    TYPE_BOOL,          // bool flag = true ;
-    TYPE_STRING         // string s = "hello" ;
+    TYPE_UNKNOWN = 0,    // untyped (auto-declared) — no type checking
+    TYPE_INT,            // int x = 5 ;
+    TYPE_BOOL,           // bool flag = true ;
+    TYPE_STRING,         // string s = "hello" ;
+    TYPE_FLOAT,          // float x = 3.14
+    TYPE_DOUBLE,         // double x = 3.14159265358979
+    TYPE_CLASS           // class instance
 };
 
 // Arithmetic operators 
@@ -51,11 +64,10 @@ enum InstructionType
 {
     NOOP = 1000,
     IN, OUT, ASSIGN, CJMP, JMP, CALL, RET,
-    ARRAY_READ,
-    ARRAY_WRITE,
-    ALLOC,
-    STRCAT,
-    SCMP
+    ARRAY_READ, ARRAY_WRITE, ALLOC, STRCAT, SCMP,
+    ASSIGN_F,  // float-arithmetic/assignment 
+    ASSIGN_D,  // double arithmetic/assignment
+    CAST    // explicit type cast
 };
 
 struct InstructionNode
@@ -86,6 +98,7 @@ struct InstructionNode
                                  // false = var_index is a direct strMem index
                                  //        (used for string literals)
             bool newline;
+            VarType value_type;  // TYPE_INT, TYPE_FLOAT, TYPE_DOUBLE, TYPE_STRING
         } output_inst;
 
         struct {
@@ -132,6 +145,27 @@ struct InstructionNode
         } scmp_inst;
 
         struct {
+            int left_hand_side_index;   // fmem index
+            int operand1_index;  // fmem index
+            int operand2_index;  // fmem index
+            ArithmeticOperatorType op;
+        } assign_f_inst;
+
+        struct {
+            int left_hand_side_index;  // dmem index
+            int operand1_index;  // dmem index
+            int operand2_index;  // dmem index
+            ArithmeticOperatorType op;
+        } assign_d_inst;
+
+        struct {
+            int src_index;  // source slot index
+            int dst_index;  // destination slot index
+            VarType src_type;  // TYPE_INT / TYPE_FLOAT / TYPE_DOUBLE
+            VarType dst_type;  // TYPE_INT / TYPE_FLOAT / TYPE_DOUBLE
+        } cast_inst;
+
+        struct {
             int base_index;
             bool dynamic_base;
             int index_slot;
@@ -146,6 +180,32 @@ struct InstructionNode
 };
 
 void debug(const char* format, ...);
+
+struct ClassFieldInfo {
+    std::string name;  // dotted for nested: "a.x"
+    VarType type;
+    std::string struct_type;  // non-empty if field is a struct/class
+};
+
+struct ClassDef {
+    std::string name;
+    std::string parent;
+    std::vector<ClassFieldInfo> fields;  // flattened: inherited first, then own
+    std::vector<std::string> methods;
+};
+
+extern std::map<std::string, ClassDef> classTable;
+extern std::map<std::string, std::string> varClassType;
+extern std::map<std::string, std::map<std::string, int>> classFieldSlots;
+extern std::map<std::string, std::map<std::string, VarType>> classFieldTypes;
+extern std::map<std::string, std::map<std::string, InstructionNode*>> classMethodTable;
+extern std::map<std::string, std::map<std::string, std::vector<std::string>>> classMethodParams;
+extern std::map<std::string, std::map<std::string, std::vector<VarType>>> classMethodParamTypes;
+extern std::map<std::string, std::map<std::string, VarType>> classMethodReturnType;
+extern int currentSelfBase;
+extern std::string currentSelfName;
+extern std::map<std::string, std::map<std::string, std::map<std::string, int>>> classMethodSelfSlots;
+extern std::map<std::string, std::map<std::string, std::map<std::string, VarType>>> classMethodSelfTypes;
 
 struct InstructionNode* parse_generate_intermediate_representation();
 void generate_x86(struct InstructionNode* program, const std::string& outputFile);

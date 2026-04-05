@@ -178,8 +178,8 @@
   /* ── Main layout ── */
   .main { display: flex; height: calc(100vh - 52px - 32px); }
 
-  /* ── Editor view ── */
-  #editor-view { display: flex; width: 100%; height: 100%; }
+  /* ── Editor view (flex:1 set in IDE section below) ── */
+  #editor-view-placeholder { display: none; }
 
   .panel { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
   .panel + .panel { border-left: 1px solid var(--border); }
@@ -400,12 +400,8 @@
 
   .mismatch-warning { background: #2d1b00; border: 1px solid #92400e; border-radius: 8px; padding: 10px 14px; font-size: 11px; color: var(--yellow); display: flex; align-items: center; gap: 8px; }
 
-  /* ── REPL view ── */
+  /* ── REPL view (flex:1 set in IDE section below) ── */
   #repl-view {
-    display: none;
-    flex-direction: column;
-    width: 100%;
-    height: 100%;
     background: var(--bg);
   }
 
@@ -545,6 +541,160 @@
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  /* ── Sidebar ── */
+  #sidebar {
+    width: 220px;
+    flex-shrink: 0;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .sidebar-header {
+    height: 36px;
+    display: flex;
+    align-items: center;
+    padding: 0 8px 0 16px;
+    gap: 2px;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .sidebar-title {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+    flex: 1;
+  }
+
+  .sidebar-action-btn {
+    width: 24px; height: 24px;
+    display: flex; align-items: center; justify-content: center;
+    background: none; border: none;
+    color: var(--muted); cursor: pointer;
+    border-radius: 4px; transition: color 0.15s, background 0.15s;
+  }
+  .sidebar-action-btn:hover { color: var(--text); background: var(--bg4); }
+
+  #file-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+
+  .tree-item {
+    display: flex; align-items: center;
+    height: 26px; padding: 0 8px;
+    cursor: pointer; user-select: none; gap: 5px;
+    position: relative; transition: background 0.1s;
+  }
+  .tree-item:hover { background: var(--bg3); }
+  .tree-item.active-file { background: var(--bg4); }
+  .tree-item.active-file::before {
+    content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+    width: 2px; background: var(--accent);
+  }
+
+  .tree-icon { font-size: 11px; flex-shrink: 0; width: 14px; text-align: center; color: var(--muted); }
+  .tree-label { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+  .tree-label.folder { color: var(--accent); }
+
+  .tree-input {
+    flex: 1; background: var(--bg4);
+    border: 1px solid var(--accent); border-radius: 3px;
+    color: var(--text); font-family: var(--font-mono); font-size: 12px;
+    padding: 1px 5px; outline: none;
+  }
+
+  /* ── Sidebar resizer ── */
+  .sidebar-resizer { width: 4px; background: var(--border); cursor: col-resize; transition: background 0.15s; flex-shrink: 0; }
+  .sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent); }
+
+  /* ── File tabs ── */
+  .file-tabs-bar {
+    height: 36px; background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: flex-end;
+    overflow-x: auto; overflow-y: hidden; flex-shrink: 0;
+    scrollbar-width: none;
+  }
+  .file-tabs-bar::-webkit-scrollbar { display: none; }
+
+  .file-tab {
+    height: 35px; display: flex; align-items: center; gap: 6px;
+    padding: 0 10px 0 12px; border-right: 1px solid var(--border);
+    background: var(--bg3); cursor: pointer; font-size: 12px;
+    color: var(--muted); white-space: nowrap; flex-shrink: 0;
+    transition: background 0.1s, color 0.1s;
+  }
+  .file-tab:hover { background: var(--bg4); color: var(--text); }
+  .file-tab.active { background: var(--bg); color: var(--text); border-top: 1px solid var(--accent); }
+
+  .file-tab-close {
+    width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+    border-radius: 3px; background: none; border: none; color: var(--hint);
+    cursor: pointer; font-size: 15px; line-height: 1; padding: 0;
+    transition: color 0.1s, background 0.1s;
+  }
+  .file-tab-close:hover { color: var(--text); background: var(--bg3); }
+  .file-tab.active .file-tab-close { color: var(--muted); }
+
+  /* ── Context menu ── */
+  .ctx-menu {
+    position: fixed; background: var(--bg3);
+    border: 1px solid var(--border2); border-radius: 6px;
+    padding: 4px; z-index: 9999; min-width: 150px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  }
+  .ctx-item {
+    font-family: var(--font-mono); font-size: 12px; color: var(--text);
+    padding: 5px 10px; border-radius: 4px; cursor: pointer; transition: background 0.1s;
+  }
+  .ctx-item:hover { background: var(--bg4); }
+  .ctx-item.danger { color: var(--red); }
+  .ctx-separator { height: 1px; background: var(--border); margin: 4px 0; }
+
+  /* editor-view and repl-view fill remaining space */
+  #editor-view { display: flex; flex: 1; height: 100%; }
+  #repl-view    { display: none; flex-direction: column; flex: 1; height: 100%; }
+
+  /* ── Monaco editor container ── */
+  #monaco-editor { flex: 1; overflow: hidden; }
+
+  /* ── Tab row + editor toolbar ── */
+  .tabs-row { display: flex; align-items: stretch; background: var(--bg2); border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .tabs-row .file-tabs-bar { flex: 1; border-bottom: none; }
+  .editor-toolbar { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-left: 1px solid var(--border); flex-shrink: 0; }
+  .toolbar-btn {
+    width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+    background: none; border: none; color: var(--muted); cursor: pointer;
+    border-radius: 4px; transition: color 0.15s, background 0.15s;
+  }
+  .toolbar-btn:hover { color: var(--text); background: var(--bg4); }
+
+  /* ── Git status badges ── */
+  .git-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 700; margin-left: auto; padding-right: 8px; flex-shrink: 0; }
+  .git-M { color: #e2a400; }
+  .git-U { color: #4ade80; }
+  .git-A { color: #4ade80; }
+  .git-D { color: #f87171; }
+  .git-R { color: #38bdf8; }
+  .file-tab-git { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+  .file-tab-git.git-M { background: #e2a400; }
+  .file-tab-git.git-U { background: #4ade80; }
+  .file-tab-git.git-A { background: #4ade80; }
+  .file-tab-git.git-D { background: #f87171; }
+  .file-tab-git.git-R { background: #38bdf8; }
+
+  /* ── Drag-and-drop visual ── */
+  .tree-item.drag-over {
+    background: rgba(56, 189, 248, 0.08);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .tree-item.dragging-src { opacity: 0.4; }
 </style>
 </head>
 <body>
@@ -598,24 +748,56 @@
   </div>
 </div>
 
+<!-- Context menu (shared) -->
+<div id="ctx-menu" class="ctx-menu" style="display:none;"></div>
+
 <!-- Main area -->
 <div class="main" id="main">
+
+  <!-- ── File Explorer Sidebar ── -->
+  <div id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Explorer</span>
+      <button class="sidebar-action-btn" onclick="startNewFile(null)" title="New File">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9 1H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6L9 1zm0 1.5L13.5 6H9V2.5z"/>
+          <path stroke="var(--bg2)" stroke-width="1.5" fill="none" d="M7.5 9.5v3M6 11h3"/>
+        </svg>
+      </button>
+      <button class="sidebar-action-btn" onclick="startNewFolder(null)" title="New Folder">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.418 0 .818.165 1.115.464L7.5 3.5H13.5A1.5 1.5 0 0 1 15 5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/>
+          <path stroke="var(--bg2)" stroke-width="1.5" fill="none" d="M8 7v4M6 9h4"/>
+        </svg>
+      </button>
+    </div>
+    <div id="file-tree"></div>
+  </div>
+  <div class="sidebar-resizer" id="sidebar-resizer"></div>
 
   <!-- ── Editor view ── -->
   <div id="editor-view">
 
     <!-- Left: editor + inputs -->
     <div class="panel" id="left-panel">
-      <div class="panel-header">
-        <span class="panel-title">Source</span>
-        <span class="panel-hint">Ctrl+Enter to run</span>
+      <div class="tabs-row">
+        <div class="file-tabs-bar" id="file-tabs"></div>
+        <div class="editor-toolbar">
+          <button class="toolbar-btn" onclick="triggerFind()"    title="Find (Ctrl+F)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+              <circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/>
+            </svg>
+          </button>
+          <button class="toolbar-btn" onclick="triggerReplace()" title="Find & Replace (Ctrl+H)">
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+              <circle cx="6.5" cy="5.5" r="3.5"/><line x1="9.5" y1="9" x2="13" y2="12.5"/>
+              <path d="M2 12h8M7 10l3 2-3 2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
       </div>
       <div class="editor-wrap">
-        <div class="gutter" id="gutter"></div>
-        <textarea class="code-area" id="code-area" spellcheck="false">{
-    x = input() ;
-    print(x * 2) ;
-}</textarea>
+        <div id="monaco-editor"></div>
       </div>
       <div class="inputs-section">
         <div class="inputs-header">
@@ -687,13 +869,14 @@
   <span class="statusbar-item">·</span>
   <span class="statusbar-item" id="bar-time"></span>
   <span style="margin-left:auto; display:flex; align-items:center; gap:6px;" id="editor-shortcuts">
-    <kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &nbsp;·&nbsp; <kbd>Tab</kbd> indent
+    <kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &nbsp;·&nbsp; <kbd>Tab</kbd> indent &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>F</kbd> find &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>H</kbd> replace
   </span>
   <span style="margin-left:auto; display:flex; align-items:center; gap:6px; display:none;" id="repl-shortcuts">
     <kbd>↑</kbd><kbd>↓</kbd> history &nbsp;·&nbsp; <kbd>Enter</kbd> send
   </span>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 <script>
 // ── Examples ──────────────────────────────────────────────────────────────────
 const EXAMPLES = {
@@ -753,56 +936,414 @@ function switchTab(tab) {
   }
 }
 
-// ── Line numbers ──────────────────────────────────────────────────────────────
-const codeArea   = document.getElementById('code-area');
+// ── Monaco-backed code area proxy ─────────────────────────────────────────────
 const inputsArea = document.getElementById('inputs-area');
-const gutter     = document.getElementById('gutter');
+let _monaco = null;
+const codeArea = {
+  get value() { return _monaco ? _monaco.getValue() : ''; },
+  set value(v) { if (_monaco) _monaco.setValue(v ?? ''); },
+  addEventListener() {},  // Monaco handles its own events
+  focus() { if (_monaco) _monaco.focus(); }
+};
+function updateGutter() {}  // no-op: Monaco renders line numbers natively
 
-function updateGutter() {
-  const lines = codeArea.value.split('\n').length;
-  let html = '';
-  for (let i = 1; i <= lines; i++) html += `<div class="gutter-line">${i}</div>`;
-  gutter.innerHTML = html;
-  gutter.scrollTop = codeArea.scrollTop;
-}
-
-codeArea.addEventListener('input', updateGutter);
-codeArea.addEventListener('scroll', () => { gutter.scrollTop = codeArea.scrollTop; });
-
-// ── Persist content ───────────────────────────────────────────────────────────
-const savedSource = localStorage.getItem('novacomp-source');
-const savedInputs = localStorage.getItem('novacomp-inputs');
-if (savedSource !== null) codeArea.value   = savedSource;
-if (savedInputs !== null) inputsArea.value = savedInputs;
-
-codeArea.addEventListener('input', () => { localStorage.setItem('novacomp-source', codeArea.value); });
-inputsArea.addEventListener('input', () => { localStorage.setItem('novacomp-inputs', inputsArea.value); });
-updateGutter();
-
-// ── Tab key ───────────────────────────────────────────────────────────────────
-codeArea.addEventListener('keydown', e => {
-  if (e.key === 'Tab') {
-    e.preventDefault();
-    const s = codeArea.selectionStart, end = codeArea.selectionEnd;
-    codeArea.value = codeArea.value.substring(0, s) + '  ' + codeArea.value.substring(end);
-    codeArea.selectionStart = codeArea.selectionEnd = s + 2;
-    updateGutter();
-    localStorage.setItem('novacomp-source', codeArea.value);
-  }
-  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); runCode(); }
-});
+inputsArea.addEventListener('input', saveCurrentFile);
+// (Tab indent + Ctrl+Enter are configured in Monaco init below)
 
 // ── Examples ──────────────────────────────────────────────────────────────────
 document.getElementById('examples-select').addEventListener('change', function() {
   if (this.value && EXAMPLES[this.value]) {
     codeArea.value   = EXAMPLES[this.value].source;
     inputsArea.value = EXAMPLES[this.value].inputs;
-    localStorage.setItem('novacomp-source', codeArea.value);
-    localStorage.setItem('novacomp-inputs', inputsArea.value);
-    updateGutter();
-    this.value = '';
+    saveCurrentFile(); updateGutter(); this.value = '';
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  File System  (localStorage-backed, VS Code-style explorer)
+// ─────────────────────────────────────────────────────────────────────────────
+
+let fsData       = null;  // { items:{id:item}, tabs:[id], active:id|null }
+let creatingItem = null;  // { parentId:string|null, isFolder:bool } | null
+
+function fsSave() { localStorage.setItem('novacomp-fs', JSON.stringify(fsData)); }
+function fsGenId() { return 'f' + Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+
+function fsLoad() {
+  try {
+    const raw = localStorage.getItem('novacomp-fs');
+    if (raw) { fsData = JSON.parse(raw); return; }
+  } catch (_) {}
+  // migrate from old single-file storage, or create fresh
+  const src = localStorage.getItem('novacomp-source') || '{\n    x = input() ;\n    print(x * 2) ;\n}';
+  const inp = localStorage.getItem('novacomp-inputs') || '';
+  const id  = 'file-main';
+  fsData = {
+    items: { [id]: { id, name: 'main.nova', isFolder: false, parentId: null, content: src, inputs: inp } },
+    tabs:  [id], active: id
+  };
+  fsSave();
+}
+
+function saveCurrentFile() {
+  if (!_monaco || !fsData?.active) return;
+  const f = fsData.items[fsData.active];
+  if (f && !f.isFolder) { f.content = codeArea.value; f.inputs = inputsArea.value; fsSave(); diskWrite(fsData.active); }
+}
+
+function openTab(id) {
+  if (!fsData.items[id] || fsData.items[id].isFolder) return;
+  saveCurrentFile();
+  if (!fsData.tabs.includes(id)) fsData.tabs.push(id);
+  fsData.active    = id;
+  codeArea.value   = fsData.items[id].content || '';
+  inputsArea.value = fsData.items[id].inputs  || '';
+  fsSave(); updateGutter(); renderExplorer(); renderTabs();
+}
+
+function closeTab(id, e) {
+  if (e) e.stopPropagation();
+  const idx = fsData.tabs.indexOf(id);
+  fsData.tabs = fsData.tabs.filter(t => t !== id);
+  if (fsData.active === id)
+    fsData.active = fsData.tabs[Math.max(0, idx - 1)] ?? fsData.tabs[0] ?? null;
+  fsSave();
+  const af = fsData.active ? fsData.items[fsData.active] : null;
+  codeArea.value   = af?.content || '';
+  inputsArea.value = af?.inputs  || '';
+  updateGutter(); renderExplorer(); renderTabs();
+}
+
+function fsDeleteItem(id) {
+  if (!fsData.items[id]) return;
+  diskDelete(id);
+  Object.values(fsData.items).filter(c => c.parentId === id).forEach(c => fsDeleteItem(c.id));
+  fsData.tabs = fsData.tabs.filter(t => t !== id);
+  if (fsData.active === id) fsData.active = fsData.tabs[0] ?? null;
+  delete fsData.items[id]; fsSave();
+  const af = fsData.active ? fsData.items[fsData.active] : null;
+  codeArea.value   = af?.content || '';
+  inputsArea.value = af?.inputs  || '';
+  updateGutter(); renderExplorer(); renderTabs();
+}
+
+function fsRenameItem(id, newName) {
+  if (!newName.trim() || !fsData.items[id]) return;
+  const oldPath = getFilePath(id);
+  fsData.items[id].name = newName.trim();
+  const newPath = getFilePath(id);
+  fsSave();
+  if (oldPath && newPath) diskRename(oldPath, newPath);
+  renderExplorer(); renderTabs();
+}
+
+function startNewFile(parentId) {
+  saveCurrentFile();
+  creatingItem = { parentId: parentId ?? null, isFolder: false };
+  if (parentId && fsData.items[parentId]) fsData.items[parentId].open = true;
+  renderExplorer();
+  setTimeout(() => { const i = document.getElementById('create-input'); if (i) i.focus(); }, 0);
+}
+
+function startNewFolder(parentId) {
+  creatingItem = { parentId: parentId ?? null, isFolder: true };
+  if (parentId && fsData.items[parentId]) fsData.items[parentId].open = true;
+  renderExplorer();
+  setTimeout(() => { const i = document.getElementById('create-input'); if (i) i.focus(); }, 0);
+}
+
+function commitCreate(name) {
+  if (!name.trim()) { creatingItem = null; renderExplorer(); return; }
+  const { parentId, isFolder } = creatingItem;
+  creatingItem = null;
+  const id = fsGenId();
+  if (isFolder) {
+    fsData.items[id] = { id, name: name.trim(), isFolder: true, parentId, open: true };
+    fsSave(); diskMkdir(id); renderExplorer();
+  } else {
+    fsData.items[id] = { id, name: name.trim(), isFolder: false, parentId, content: '', inputs: '' };
+    fsSave(); diskWrite(id); openTab(id);
+  }
+}
+
+// ── Context menu ──────────────────────────────────────────────────────────────
+const ctxMenuEl = document.getElementById('ctx-menu');
+
+function showCtxMenu(e, id) {
+  e.preventDefault(); e.stopPropagation();
+  const item = fsData.items[id];
+  ctxMenuEl.innerHTML = '';
+  if (item.isFolder) {
+    addCtxItem('New File Here',   () => startNewFile(id));
+    addCtxItem('New Folder Here', () => startNewFolder(id));
+    const sep = document.createElement('div'); sep.className = 'ctx-separator'; ctxMenuEl.appendChild(sep);
+  }
+  addCtxItem('Rename', () => startRename(id));
+  addCtxItem('Delete', () => { if (confirm(`Delete "${item.name}"?`)) fsDeleteItem(id); }, true);
+  ctxMenuEl.style.display = 'block';
+  requestAnimationFrame(() => {
+    const x = Math.min(e.clientX, window.innerWidth  - ctxMenuEl.offsetWidth  - 8);
+    const y = Math.min(e.clientY, window.innerHeight - ctxMenuEl.offsetHeight - 8);
+    ctxMenuEl.style.left = x + 'px'; ctxMenuEl.style.top = y + 'px';
+  });
+}
+
+function addCtxItem(label, fn, danger = false) {
+  const d = document.createElement('div');
+  d.className = 'ctx-item' + (danger ? ' danger' : ''); d.textContent = label;
+  d.addEventListener('click', () => { ctxMenuEl.style.display = 'none'; fn(); });
+  ctxMenuEl.appendChild(d);
+}
+
+document.addEventListener('click', () => { ctxMenuEl.style.display = 'none'; });
+
+// ── Inline rename ─────────────────────────────────────────────────────────────
+function startRename(id) {
+  renderExplorer();
+  requestAnimationFrame(() => {
+    const labelEl = document.querySelector(`.tree-item[data-id="${id}"] .tree-label`);
+    if (!labelEl) return;
+    const oldName = fsData.items[id].name;
+    const input   = document.createElement('input');
+    input.className = 'tree-input'; input.value = oldName;
+    labelEl.replaceWith(input); input.focus(); input.select();
+    let done = false;
+    function commit() {
+      if (done) return; done = true;
+      const n = input.value.trim();
+      if (n && n !== oldName) fsRenameItem(id, n); else renderExplorer();
+    }
+    input.addEventListener('blur', commit);
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { done = true; renderExplorer(); }
+    });
+  });
+}
+
+// ── Disk sync helpers ─────────────────────────────────────────────────────────
+
+function getFilePath(id) {
+  const item = fsData.items[id];
+  if (!item) return null;
+  if (!item.parentId) return item.name;
+  const parent = getFilePath(item.parentId);
+  return parent ? parent + '/' + item.name : item.name;
+}
+
+function diskWrite(id) {
+  const item = fsData.items[id];
+  if (!item || item.isFolder) return;
+  const p = getFilePath(id);
+  if (!p) return;
+  fetch('http://localhost:3001/fs/write', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: p, content: item.content || '' })
+  }).then(() => fetchGitStatus()).catch(() => {});
+}
+
+function diskDelete(id) {
+  const p = getFilePath(id);
+  if (!p) return;
+  fetch(`http://localhost:3001/fs/delete?path=${encodeURIComponent(p)}`,
+    { method: 'DELETE' }).catch(() => {});
+}
+
+function diskMkdir(id) {
+  const p = getFilePath(id);
+  if (!p) return;
+  fetch('http://localhost:3001/fs/mkdir', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: p })
+  }).catch(() => {});
+}
+
+function diskRename(oldPath, newPath) {
+  fetch('http://localhost:3001/fs/rename', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ from: oldPath, to: newPath })
+  }).then(() => fetchGitStatus()).catch(() => {});
+}
+
+// ── Git status ────────────────────────────────────────────────────────────────
+
+let gitStatus = {};  // { 'main.nova': 'M', 'examples/test.nova': 'U', ... }
+
+async function fetchGitStatus() {
+  try {
+    const res  = await fetch('http://localhost:3001/git/status', { signal: AbortSignal.timeout(2000) });
+    const data = await res.json();
+    gitStatus = data.status || {};
+    renderExplorer();
+    renderTabs();
+  } catch (_) {}
+}
+
+// ── Drag-and-drop state ───────────────────────────────────────────────────────
+let draggedId  = null;
+let dragOverId = null;
+
+function isDescendant(itemId, ancestorId) {
+  let cur = fsData.items[itemId];
+  while (cur && cur.parentId) {
+    if (cur.parentId === ancestorId) return true;
+    cur = fsData.items[cur.parentId];
+  }
+  return false;
+}
+
+function doDrop(targetParentId) {
+  if (!draggedId) return;
+  if (draggedId === targetParentId) return;
+  if (targetParentId && isDescendant(targetParentId, draggedId)) return;
+  fsData.items[draggedId].parentId = targetParentId ?? null;
+  if (targetParentId && fsData.items[targetParentId]) fsData.items[targetParentId].open = true;
+  fsSave(); draggedId = null; dragOverId = null; renderExplorer();
+}
+
+// ── Explorer render ───────────────────────────────────────────────────────────
+function getFileIcon(name) {
+  if (name.endsWith('.nova') || name.endsWith('.csl')) return '◆';
+  if (name.endsWith('.txt'))  return '≡';
+  return '·';
+}
+
+function renderExplorer() {
+  const tree = document.getElementById('file-tree');
+  tree.innerHTML = '';
+  renderTreeLevel(null, 0, tree);
+  // drop onto empty tree area = move to root
+  tree.addEventListener('dragover', e => {
+    if (!draggedId || e.target.closest('.tree-item')) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+  }, { once: false });
+  tree.addEventListener('drop', e => {
+    if (draggedId && !e.target.closest('.tree-item')) {
+      e.preventDefault(); doDrop(null);
+    }
+  }, { once: false });
+}
+
+function renderTreeLevel(parentId, depth, container) {
+  const kids = Object.values(fsData.items)
+    .filter(it => it.parentId === parentId)
+    .sort((a, b) => {
+      if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+
+  // inline create input at this tree level
+  if (creatingItem && creatingItem.parentId === parentId) {
+    const row = document.createElement('div');
+    row.className = 'tree-item'; row.style.paddingLeft = (8 + depth * 16) + 'px';
+    const icon = document.createElement('span');
+    icon.className = 'tree-icon'; icon.textContent = creatingItem.isFolder ? '▸' : getFileIcon('x.nova');
+    const inp = document.createElement('input');
+    inp.className = 'tree-input'; inp.id = 'create-input';
+    inp.placeholder = creatingItem.isFolder ? 'folder name' : 'filename.nova';
+    row.append(icon, inp); container.appendChild(row);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); commitCreate(inp.value); }
+      if (e.key === 'Escape') { creatingItem = null; renderExplorer(); }
+    });
+    inp.addEventListener('blur', () => { if (creatingItem) { creatingItem = null; renderExplorer(); } });
+  }
+
+  kids.forEach(item => {
+    const isDragOver = dragOverId === item.id;
+    const row = document.createElement('div');
+    row.className  = 'tree-item'
+      + (!item.isFolder && fsData.active === item.id ? ' active-file' : '')
+      + (item.id === draggedId ? ' dragging-src' : '')
+      + (isDragOver ? ' drag-over' : '');
+    row.dataset.id = item.id;
+    row.style.paddingLeft = (8 + depth * 16) + 'px';
+    row.draggable = true;
+
+    // ── drag source events ──────────────────────────────────────────────────
+    row.addEventListener('dragstart', e => {
+      draggedId = item.id;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', item.id);
+      setTimeout(() => renderExplorer(), 0);  // re-render to show .dragging-src
+    });
+    row.addEventListener('dragend', () => {
+      draggedId = null; dragOverId = null; renderExplorer();
+    });
+
+    if (item.isFolder) {
+      const arrow = document.createElement('span'); arrow.className = 'tree-icon'; arrow.textContent = item.open ? '▾' : '▸';
+      const label = document.createElement('span'); label.className = 'tree-label folder'; label.textContent = item.name;
+      row.append(arrow, label);
+      row.addEventListener('click', () => { item.open = !item.open; fsSave(); renderExplorer(); });
+
+      // ── drop target: folder ──────────────────────────────────────────────
+      row.addEventListener('dragover', e => {
+        if (!draggedId || draggedId === item.id || isDescendant(item.id, draggedId)) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+        if (dragOverId !== item.id) { dragOverId = item.id; renderExplorer(); }
+      });
+      row.addEventListener('dragleave', e => {
+        if (!e.currentTarget.contains(e.relatedTarget) && dragOverId === item.id) {
+          dragOverId = null; renderExplorer();
+        }
+      });
+      row.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation();
+        doDrop(item.id);
+      });
+    } else {
+      const icon  = document.createElement('span'); icon.className  = 'tree-icon';  icon.textContent  = getFileIcon(item.name);
+      const label = document.createElement('span'); label.className = 'tree-label'; label.textContent = item.name;
+      row.append(icon, label);
+      const gs = gitStatus[getFilePath(item.id)];
+      if (gs) {
+        const badge = document.createElement('span');
+        badge.className = 'git-badge git-' + gs[0];
+        badge.textContent = gs[0];
+        row.appendChild(badge);
+      }
+      row.addEventListener('click', () => openTab(item.id));
+
+      // ── drop target: file → move to same parent ──────────────────────────
+      row.addEventListener('dragover', e => {
+        if (!draggedId || draggedId === item.id) return;
+        e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+      });
+      row.addEventListener('drop', e => {
+        e.preventDefault(); e.stopPropagation();
+        doDrop(item.parentId ?? null);
+      });
+    }
+
+    row.addEventListener('contextmenu', e => showCtxMenu(e, item.id));
+    container.appendChild(row);
+    if (item.isFolder && item.open) renderTreeLevel(item.id, depth + 1, container);
+  });
+}
+
+// ── Tabs render ───────────────────────────────────────────────────────────────
+function renderTabs() {
+  const bar = document.getElementById('file-tabs');
+  bar.innerHTML = '';
+  fsData.tabs.forEach(id => {
+    const item = fsData.items[id]; if (!item) return;
+    const tab  = document.createElement('div');
+    tab.className = 'file-tab' + (fsData.active === id ? ' active' : '');
+    tab.addEventListener('click', () => openTab(id));
+    const gs = gitStatus[getFilePath(id)];
+    if (gs) {
+      const dot = document.createElement('span');
+      dot.className = 'file-tab-git git-' + gs[0];
+      tab.appendChild(dot);
+    }
+    const name  = document.createElement('span'); name.textContent = item.name;
+    const close = document.createElement('button');
+    close.className = 'file-tab-close'; close.textContent = '×';
+    close.addEventListener('click', e => closeTab(id, e));
+    tab.append(name, close); bar.appendChild(tab);
+  });
+}
 
 // ── Mode switch ───────────────────────────────────────────────────────────────
 const modeSelect      = document.getElementById('mode-select');
@@ -831,6 +1372,61 @@ function esc(s) {
 }
 
 function getInputs() { return inputsArea.value.trim(); }
+
+// ── Find / Find & Replace ─────────────────────────────────────────────────────
+function triggerFind() {
+  if (_monaco) _monaco.getAction('actions.find').run();
+}
+function triggerReplace() {
+  if (_monaco) _monaco.getAction('editor.action.startFindReplaceAction').run();
+}
+
+// ── Error markers (red squiggles) ────────────────────────────────────────────
+function parseCompilerErrors(errorText) {
+  if (!_monaco) return [];
+  const model   = _monaco.getModel();
+  const markers = [];
+  const rx      = /Error at line (\d+):\s*(.+)/g;
+  let match;
+  while ((match = rx.exec(errorText)) !== null) {
+    const lineNo  = parseInt(match[1], 10);
+    const message = match[2].trim();
+    const lineContent = (model && lineNo <= model.getLineCount())
+      ? model.getLineContent(lineNo) : '';
+    const startCol = (lineContent.search(/\S/) + 1) || 1;
+    const endCol   = lineContent.length + 1 || 2;
+    markers.push({
+      startLineNumber: lineNo, startColumn: startCol,
+      endLineNumber:   lineNo, endColumn:   endCol,
+      message, severity: monaco.MarkerSeverity.Error,
+    });
+  }
+  return markers;
+}
+
+function setEditorErrors(errorText) {
+  if (!_monaco) return;
+  monaco.editor.setModelMarkers(_monaco.getModel(), 'novacomp',
+    errorText ? parseCompilerErrors(errorText) : []);
+}
+
+function clearEditorErrors() {
+  if (!_monaco) return;
+  monaco.editor.setModelMarkers(_monaco.getModel(), 'novacomp', []);
+}
+
+// ── User symbol extractor (for autocomplete) ──────────────────────────────────
+function extractUserSymbols(code) {
+  const BUILTINS = new Set(['def','if','elif','else','while','for','switch','case','default','return','print','input','array']);
+  const seen = new Set();
+  let m;
+  const rxVar = /\b([a-zA-Z_]\w*)\s*=/g;
+  while ((m = rxVar.exec(code)) !== null)
+    if (!BUILTINS.has(m[1])) seen.add(m[1]);
+  const rxDef = /\bdef\s+([a-zA-Z_]\w*)\s*\(/g;
+  while ((m = rxDef.exec(code)) !== null) seen.add(m[1]);
+  return [...seen];
+}
 
 // ── Run dispatcher ────────────────────────────────────────────────────────────
 async function runCode() {
@@ -862,10 +1458,12 @@ async function runNormal() {
     if (data.error) {
       output.innerHTML = `<span class="output-error">${esc(data.error)}</span>`;
       setStatus('err', 'Error');
+      setEditorErrors(data.error);
     } else {
       output.innerHTML = `<span class="output-ok">${esc(data.output || '(no output)')}</span>`;
       setStatus('ok', 'Finished');
       if (data.ms) document.getElementById('bar-time').textContent = `${data.ms}ms`;
+      clearEditorErrors();
     }
   } catch(err) {
     const msg = err.name === 'TimeoutError'
@@ -1000,6 +1598,190 @@ document.addEventListener('mouseup', () => {
   if (!dragging) return;
   dragging = false; resizer.classList.remove('dragging');
   document.body.style.userSelect = ''; document.body.style.cursor = '';
+});
+
+// ── Sidebar resizer ───────────────────────────────────────────────────────────
+const sidebarEl      = document.getElementById('sidebar');
+const sidebarResizer = document.getElementById('sidebar-resizer');
+let sbDragging = false, sbStartX = 0, sbStartW = 0;
+
+sidebarResizer.addEventListener('mousedown', e => {
+  sbDragging = true; sbStartX = e.clientX;
+  sbStartW   = sidebarEl.getBoundingClientRect().width;
+  sidebarResizer.classList.add('dragging');
+  document.body.style.userSelect = 'none'; document.body.style.cursor = 'col-resize';
+});
+document.addEventListener('mousemove', e => {
+  if (!sbDragging) return;
+  const newW = Math.min(Math.max(sbStartW + (e.clientX - sbStartX), 120), 500);
+  sidebarEl.style.width = newW + 'px';
+});
+document.addEventListener('mouseup', () => {
+  if (!sbDragging) return;
+  sbDragging = false; sidebarResizer.classList.remove('dragging');
+  document.body.style.userSelect = ''; document.body.style.cursor = '';
+});
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+fsLoad();
+if (fsData.active && fsData.items[fsData.active]) {
+  inputsArea.value = fsData.items[fsData.active].inputs || '';
+}
+// sync all existing localStorage files to disk on first load
+Object.values(fsData.items).forEach(item => {
+  if (!item.isFolder) diskWrite(item.id);
+  else diskMkdir(item.id);
+});
+renderExplorer();
+renderTabs();
+fetchGitStatus();
+setInterval(fetchGitStatus, 5000);
+
+// ── Monaco Editor init ────────────────────────────────────────────────────────
+require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
+require(['vs/editor/editor.main'], function() {
+
+  // Nova language syntax definition
+  monaco.languages.register({ id: 'nova' });
+  monaco.languages.setMonarchTokensProvider('nova', {
+    keywords: ['def', 'if', 'elif', 'else', 'while', 'for', 'switch', 'case', 'default', 'return'],
+    builtins: ['print', 'input', 'array'],
+    tokenizer: {
+      root: [
+        [/\/\/.*$/,           'comment'],
+        [/"[^"]*"/,           'string'],
+        [/\b\d+(\.\d+)?\b/,  'number'],
+        [/[a-zA-Z_]\w*/, { cases: {
+          '@keywords': 'keyword',
+          '@builtins': 'type.identifier',
+          '@default':  'identifier'
+        }}],
+        [/[{}()\[\]]/,        'delimiter.bracket'],
+        [/[+\-*\/=<>!&|]+/,  'operator'],
+        [/[;,]/,              'delimiter'],
+      ]
+    }
+  });
+
+  monaco.editor.defineTheme('nova-dark', {
+    base: 'vs-dark', inherit: true,
+    rules: [
+      { token: 'keyword',          foreground: '38bdf8', fontStyle: 'bold' },
+      { token: 'type.identifier',  foreground: '4ade80' },
+      { token: 'string',           foreground: 'fbbf24' },
+      { token: 'number',           foreground: 'fb923c' },
+      { token: 'comment',          foreground: '4a5568', fontStyle: 'italic' },
+      { token: 'operator',         foreground: 'a78bfa' },
+      { token: 'delimiter.bracket',foreground: 'e2e8f0' },
+    ],
+    colors: {
+      'editor.background':                  '#0c0e0f',
+      'editor.foreground':                  '#e2e8f0',
+      'editorLineNumber.foreground':        '#353c44',
+      'editorLineNumber.activeForeground':  '#6b7280',
+      'editor.selectionBackground':         '#1e3a5f',
+      'editor.lineHighlightBackground':     '#131618',
+      'editorCursor.foreground':            '#38bdf8',
+      'editor.inactiveSelectionBackground': '#1e3a5f80',
+    }
+  });
+
+  _monaco = monaco.editor.create(document.getElementById('monaco-editor'), {
+    value:    fsData.active && fsData.items[fsData.active] ? (fsData.items[fsData.active].content || '') : '',
+    language: 'nova',
+    theme:    'nova-dark',
+    fontSize:  13,
+    fontFamily: "'JetBrains Mono', monospace",
+    lineNumbers: 'on',
+    minimap:  { enabled: false },
+    scrollBeyondLastLine: false,
+    tabSize:  2,
+    insertSpaces: true,
+    wordWrap: 'off',
+    automaticLayout: true,
+    scrollbar: { verticalScrollbarSize: 6, horizontalScrollbarSize: 6 },
+    overviewRulerLanes: 0,
+    renderLineHighlight: 'line',
+    padding: { top: 16, bottom: 16 },
+    fixedOverflowWidgets: true,
+  });
+
+  // Ctrl+Enter to run  (Ctrl+F / Ctrl+H are Monaco built-ins, always active)
+  _monaco.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runCode);
+
+  // Auto-save + clear error squiggles on every edit
+  _monaco.onDidChangeModelContent(() => { saveCurrentFile(); clearEditorErrors(); });
+
+  // ── Autocomplete provider ────────────────────────────────────────────────────
+  const KW      = monaco.languages.CompletionItemKind.Keyword;
+  const FN      = monaco.languages.CompletionItemKind.Function;
+  const SNIPPET = monaco.languages.CompletionItemKind.Snippet;
+  const VAR     = monaco.languages.CompletionItemKind.Variable;
+  const AS_SNIPPET = monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+
+  monaco.languages.registerCompletionItemProvider('nova', {
+    provideCompletionItems(model, position) {
+      const word  = model.getWordUntilPosition(position);
+      const range = {
+        startLineNumber: position.lineNumber, endLineNumber: position.lineNumber,
+        startColumn:     word.startColumn,    endColumn:    word.endColumn,
+      };
+
+      const suggestions = [
+        // keywords
+        { label: 'return',  kind: KW,      insertText: 'return',  range },
+        { label: 'elif',    kind: KW,      insertText: 'elif',    range },
+        { label: 'else',    kind: KW,      insertText: 'else',    range },
+        { label: 'case',    kind: KW,      insertText: 'case',    range },
+        { label: 'default', kind: KW,      insertText: 'default', range },
+
+        // builtins with snippet args
+        { label: 'print',   kind: FN,
+          insertText: 'print(${1:value}) ;', insertTextRules: AS_SNIPPET,
+          detail: 'print(value) — print to stdout', range },
+        { label: 'input',   kind: FN,
+          insertText: 'input()',
+          detail: 'input() — read next stdin line', range },
+        { label: 'array',   kind: FN,
+          insertText: 'array(${1:size})', insertTextRules: AS_SNIPPET,
+          detail: 'array(size) — allocate array', range },
+
+        // control-flow snippets
+        { label: 'if',      kind: SNIPPET,
+          insertText: 'if ${1:condition} {\n\t$0\n}', insertTextRules: AS_SNIPPET,
+          detail: 'if statement', range },
+        { label: 'if-else', kind: SNIPPET,
+          insertText: 'if ${1:condition} {\n\t$0\n} else {\n\t\n}', insertTextRules: AS_SNIPPET,
+          detail: 'if / else block', range },
+        { label: 'elif',    kind: SNIPPET,
+          insertText: 'elif ${1:condition} {\n\t$0\n}', insertTextRules: AS_SNIPPET,
+          detail: 'elif branch', range },
+        { label: 'while',   kind: SNIPPET,
+          insertText: 'while ${1:condition} {\n\t$0\n}', insertTextRules: AS_SNIPPET,
+          detail: 'while loop', range },
+        { label: 'for',     kind: SNIPPET,
+          insertText: 'for(${1:i} = 0 ; ${1:i} < ${2:n} ; ${1:i} = ${1:i} + 1) {\n\t$0\n}',
+          insertTextRules: AS_SNIPPET, detail: 'for loop', range },
+        { label: 'switch',  kind: SNIPPET,
+          insertText: 'switch(${1:expr}) {\n\tcase ${2:1}: {\n\t\t$0\n\t}\n\tdefault: {\n\t}\n}',
+          insertTextRules: AS_SNIPPET, detail: 'switch statement', range },
+        { label: 'def',     kind: SNIPPET,
+          insertText: 'def ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules: AS_SNIPPET,
+          detail: 'function definition', range },
+        { label: 'main',    kind: SNIPPET,
+          insertText: '{\n\t$0\n}', insertTextRules: AS_SNIPPET,
+          detail: 'main program block', range },
+      ];
+
+      // user-defined variables and function names from current file
+      extractUserSymbols(model.getValue()).forEach(sym => {
+        if (!suggestions.some(s => s.label === sym && s.kind !== VAR))
+          suggestions.push({ label: sym, kind: VAR, insertText: sym, range });
+      });
+
+      return { suggestions };
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

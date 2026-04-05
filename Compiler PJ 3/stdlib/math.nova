@@ -1,0 +1,40 @@
+def abs_val(int x) -> int {
+    if x < 0 {
+        return 0 - x ;
+    }
+    return x;
+}
+
+def max_val(int a, int b) -> int {
+    if a > b {
+        return a ;
+    }
+    return b ;
+}
+
+def min_val(int a, int b) -> int {
+    if a < b {
+        return a ;
+    }
+    return b ;
+}
+
+def clamp(int val, int lo, int hi) -> int {
+    if val < lo {
+        return lo ;
+    }
+    if val > hi {
+        return hi ;
+    }
+    return val ;
+}
+
+def pow_int(int base, int exp) -> int {
+    int result = 1 ;
+    int i = 0 ;
+    while i < exp {
+        result = result * base;
+        i = i + 1;
+    }
+    return result;
+}
