@@ -25,6 +25,11 @@ const BINARY = path.resolve(
   process.platform === "win32" ? "./compiler.exe" : "./compiler"
 );
 
+// ── Workspace (persistent user files) ────────────────────────────────────────
+const WORKSPACE     = path.resolve(__dirname, "workspace");
+const WORKSPACE_REL = "workspace"; // relative to __dirname for git paths
+if (!fs.existsSync(WORKSPACE)) fs.mkdirSync(WORKSPACE, { recursive: true });
+
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_SOURCE_LENGTH  = 10_000;
@@ -85,6 +90,25 @@ app.use((req, _res, next) => {
   }
   next();
 });
+
+// ── Stderr Filter ─────────────────────────────────────────────────────────────
+// Strip internal debug lines that should never reach the user.
+const DEBUG_PREFIXES = [
+  "PASSIGN:", "DEBUG OUT:", "DEBUG:", "EXEC START:", "EXEC OUT:",
+  "EXEC ASSIGN_F:", "IR:", "FOLDS:", "REMOVED:", "BENCH_US:",
+  "BENCH_NODES:", "BENCH_ITERS:",
+];
+
+function filterStderr(raw) {
+  if (!raw) return "";
+  return raw
+    .split("\n")
+    .filter(line => {
+      const t = line.trim();
+      return t.length > 0 && !DEBUG_PREFIXES.some(p => t.startsWith(p));
+    })
+    .join("\n");
+}
 
 // ── Input Helpers ─────────────────────────────────────────────────────────────
 
@@ -220,7 +244,7 @@ app.post("/run", async (req, res) => {
     log("info", "Execution finished", { ms, exitCode, stdoutLength: stdout.length, activeExecutions });
     if (stdout && stdout.trim().length > 0)
       return res.json({ output: stdout, ms });
-    const msg = stderr?.trim() || "Unknown runtime error.";
+    const msg = filterStderr(stderr) || "Unknown runtime error.";
     return res.json({ error: msg, ms });
   } catch (e) {
     if (e.type === "timeout")
@@ -295,6 +319,87 @@ app.post("/compare", async (req, res) => {
     activeExecutions -= 2;
     cleanupTempFile(tmpFile, tmpDir);
   }
+});
+
+// ── Filesystem helpers ────────────────────────────────────────────────────────
+
+function safeWorkspacePath(rel) {
+  const resolved = path.resolve(WORKSPACE, rel || "");
+  if (!resolved.startsWith(WORKSPACE + path.sep) && resolved !== WORKSPACE)
+    return null;
+  return resolved;
+}
+
+// ── POST /fs/write  { path, content } ────────────────────────────────────────
+app.post("/fs/write", (req, res) => {
+  const target = safeWorkspacePath(req.body?.path);
+  if (!target) return res.status(400).json({ error: "Invalid path" });
+  try {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, req.body?.content ?? "", "utf8");
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── DELETE /fs/delete?path=... ────────────────────────────────────────────────
+app.delete("/fs/delete", (req, res) => {
+  const target = safeWorkspacePath(req.query?.path);
+  if (!target) return res.status(400).json({ error: "Invalid path" });
+  try {
+    fs.rmSync(target, { recursive: true, force: true });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /fs/mkdir  { path } ──────────────────────────────────────────────────
+app.post("/fs/mkdir", (req, res) => {
+  const target = safeWorkspacePath(req.body?.path);
+  if (!target) return res.status(400).json({ error: "Invalid path" });
+  try {
+    fs.mkdirSync(target, { recursive: true });
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── POST /fs/rename  { from, to } ────────────────────────────────────────────
+app.post("/fs/rename", (req, res) => {
+  const src  = safeWorkspacePath(req.body?.from);
+  const dest = safeWorkspacePath(req.body?.to);
+  if (!src || !dest) return res.status(400).json({ error: "Invalid path" });
+  try {
+    fs.mkdirSync(path.dirname(dest), { recursive: true });
+    fs.renameSync(src, dest);
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── GET /git/status ───────────────────────────────────────────────────────────
+app.get("/git/status", (_req, res) => {
+  const { exec } = require("child_process");
+  exec(`git status --porcelain -- ${WORKSPACE_REL}/`, { cwd: __dirname }, (err, stdout) => {
+    if (err) return res.json({ status: {}, error: err.message });
+    const status = {};
+    const prefix = WORKSPACE_REL + "/";
+    stdout.split("\n").forEach(line => {
+      if (line.length < 4) return;
+      const xy   = line.slice(0, 2);           // e.g. " M", "??", "R "
+      let   file = line.slice(3).trim();        // e.g. "workspace/main.nova"
+      // handle renames: "old -> new"
+      if (file.includes(" -> ")) file = file.split(" -> ")[1];
+      if (file.startsWith(prefix)) file = file.slice(prefix.length);
+      const code = xy.trim() || xy[1];         // prefer non-space char
+      status[file] = code === "?" ? "U" : code; // untracked shown as U like VS Code
+    });
+    res.json({ status });
+  });
 });
 
 // ── GET /health ───────────────────────────────────────────────────────────────

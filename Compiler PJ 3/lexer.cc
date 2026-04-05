@@ -26,8 +26,14 @@ string reserved[] = { "END_OF_FILE",
     "AND", "OR", "NOT",
     // type keywords (new)
     "INT_TYPE", "BOOL_TYPE", "STRING_TYPE",
+    // float/double type keywords
+    "FLOAT_TYPE", "DOUBLE_TYPE",
     // bool literals (new)
     "TRUE", "FALSE",
+    // struct and class keywords
+    "STRUCT", "CLASS", "EXTENDS", "SELF", "IMPORT",
+    // punctuation 
+    "DOT",
     // arithmetic
     "PLUS", "MINUS", "DIV", "MULT",
     // punctuation
@@ -38,7 +44,7 @@ string reserved[] = { "END_OF_FILE",
     // arrow (new)
     "ARROW",
     // literals + misc
-    "NUM", "ID", "STRING", "ERROR"
+    "NUM", "FLOAT_LITERAL", "ID", "STRING", "ERROR"
 };
 
 // FOR IF ELIF WHILE SWITCH CASE DEFAULT      (7)
@@ -47,7 +53,7 @@ string reserved[] = { "END_OF_FILE",
 // AND OR NOT                                 (3)
 // INT_TYPE BOOL_TYPE STRING_TYPE             (3)  ← new
 // TRUE FALSE                                 (2)  ← new
-#define KEYWORDS_COUNT 21
+#define KEYWORDS_COUNT 28
 
 void Token::Print()
 {
@@ -156,8 +162,12 @@ int LexicalAnalyzer::FindKeywordIndex(string s)
         "and", "or", "not",
         // 17–19  ← new type keywords
         "int", "bool", "string",
-        // 20–21  ← new bool literals
-        "true", "false"
+        // 20-21 float/double type keywords
+        "float", "double",
+        // 22–23  ← new bool literals
+        "true", "false",
+        // 24 - struct keyword
+        "struct", "class", "extends", "self", "import"
     };
 
     for (int i = 0; i < KEYWORDS_COUNT; i++) {
@@ -171,28 +181,44 @@ int LexicalAnalyzer::FindKeywordIndex(string s)
 Token LexicalAnalyzer::ScanNumber()
 {
     char c;
-
     input.GetChar(c);
     if (isdigit(c)) {
-        if (c == '0') {
-            tmp.lexeme = "0";
-        } else {
-            tmp.lexeme = "";
+        tmp.lexeme = "";
+        // scan integer part
+        while (!input.EndOfInput() && isdigit(c)) {
+            tmp.lexeme += c;
+            input.GetChar(c);
+        }
+        // check for decimal point or exponent → float literal
+        bool isFloat = false;
+        if (c == '.') {
+            isFloat = true;
+            tmp.lexeme += c;
+            input.GetChar(c);
             while (!input.EndOfInput() && isdigit(c)) {
                 tmp.lexeme += c;
                 input.GetChar(c);
             }
-            if (!input.EndOfInput()) {
-                input.UngetChar(c);
+        }
+        if (c == 'e' || c == 'E') {
+            isFloat = true;
+            tmp.lexeme += c;
+            input.GetChar(c);
+            if (c == '+' || c == '-') {
+                tmp.lexeme += c;
+                input.GetChar(c);
+            }
+            while (!input.EndOfInput() && isdigit(c)) {
+                tmp.lexeme += c;
+                input.GetChar(c);
             }
         }
-        tmp.token_type = NUM;
+        if (!input.EndOfInput()) input.UngetChar(c);
+        tmp.token_type = isFloat ? FLOAT_LITERAL : NUM;
         tmp.line_no = line_no;
         return tmp;
     } else {
-        if (!input.EndOfInput()) {
-            input.UngetChar(c);
-        }
+        if (!input.EndOfInput()) input.UngetChar(c);
         tmp.lexeme = "";
         tmp.token_type = ERROR;
         tmp.line_no = line_no;
@@ -314,6 +340,7 @@ Token LexicalAnalyzer::GetTokenMain()
         case ')':   tmp.token_type = RPAREN;    return tmp;
         case '{':   tmp.token_type = LBRACE;    return tmp;
         case '}':   tmp.token_type = RBRACE;    return tmp;
+        case '.':   tmp.token_type = DOT;       return tmp;
         case '>':   tmp.token_type = GREATER;   return tmp;
         case '<':
             input.GetChar(c);

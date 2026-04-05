@@ -25,7 +25,9 @@ typedef enum { END_OF_FILE = 0,
 
     // type keywords (new) 
     INT_TYPE, BOOL_TYPE, STRING_TYPE,
+    FLOAT_TYPE, DOUBLE_TYPE,
     TRUE, FALSE,
+    STRUCT, CLASS, EXTENDS, SELF, IMPORT,
 
     // operators 
     PLUS, MINUS, DIV, MULT,
@@ -39,9 +41,10 @@ typedef enum { END_OF_FILE = 0,
 
     // arrow operator (for function return type) 
     ARROW,
+    DOT,
 
     // literals + misc 
-    NUM, ID, STRING, ERROR
+    NUM, FLOAT_LITERAL, ID, STRING, ERROR
 
 } TokenType;
 

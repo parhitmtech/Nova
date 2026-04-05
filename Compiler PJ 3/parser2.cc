@@ -8,6 +8,9 @@
 #include <map>
 #include <vector>
 #include <stack>
+#include <set>
+#include <fstream>
+#include <sstream>
 #include "compiler.h"
 #include "lexer.h"
 
@@ -18,6 +21,8 @@ bool insideFunction = false;
 int  currentFuncRetIdx = -1;
 
 map<string, int> symbolTable;
+map<string, int> floatSymbolTable;
+map<string, int> doubleSymbolTable;
 LexicalAnalyzer lexer;
 Token token;
 
@@ -32,9 +37,32 @@ map<string, pair<int,int>> functionSlotRange;
 map<string, VarType> typeTable;
 map<string, VarType> functionReturnType;
 map<string, vector<VarType>> functionParamTypes;
+map<string, vector<int>> functionParamSlots;  // param slot indices, persisted after symbol table restore
 
 VarType lastExprType = TYPE_UNKNOWN;
 VarType currentFuncRetType = TYPE_UNKNOWN;
+
+// struct support
+struct FieldInfo {
+    string name;  // dotted for nested: "a.x"
+    VarType type;
+    string struct_type;  // non-empty if this field itself is a struct
+};
+
+struct StructDef {
+    string name;  
+    vector<FieldInfo> fields;  // flattened - nested structs expanded inline
+};
+
+map<string, StructDef> structTable;  // struct name -> defnition
+map<string, string> varStructType;  // var name -> struct type name
+map<string, map<string, int>> structFieldSlots;  // var -> {dotted path -> slot}
+map<string, map<string, VarType>> structFieldTypes;  // var -> {dotted path -> type}
+
+// class support - parser local state
+map<string, int> currentSelfFieldSlots;
+map<string, VarType> currentSelfFieldTypes;
+string currentSelfClassName = "";
 
 string typeToString(VarType t)
 {
@@ -42,9 +70,16 @@ string typeToString(VarType t)
         case TYPE_INT: return "int";
         case TYPE_BOOL: return "bool";
         case TYPE_STRING: return "string";
+        case TYPE_FLOAT: return "float";
+        case TYPE_DOUBLE: return "double";
+        case TYPE_CLASS: return "class";
         default: return "unknown";
     }
 }
+
+string read_file(const string& path);
+string get_stdlib_path();
+string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported);
 
 int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker);
@@ -61,6 +96,11 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
 void parse_function_definition();
 int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& tracker);
 void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tracker, struct InstructionNode* noOpNode);
+void parse_struct_definition();
+void parse_struct_instantiation(const string& structTypeName, struct InstructionNode*& head, struct InstructionNode*& tracker);
+void parse_class_definition();
+void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker);
+int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker);
 
 void report_error(int line, string message)
 {
@@ -131,12 +171,858 @@ static int alloc_temp()
     return alloc_slot();
 }
 
+void parse_struct_definition()
+{
+    token = lexer.GetToken();
+    string structName = token.lexeme;
+    int structLine = token.line_no;
+
+    if (structTable.count(structName))
+    {
+        report_error(structLine, "duplicate struct definition '" + structName + "'");
+    }
+
+    StructDef def;
+    def.name = structName;
+
+    token = lexer.GetToken();  // '{'
+    token = lexer.GetToken();  // first field or '}'
+
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
+    {
+        VarType fieldType = TYPE_UNKNOWN;
+        string fieldStructType = "";
+
+        if (token.token_type == INT_TYPE) { fieldType = TYPE_INT; token = lexer.GetToken(); }
+        else if (token.token_type == BOOL_TYPE) { fieldType = TYPE_BOOL; token = lexer.GetToken(); }
+        else if (token.token_type == STRING_TYPE) { fieldType = TYPE_STRING; token = lexer.GetToken(); }
+        else if (token.token_type == FLOAT_TYPE) { fieldType = TYPE_FLOAT; token = lexer.GetToken(); }
+        else if (token.token_type == DOUBLE_TYPE) { fieldType = TYPE_DOUBLE; token = lexer.GetToken(); }
+        else if (token.token_type == ID && structTable.count(token.lexeme))
+        {
+            fieldStructType = token.lexeme;
+            token = lexer.GetToken();  // field name
+        }
+        else
+        {
+            report_error(token.line_no, "unknown field type '" + token.lexeme + "'");
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            {
+                token = lexer.GetToken();
+            }
+            token = lexer.GetToken();
+            continue;
+        }
+
+        string fieldName = token.lexeme;
+
+        if (!fieldStructType.empty())
+        {
+            // nested struct - flatten with prefix fieldName.subfield
+            for (auto& nestedField : structTable[fieldStructType].fields)
+            {
+                FieldInfo fi;
+                fi.name = fieldName + "." + nestedField.name;
+                fi.type = nestedField.type;
+                fi.struct_type = nestedField.struct_type;
+                def.fields.push_back(fi);
+            }
+        }
+        else
+        {
+            FieldInfo fi;
+            fi.name = fieldName;
+            fi.type = fieldType;
+            fi.struct_type = "";
+            def.fields.push_back(fi);
+        }
+
+        token = lexer.GetToken();  // ';'
+        token = lexer.GetToken();  // next field or '}'
+    }
+    // token = '}'
+    structTable[structName] = def;
+}
+
+void parse_struct_instantiation(const string& structTypeName, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    // ON ENTRY: token = struct type name (already identified by caller)
+    token = lexer.GetToken();  // variable name
+    string varName = token.lexeme;
+    int varLine = token.line_no;
+
+    if (varStructType.count(varName))
+    {
+        report_error(varLine, "redeclaration of struct variable '" + varName + "'");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+        {
+            token = lexer.GetToken();
+        }
+        return; 
+    }
+
+    StructDef& def = structTable[structTypeName];
+    varStructType[varName] = structTypeName;
+
+    // allocate one slot per field in the correct memory array
+    map<string, int> fieldSlots;
+    map<string, VarType> fieldTypes;
+
+    for (auto& field : def.fields)
+    {
+        int slot = 0;
+        if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
+        else if (field.type == TYPE_DOUBLE) slot = alloc_double_slot();
+        else slot = alloc_slot();
+        fieldSlots[field.name] = slot;
+        fieldTypes[field.name] = field.type;
+    }
+
+    structFieldSlots[varName] = fieldSlots;
+    structFieldTypes[varName] = fieldTypes;
+
+    token = lexer.GetToken();  // '=' or ';'
+
+    if (token.token_type == EQUAL)
+    {
+        // literal init: Point p = {3.14, 2.71} ;
+        token = lexer.GetToken();  // '{'
+        token = lexer.GetToken();  // first value
+
+        for (int i = 0;i < (int)def.fields.size();i++)
+        {
+            auto& field = def.fields[i];
+            int resultIdx = parse_expression(head, tracker);
+            int slot = fieldSlots[field.name];
+
+            struct InstructionNode* node = new InstructionNode();
+            if (field.type == TYPE_FLOAT)
+            {
+                node->type = ASSIGN_F;
+                node->assign_f_inst.left_hand_side_index = slot;
+                node->assign_f_inst.operand1_index = resultIdx;
+                node->assign_f_inst.op = OPERATOR_NONE;
+            }
+            else if (field.type == TYPE_DOUBLE)
+            {
+                node->type = ASSIGN_D;
+                node->assign_d_inst.left_hand_side_index = slot;
+                node->assign_d_inst.operand1_index = resultIdx;
+                node->assign_d_inst.op = OPERATOR_NONE;
+            }
+            else
+            {
+                node->type = ASSIGN;
+                node->assign_inst.left_hand_side_index = slot;
+                node->assign_inst.operand1_index = resultIdx;
+                node->assign_inst.op = OPERATOR_NONE;
+            }
+            append(head, tracker, node);
+
+            if (token.token_type == COMMA) token = lexer.GetToken();
+        }
+        // token = '}'
+        token = lexer.GetToken();  // ';'
+    }
+    // else token = ';'
+}
+
+void parse_class_definition()
+{
+    token = lexer.GetToken();  // class name
+    string className = token.lexeme;
+    int classLine = token.line_no;
+
+    if (classTable.count(className))
+    {
+        report_error(classLine, "duplicate class definition '" + className + "'");
+    }
+
+    ClassDef def;
+    def.name = className;
+    def.parent = "";
+
+    token = lexer.GetToken();  // EXTENDS or '{'
+
+    if (token.token_type == EXTENDS)
+    {
+        token = lexer.GetToken();  // parent name
+        string parentName = token.lexeme;
+        if (!classTable.count(parentName))
+        {
+            report_error(token.line_no, "unknown parent class '" + parentName + "'");
+        }
+        else
+        {
+            def.parent = parentName;
+            for (auto& f : classTable[parentName].fields)
+            {
+                def.fields.push_back(f);
+            }
+        }
+        token = lexer.GetToken();  // '{'
+    }
+
+    token = lexer.GetToken();  // first member of '}'
+
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
+    {
+        if (token.token_type == DEF)
+        {
+            token = lexer.GetToken();  // method name
+            string methodName = token.lexeme;
+            def.methods.push_back(methodName);
+
+            string fullName = className + "::" + methodName;
+            vector<string> params;
+            vector<VarType> paramTypes;
+
+            // save symbol tables — restored after body so method-scoped names don't leak
+            map<string, int>     savedSymbolTable       = symbolTable;
+            map<string, VarType> savedTypeTable         = typeTable;
+            map<string, int>     savedFloatSymbolTable  = floatSymbolTable;
+            map<string, int>     savedDoubleSymbolTable = doubleSymbolTable;
+
+            token = lexer.GetToken();  // '('
+            token = lexer.GetToken();  // first param or ')'
+            while (token.token_type != RPAREN)
+            {
+                VarType pType = TYPE_UNKNOWN;
+                if (token.token_type == INT_TYPE) { pType = TYPE_INT; token = lexer.GetToken(); }
+                else if (token.token_type == BOOL_TYPE) { pType = TYPE_BOOL; token = lexer.GetToken(); }
+                else if (token.token_type == STRING_TYPE) { pType = TYPE_STRING; token = lexer.GetToken(); }
+                else if (token.token_type == FLOAT_TYPE) { pType = TYPE_FLOAT; token = lexer.GetToken(); }
+                else if (token.token_type == DOUBLE_TYPE) { pType = TYPE_DOUBLE; token = lexer.GetToken(); }
+                if (token.token_type == ID)
+                {
+                    params.push_back(token.lexeme);
+                    paramTypes.push_back(pType);
+                    symbolTable[token.lexeme] = alloc_slot();
+                    typeTable[token.lexeme] = pType;
+                }
+                token = lexer.GetToken();
+                if (token.token_type == COMMA) token = lexer.GetToken();
+            }
+            classMethodParams[className][methodName] = params;
+            classMethodParamTypes[className][methodName] = paramTypes;
+
+            token = lexer.GetToken();  // ARROW or '{'
+            VarType retType = TYPE_UNKNOWN;
+            if (token.token_type == ARROW)
+            {
+                token = lexer.GetToken();
+                if (token.token_type == INT_TYPE) retType = TYPE_INT;
+                else if (token.token_type == BOOL_TYPE) retType = TYPE_BOOL;
+                else if (token.token_type == STRING_TYPE) retType = TYPE_STRING;
+                else if (token.token_type == FLOAT_TYPE) retType = TYPE_FLOAT;
+                else if (token.token_type == DOUBLE_TYPE) retType = TYPE_DOUBLE;
+                else if (token.token_type == ID && classTable.count(token.lexeme)) retType = TYPE_CLASS;
+                token = lexer.GetToken();  // '{'
+            }
+            classMethodReturnType[className][methodName] = retType;
+
+            int retIdx = alloc_slot();
+            functionReturnIndex[fullName] = retIdx;
+
+            // allocate self field slots for this method
+            map<string, int> selfSlots;
+            map<string, VarType> selfTypes;
+            for (auto& f : def.fields)
+            {
+                int s = 0;
+                if (f.type == TYPE_FLOAT) s = alloc_float_slot();
+                else if (f.type == TYPE_DOUBLE) s = alloc_double_slot();
+                else s = alloc_slot();
+                selfSlots[f.name] = s;
+                selfTypes[f.name] = f.type; 
+            }
+            classMethodSelfSlots[className][methodName] = selfSlots;
+            classMethodSelfTypes[className][methodName] = selfTypes;
+
+            // save + set parser context
+            bool savedInsideFunc = insideFunction;
+            int savedRetIdx = currentFuncRetIdx;
+            VarType savedRetType = currentFuncRetType;
+            string savedSelfClass = currentSelfClassName;
+            map<string, int> savedSelfSlots = currentSelfFieldSlots;
+            map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
+
+            insideFunction = true;
+            currentFuncRetIdx = retIdx;
+            currentFuncRetType = retType;
+            currentSelfClassName = className;
+            currentSelfFieldSlots = selfSlots;
+            currentSelfFieldTypes = selfTypes;
+
+            token = lexer.GetToken();  // first token in body
+            struct InstructionNode* mhead = nullptr;
+            struct InstructionNode* mtracker = nullptr;
+
+            while (token.token_type != RBRACE)
+            {
+                if (token.token_type == RETURN)
+                {
+                    token = lexer.GetToken();
+                    int resultIdx = parse_expression(mhead, mtracker);
+                    struct InstructionNode* an = new InstructionNode();
+                    an->type = ASSIGN;
+                    an->assign_inst.left_hand_side_index = retIdx;
+                    an->assign_inst.operand1_index = resultIdx;
+                    an->assign_inst.op = OPERATOR_NONE;
+                    append(mhead, mtracker, an);
+                    struct InstructionNode* rn = new InstructionNode();
+                    rn->type = RET;
+                    rn->ret_inst.ret_val_index = retIdx;
+                    append(mhead, mtracker, rn);
+                    token = lexer.GetToken();  // advance past ';'
+                }
+                else
+                {
+                    parse_statement(mhead, mtracker);
+                    token = lexer.GetToken();
+                }
+            }
+
+            // restore context
+            insideFunction = savedInsideFunc;
+            currentFuncRetIdx = savedRetIdx;
+            currentFuncRetType = savedRetType;
+            currentSelfClassName = savedSelfClass;
+            currentSelfFieldSlots = savedSelfSlots;
+            currentSelfFieldTypes = savedSelfTypes;
+
+            symbolTable       = savedSymbolTable;
+            typeTable         = savedTypeTable;
+            floatSymbolTable  = savedFloatSymbolTable;
+            doubleSymbolTable = savedDoubleSymbolTable;
+
+            struct InstructionNode* fb = new InstructionNode();
+            fb->type = RET;
+            fb->ret_inst.ret_val_index = retIdx;
+            append(mhead, mtracker, fb);
+
+            classMethodTable[className][methodName] = mhead;
+            token = lexer.GetToken();  // advance past method body '}'
+        }
+        else if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE ||
+                 token.token_type == STRING_TYPE || token.token_type == FLOAT_TYPE ||
+                 token.token_type == DOUBLE_TYPE)
+        {
+            VarType fieldType = TYPE_UNKNOWN;
+            if      (token.token_type == INT_TYPE)    fieldType = TYPE_INT;
+            else if (token.token_type == BOOL_TYPE)   fieldType = TYPE_BOOL;
+            else if (token.token_type == STRING_TYPE) fieldType = TYPE_STRING;
+            else if (token.token_type == FLOAT_TYPE)  fieldType = TYPE_FLOAT;
+            else if (token.token_type == DOUBLE_TYPE) fieldType = TYPE_DOUBLE;
+
+            token = lexer.GetToken();  // field name
+            ClassFieldInfo fi;
+            fi.name = token.lexeme;
+            fi.type = fieldType;
+            fi.struct_type = "";
+            def.fields.push_back(fi);
+
+            token = lexer.GetToken();  // ';'
+            token = lexer.GetToken();  // next member or '}'
+        }
+        else if (token.token_type == ID && classTable.count(token.lexeme))
+        {
+            // nested class type field: ClassName fieldName ;
+            string nestedClass = token.lexeme;
+            token = lexer.GetToken();  // field name
+            string fieldName = token.lexeme;
+            for (auto& nf : classTable[nestedClass].fields)
+            {
+                ClassFieldInfo fi;
+                fi.name = fieldName + "." + nf.name;
+                fi.type = nf.type;
+                fi.struct_type = nf.struct_type;
+                def.fields.push_back(fi);
+            }
+            token = lexer.GetToken();  // ';'
+            token = lexer.GetToken();  // next member or '}'
+        }
+        else
+        {
+            report_error(token.line_no, "unexpected token in class body: '" + token.lexeme + "'");
+            while (token.token_type != SEMICOLON && token.token_type != RBRACE && token.token_type != END_OF_FILE)
+                token = lexer.GetToken();
+            if (token.token_type == SEMICOLON) token = lexer.GetToken();
+        }
+    }
+    // token = '}'
+    classTable[className] = def;
+}
+
+void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    // ON ENTRY: token = class type name (already consumed by caller's peek detection)
+    token = lexer.GetToken();  // variable name
+    string varName = token.lexeme;
+    int varLine = token.line_no;
+
+    if (varClassType.count(varName))
+    {
+        report_error(varLine, "redeclaration of class variable '" + varName + "'");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            token = lexer.GetToken();
+        return;
+    }
+
+    if (!classTable.count(className))
+    {
+        report_error(varLine, "unknown class '" + className + "'");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            token = lexer.GetToken();
+        return;
+    }
+
+    ClassDef& def = classTable[className];
+    varClassType[varName] = className;
+    typeTable[varName] = TYPE_CLASS;
+    symbolTable[varName] = alloc_slot();
+
+    map<string, int> fieldSlots;
+    map<string, VarType> fieldTypes;
+    for (auto& field : def.fields)
+    {
+        int slot = 0;
+        if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
+        else if (field.type == TYPE_DOUBLE) slot = alloc_double_slot();
+        else slot = alloc_slot();
+        fieldSlots[field.name] = slot;
+        fieldTypes[field.name] = field.type;
+    }
+    classFieldSlots[varName] = fieldSlots;
+    classFieldTypes[varName] = fieldTypes;
+
+    token = lexer.GetToken();  // '=' or ';'
+    if (token.token_type == LPAREN)
+    {
+        // constructor call: MyClass obj(arg1, arg2) ; 
+        token = lexer.GetToken();  // past '('
+        vector<int> argIndices;
+        vector<VarType> argTypes;
+        while (token.token_type != RPAREN)
+        {
+            int argIdx = parse_expression(head, tracker);
+            argIndices.push_back(argIdx);
+            argTypes.push_back(lastExprType);
+            if (token.token_type == COMMA)
+            {
+                token = lexer.GetToken();
+            }
+        }
+        token = lexer.GetToken();  // past ')'
+
+        if (!classMethodTable.count(className) || !classMethodTable[className].count("init"))
+        {
+            report_error(varLine, "class '" + className + "' has no constructor 'init'");
+        }
+        else
+        {
+            string fullName = className + "::init";
+            map<string, int>& selfSlots = classMethodSelfSlots[className]["init"];
+            map<string, VarType>& selfTypes = classMethodSelfTypes[className]["init"];
+            vector<string>& params = classMethodParams[className]["init"];
+
+            // copy caller field slots into self slots
+            for (auto& kv : selfSlots)
+            {
+                const string& fieldName = kv.first;
+                int selfSlot = kv.second;
+                if (!classFieldSlots[varName].count(fieldName))
+                {
+                    continue;
+                }
+                int callerSlot = classFieldSlots[varName][fieldName];
+                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+                struct InstructionNode* copyIn = new InstructionNode();
+                if (fType == TYPE_FLOAT)
+                {
+                    copyIn->type = ASSIGN_F;
+                    copyIn->assign_f_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_f_inst.operand1_index = callerSlot;
+                    copyIn->assign_f_inst.op = OPERATOR_NONE;
+                }
+                else if (fType == TYPE_DOUBLE)
+                {
+                    copyIn->type = ASSIGN_D;
+                    copyIn->assign_d_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_d_inst.operand1_index = callerSlot;
+                    copyIn->assign_d_inst.op = OPERATOR_NONE;
+                }
+                else
+                {
+                    copyIn->type = ASSIGN;
+                    copyIn->assign_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_inst.operand1_index = callerSlot;
+                    copyIn->assign_inst.op = OPERATOR_NONE;
+                }
+                append(head, tracker, copyIn);
+            }
+
+            // emit CALL
+            struct InstructionNode* callNode = new InstructionNode();
+            callNode->type = CALL;
+            callNode->call_inst.function_head = classMethodTable[className]["init"];
+            callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
+            callNode->call_inst.func_slot_base = 0;
+            callNode->call_inst.func_slot_count = 0;
+            callNode->call_inst.num_params = (int)params.size();
+            if (!params.empty())
+            {
+                int* pSlots = new int[params.size()];
+                int* aSlots = new int[params.size()];
+                for (int i = 0;i < (int)params.size();i++)
+                {
+                    pSlots[i] = symbolTable.count(params[i]) ? symbolTable[params[i]] : 0;
+                    aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
+                }
+                callNode->call_inst.param_slots = pSlots;
+                callNode->call_inst.arg_val_slots = aSlots;
+            }
+            else
+            {
+                callNode->call_inst.param_slots = nullptr;
+                callNode->call_inst.arg_val_slots = nullptr;
+            }
+            append(head, tracker, callNode);
+
+            // copy self slots back to caller field slots
+            for (auto& kv : selfSlots)
+            {
+                const string& fieldName = kv.first;
+                int selfSlot = kv.second;
+                if (!classFieldSlots[varName].count(fieldName))
+                {
+                    continue;
+                }
+                int callerSlot = classFieldSlots[varName][fieldName];
+                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+                struct InstructionNode* copyBack = new InstructionNode();
+                if (fType == TYPE_FLOAT)
+                {
+                    copyBack->type = ASSIGN_F;
+                    copyBack->assign_f_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_f_inst.operand1_index = selfSlot;
+                    copyBack->assign_f_inst.op = OPERATOR_NONE;
+                }
+                else if (fType == TYPE_DOUBLE)
+                {
+                    copyBack->type = ASSIGN_D;
+                    copyBack->assign_d_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_d_inst.operand1_index = selfSlot;
+                    copyBack->assign_d_inst.op = OPERATOR_NONE;
+                }
+                else
+                {
+                    copyBack->type = ASSIGN;
+                    copyBack->assign_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_inst.operand1_index = selfSlot;
+                    copyBack->assign_inst.op = OPERATOR_NONE;
+                }
+                append(head, tracker, copyBack);
+            }
+        }
+        // token = ';'
+    }
+    else if (token.token_type == EQUAL)
+    {
+        token = lexer.GetToken();  // '{'
+        token = lexer.GetToken();  // first value
+
+        for (int i = 0; i < (int)def.fields.size(); i++)
+        {
+            auto& field = def.fields[i];
+            int resultIdx = parse_expression(head, tracker);
+            int slot = fieldSlots[field.name];
+
+            struct InstructionNode* node = new InstructionNode();
+            if (field.type == TYPE_FLOAT)
+            {
+                node->type = ASSIGN_F;
+                node->assign_f_inst.left_hand_side_index = slot;
+                node->assign_f_inst.operand1_index = resultIdx;
+                node->assign_f_inst.op = OPERATOR_NONE;
+            }
+            else if (field.type == TYPE_DOUBLE)
+            {
+                node->type = ASSIGN_D;
+                node->assign_d_inst.left_hand_side_index = slot;
+                node->assign_d_inst.operand1_index = resultIdx;
+                node->assign_d_inst.op = OPERATOR_NONE;
+            }
+            else
+            {
+                node->type = ASSIGN;
+                node->assign_inst.left_hand_side_index = slot;
+                node->assign_inst.operand1_index = resultIdx;
+                node->assign_inst.op = OPERATOR_NONE;
+            }
+            append(head, tracker, node);
+
+            if (token.token_type == COMMA) token = lexer.GetToken();
+        }
+        // token = '}'
+        token = lexer.GetToken();  // ';'
+    }
+    else if (token.token_type == SEMICOLON)
+    {
+        // auto-call no-arg init() if it exists
+        if (classMethodTable.count(className) && classMethodTable[className].count("init") && classMethodParams[className]["init"].empty())
+        {
+            string fullName = className + "::init";
+            map<string, int>& selfSlots = classMethodSelfSlots[className]["init"];
+            map<string, VarType>& selfTypes = classMethodSelfTypes[className]["init"];
+
+            for (auto& kv : selfSlots)
+            {
+                const string& fieldName = kv.first;
+                int selfSlot = kv.second;
+                if (!classFieldSlots[varName].count(fieldName))
+                {
+                    continue;
+                }
+                int callerSlot = classFieldSlots[varName][fieldName];
+                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+                struct InstructionNode* copyIn = new InstructionNode();
+                if (fType == TYPE_FLOAT)
+                {
+                    copyIn->type = ASSIGN_F;
+                    copyIn->assign_f_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_f_inst.operand1_index = callerSlot;
+                    copyIn->assign_f_inst.op = OPERATOR_NONE;
+                }
+                else if (fType == TYPE_DOUBLE)
+                {
+                    copyIn->type = ASSIGN_D;
+                    copyIn->assign_d_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_d_inst.operand1_index = callerSlot;
+                    copyIn->assign_d_inst.op = OPERATOR_NONE;
+                }
+                else
+                {
+                    copyIn->type = ASSIGN;
+                    copyIn->assign_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_inst.operand1_index = callerSlot;
+                    copyIn->assign_inst.op = OPERATOR_NONE;
+                }
+                append(head, tracker, copyIn);
+            }
+
+            struct InstructionNode* callNode = new InstructionNode();
+            callNode->type = CALL;
+            callNode->call_inst.function_head = classMethodTable[className]["init"];
+            callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
+            callNode->call_inst.func_slot_base = 0;
+            callNode->call_inst.func_slot_count = 0;
+            callNode->call_inst.num_params = 0;
+            callNode->call_inst.param_slots = nullptr;
+            callNode->call_inst.arg_val_slots = nullptr;
+            append(head, tracker, callNode);
+
+            for (auto& kv : selfSlots)
+            {
+                const string& fieldName = kv.first;
+                int selfSlot = kv.second;
+                if (!classFieldSlots[varName].count(fieldName))
+                {
+                    continue;
+                }
+                int callerSlot = classFieldSlots[varName][fieldName];
+                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+                struct InstructionNode* copyBack = new InstructionNode();
+                if (fType == TYPE_FLOAT)
+                {
+                    copyBack->type = ASSIGN_F;
+                    copyBack->assign_f_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_f_inst.operand1_index = selfSlot;
+                    copyBack->assign_f_inst.op = OPERATOR_NONE;
+                }
+                else if (fType == TYPE_DOUBLE)
+                {
+                    copyBack->type = ASSIGN_D;
+                    copyBack->assign_d_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_d_inst.operand1_index = selfSlot;
+                    copyBack->assign_d_inst.op = OPERATOR_NONE;
+                }
+                else
+                {
+                    copyBack->type = ASSIGN;
+                    copyBack->assign_inst.left_hand_side_index = callerSlot;
+                    copyBack->assign_inst.operand1_index = selfSlot;
+                    copyBack->assign_inst.op = OPERATOR_NONE;
+                }
+                append(head, tracker, copyBack);
+            }
+        }
+    }
+    // else token = ';'
+}
+
+int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    // ON ENTRY: token = '('
+    string className = varClassType[varName];
+
+    // walk inheritance chain to find the method (supports inherited + overridden methods)
+    string lookupClass = className;
+    while (true)
+    {
+        if (classMethodTable.count(lookupClass) && classMethodTable[lookupClass].count(methodName))
+        {
+            break;
+        }
+        if (classTable.count(lookupClass) && !classTable[lookupClass].parent.empty())
+        {
+            lookupClass = classTable[lookupClass].parent;
+        }
+        else
+        {
+            report_error(token.line_no, "class '" + className + "' has no method '" + methodName + "'");
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            {
+                token = lexer.GetToken();
+            }
+            lastExprType = TYPE_UNKNOWN;
+            return 0;
+        }
+    }
+
+    token = lexer.GetToken();  // past '('
+    // parse arguments
+    vector<int>     argIndices;
+    vector<VarType> argTypes;
+    while (token.token_type != RPAREN)
+    {
+        int argIdx = parse_expression(head, tracker);
+        argIndices.push_back(argIdx);
+        argTypes.push_back(lastExprType);
+        if (token.token_type == COMMA) token = lexer.GetToken();
+    }
+    token = lexer.GetToken();  // past ')'
+
+    // Copy caller's field values into the method's self slots (pass self by copy)
+    map<string, int>& selfSlots = classMethodSelfSlots[lookupClass][methodName];
+    map<string, VarType>& selfTypes = classMethodSelfTypes[lookupClass][methodName];
+    for (auto& kv : selfSlots)
+    {
+        const string& fieldName = kv.first;
+        int selfSlot = kv.second;
+        if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
+        int callerSlot = classFieldSlots[varName][fieldName];
+        VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+        struct InstructionNode* copyIn = new InstructionNode();
+        if (fType == TYPE_FLOAT)
+        {
+            copyIn->type = ASSIGN_F;
+            copyIn->assign_f_inst.left_hand_side_index = selfSlot;
+            copyIn->assign_f_inst.operand1_index = callerSlot;
+            copyIn->assign_f_inst.op = OPERATOR_NONE;
+        }
+        else if (fType == TYPE_DOUBLE)
+        {
+            copyIn->type = ASSIGN_D;
+            copyIn->assign_d_inst.left_hand_side_index = selfSlot;
+            copyIn->assign_d_inst.operand1_index = callerSlot;
+            copyIn->assign_d_inst.op = OPERATOR_NONE;
+        }
+        else
+        {
+            copyIn->type = ASSIGN;
+            copyIn->assign_inst.left_hand_side_index = selfSlot;
+            copyIn->assign_inst.operand1_index = callerSlot;
+            copyIn->assign_inst.op = OPERATOR_NONE;
+        }
+        append(head, tracker, copyIn);
+    }
+
+    // Emit CALL node
+    string fullName = lookupClass + "::" + methodName;
+    vector<string>& params = classMethodParams[lookupClass][methodName];
+
+    struct InstructionNode* callNode = new InstructionNode();
+    callNode->type = CALL;
+    callNode->call_inst.function_head   = classMethodTable[lookupClass][methodName];
+    callNode->call_inst.ret_val_index   = functionReturnIndex[fullName];
+    callNode->call_inst.func_slot_base  = 0;
+    callNode->call_inst.func_slot_count = 0;
+    callNode->call_inst.num_params      = (int)params.size();
+    if (!params.empty())
+    {
+        int* pSlots = new int[params.size()];
+        int* aSlots = new int[params.size()];
+        for (int i = 0; i < (int)params.size(); i++)
+        {
+            pSlots[i] = symbolTable.count(params[i]) ? symbolTable[params[i]] : 0;
+            aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
+        }
+        callNode->call_inst.param_slots   = pSlots;
+        callNode->call_inst.arg_val_slots = aSlots;
+    }
+    else
+    {
+        callNode->call_inst.param_slots   = nullptr;
+        callNode->call_inst.arg_val_slots = nullptr;
+    }
+    append(head, tracker, callNode);
+
+    // Copy self slots back to caller's field slots (method may mutate self)
+    for (auto& kv : selfSlots)
+    {
+        const string& fieldName = kv.first;
+        int selfSlot = kv.second;
+        if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
+        int callerSlot = classFieldSlots[varName][fieldName];
+        VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
+        struct InstructionNode* copyBack = new InstructionNode();
+        if (fType == TYPE_FLOAT)
+        {
+            copyBack->type = ASSIGN_F;
+            copyBack->assign_f_inst.left_hand_side_index = callerSlot;
+            copyBack->assign_f_inst.operand1_index = selfSlot;
+            copyBack->assign_f_inst.op = OPERATOR_NONE;
+        }
+        else if (fType == TYPE_DOUBLE)
+        {
+            copyBack->type = ASSIGN_D;
+            copyBack->assign_d_inst.left_hand_side_index = callerSlot;
+            copyBack->assign_d_inst.operand1_index = selfSlot;
+            copyBack->assign_d_inst.op = OPERATOR_NONE;
+        }
+        else
+        {
+            copyBack->type = ASSIGN;
+            copyBack->assign_inst.left_hand_side_index = callerSlot;
+            copyBack->assign_inst.operand1_index = selfSlot;
+            copyBack->assign_inst.op = OPERATOR_NONE;
+        }
+        append(head, tracker, copyBack);
+    }
+
+    // Copy return value to a fresh slot
+    int freshSlot = alloc_temp();
+    struct InstructionNode* copyRet = new InstructionNode();
+    copyRet->type = ASSIGN;
+    copyRet->assign_inst.left_hand_side_index = freshSlot;
+    copyRet->assign_inst.operand1_index       = functionReturnIndex[fullName];
+    copyRet->assign_inst.op                   = OPERATOR_NONE;
+    append(head, tracker, copyRet);
+
+    lastExprType = (classMethodReturnType.count(lookupClass) && classMethodReturnType[lookupClass].count(methodName))
+                   ? classMethodReturnType[lookupClass][methodName] : TYPE_UNKNOWN;
+    return freshSlot;
+}
+
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     VarType declType = TYPE_UNKNOWN;
     if      (token.token_type == INT_TYPE)    declType = TYPE_INT;
     else if (token.token_type == BOOL_TYPE)   declType = TYPE_BOOL;
     else if (token.token_type == STRING_TYPE) declType = TYPE_STRING;
+    else if (token.token_type == FLOAT_TYPE) declType = TYPE_FLOAT;
+    else if (token.token_type == DOUBLE_TYPE) declType = TYPE_DOUBLE;
 
     token = lexer.GetToken();
     string name = token.lexeme;
@@ -146,6 +1032,61 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
     {
         report_error(nameLine, "redeclaration of '" + name + "'");
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+        return;
+    }
+
+    if (declType == TYPE_FLOAT)
+    {
+        int fSlot = alloc_float_slot();
+        floatSymbolTable[name] = fSlot;
+        typeTable[name] = TYPE_FLOAT;
+        token = lexer.GetToken();  // '='
+        token = lexer.GetToken();  // RHS
+        int resultIdx = parse_expression(head, tracker);
+        if (lastExprType != TYPE_FLOAT && lastExprType != TYPE_UNKNOWN)
+        {
+            report_error(nameLine, "cannot assign " + typeToString(lastExprType) + " to float variable '" + name + "'");
+        }
+        // emit ASSIGN_F
+        struct InstructionNode* node = new InstructionNode();
+        node->type = ASSIGN_F;
+        node->assign_f_inst.left_hand_side_index = fSlot;
+        node->assign_f_inst.operand1_index = resultIdx;
+        node->assign_f_inst.op = OPERATOR_NONE;
+        append(head, tracker, node);
+        return;
+    }
+
+    if (declType == TYPE_DOUBLE)
+    {
+        int dSlot = alloc_double_slot();
+        doubleSymbolTable[name] = dSlot;
+        typeTable[name] = TYPE_DOUBLE;
+        token = lexer.GetToken();  // '='
+        token = lexer.GetToken();  // RHS
+        int resultIdx = parse_expression(head, tracker);
+        if (lastExprType != TYPE_DOUBLE && lastExprType != TYPE_FLOAT && lastExprType != TYPE_UNKNOWN)
+        {
+            report_error(nameLine, "cannot assign " + typeToString(lastExprType) + " to double variable '" + name + "'");
+        }
+        // If RHS was a float literal, promote it to double via CAST
+        if (lastExprType == TYPE_FLOAT)
+        {
+            struct InstructionNode* castNode = new InstructionNode();
+            castNode->type = CAST;
+            castNode->cast_inst.src_index = resultIdx;
+            castNode->cast_inst.dst_index = dSlot;
+            castNode->cast_inst.src_type = TYPE_FLOAT;
+            castNode->cast_inst.dst_type = TYPE_DOUBLE;
+            append(head, tracker, castNode);
+            return;
+        }
+        struct InstructionNode* node = new InstructionNode();
+        node->type = ASSIGN_D;
+        node->assign_d_inst.left_hand_side_index = dSlot;
+        node->assign_d_inst.operand1_index = resultIdx;
+        node->assign_d_inst.op = OPERATOR_NONE;
+        append(head, tracker, node);
         return;
     }
 
@@ -205,7 +1146,9 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
 
 void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE || token.token_type == STRING_TYPE) {
+    if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE || 
+        token.token_type == STRING_TYPE || token.token_type == FLOAT_TYPE || 
+        token.token_type == DOUBLE_TYPE) {
         parse_typed_declaration(head, tracker);
     } 
     else if (token.token_type == PRINT) 
@@ -254,14 +1197,144 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             append(head, tracker, retNode);
         }
     } 
-    else if (token.token_type == ID) 
+    else if (token.token_type == SELF)
+    {
+        // self.field = expr ; inside a class method
+        if (!insideFunction || currentSelfClassName.empty())
+        {
+            report_error(token.line_no, "'self' used outside of a class method");
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            return;
+        }
+        token = lexer.GetToken();  // consume SELF → '.'
+        string fieldPath = "";
+        while (token.token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume '.' → field segment
+            if (!fieldPath.empty()) fieldPath += ".";
+            fieldPath += token.lexeme;
+            token = lexer.GetToken();  // consume field segment → next token
+        }
+        // token = '='
+        token = lexer.GetToken();  // consume '=' → RHS
+        int resultIdx = parse_expression(head, tracker);
+
+        if (!currentSelfFieldSlots.count(fieldPath))
+        {
+            report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
+            return;
+        }
+        int slot = currentSelfFieldSlots[fieldPath];
+        VarType fType = currentSelfFieldTypes[fieldPath];
+        struct InstructionNode* node = new InstructionNode();
+        if (fType == TYPE_FLOAT)
+        {
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = slot;
+            node->assign_f_inst.operand1_index = resultIdx;
+            node->assign_f_inst.op = OPERATOR_NONE;
+        }
+        else if (fType == TYPE_DOUBLE)
+        {
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = slot;
+            node->assign_d_inst.operand1_index = resultIdx;
+            node->assign_d_inst.op = OPERATOR_NONE;
+        }
+        else
+        {
+            node->type = ASSIGN;
+            node->assign_inst.left_hand_side_index = slot;
+            node->assign_inst.operand1_index = resultIdx;
+            node->assign_inst.op = OPERATOR_NONE;
+        }
+        append(head, tracker, node);
+    }
+    else if (token.token_type == ID)
     {
         string name = token.lexeme;
-        if (arrayTable.find(name) != arrayTable.end()) parse_assignment_statement(head, tracker);
-        else if (functionTable.find(name) != functionTable.end() && lexer.peek(1).token_type == LPAREN) parse_function_call(head, tracker);
-        else parse_assignment_statement(head, tracker);
-    } 
-    else if (token.token_type != RBRACE) 
+        if (classTable.count(name) && lexer.peek(1).token_type == ID)
+        {
+            // class instantiation: MyClass obj ; or MyClass obj = { ... } ;
+            parse_class_instantiation(name, head, tracker);
+        }
+        else if (varClassType.count(name) && lexer.peek(1).token_type == DOT)
+        {
+            // obj.method(args) ; or obj.field = expr ;
+            int objLine = token.line_no;
+            token = lexer.GetToken();  // consume obj name → '.'
+            token = lexer.GetToken();  // consume '.' → member name
+            string memberName = token.lexeme;
+            token = lexer.GetToken();  // consume member name → '(' or '='
+
+            if (token.token_type == LPAREN)
+            {
+                parse_method_call(name, memberName, head, tracker);
+                // token is now ';'
+            }
+            else
+            {
+                // field assignment
+                if (token.token_type != EQUAL)
+                {
+                    report_error(objLine, "expected '=' or '(' after '" + name + "." + memberName + "'");
+                    while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+                    return;
+                }
+                token = lexer.GetToken();  // consume '=' → RHS
+                int resultIdx = parse_expression(head, tracker);
+
+                if (!classFieldSlots.count(name) || !classFieldSlots[name].count(memberName))
+                {
+                    report_error(objLine, "class instance '" + name + "' has no field '" + memberName + "'");
+                    return;
+                }
+                int slot = classFieldSlots[name][memberName];
+                VarType fType = classFieldTypes[name][memberName];
+                struct InstructionNode* node = new InstructionNode();
+                if (fType == TYPE_FLOAT)
+                {
+                    node->type = ASSIGN_F;
+                    node->assign_f_inst.left_hand_side_index = slot;
+                    node->assign_f_inst.operand1_index = resultIdx;
+                    node->assign_f_inst.op = OPERATOR_NONE;
+                }
+                else if (fType == TYPE_DOUBLE)
+                {
+                    node->type = ASSIGN_D;
+                    node->assign_d_inst.left_hand_side_index = slot;
+                    node->assign_d_inst.operand1_index = resultIdx;
+                    node->assign_d_inst.op = OPERATOR_NONE;
+                }
+                else
+                {
+                    node->type = ASSIGN;
+                    node->assign_inst.left_hand_side_index = slot;
+                    node->assign_inst.operand1_index = resultIdx;
+                    node->assign_inst.op = OPERATOR_NONE;
+                }
+                append(head, tracker, node);
+            }
+        }
+        else if (structTable.count(name) && lexer.peek(1).token_type == ID)
+        {
+            // struct instantiation: Point p ; or Point p = {3.14, 2.71} ;
+            parse_struct_instantiation(name, head, tracker);
+        }
+        else if (arrayTable.find(name) != arrayTable.end())
+        {
+            parse_assignment_statement(head, tracker);
+        }
+        else if (functionTable.find(name) != functionTable.end() && lexer.peek(1).token_type == LPAREN)
+        {
+            parse_function_call(head, tracker);
+        }
+        else
+        {
+            parse_assignment_statement(head, tracker);
+        }
+    }
+    else if (token.token_type != RBRACE)
     {
         report_error(token.line_no, "unexpected token '" + token.lexeme + "'");
     }
@@ -274,6 +1347,7 @@ void parse_output_statement(struct InstructionNode*& head, struct InstructionNod
     newNode->output_inst.newline       = true;
     newNode->output_inst.is_string     = false;
     newNode->output_inst.is_string_var = false;
+    newNode->output_inst.value_type = TYPE_INT;  // default
 
     token = lexer.GetToken();  // '('
     token = lexer.GetToken();  // content
@@ -282,13 +1356,18 @@ void parse_output_statement(struct InstructionNode*& head, struct InstructionNod
         newNode->output_inst.var_index = next_str_available++;
         newNode->output_inst.is_string = true;
         newNode->output_inst.is_string_var = false;
+        newNode->output_inst.value_type = TYPE_STRING;
         strMem.push_back(token.lexeme);
         token = lexer.GetToken();
-    } else {
+    } 
+    else 
+    {
         int resultIdx = parse_expression(head, tracker);
         VarType exprType = lastExprType;
         newNode->output_inst.var_index = resultIdx;
-        if (exprType == TYPE_STRING) {
+        newNode->output_inst.value_type = exprType;
+        if (exprType == TYPE_STRING) 
+        {
             newNode->output_inst.is_string     = true;
             newNode->output_inst.is_string_var = true;
         }
@@ -338,8 +1417,9 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     if (params.size() > 0) {
         int* pSlots = new int[params.size()];
         int* aSlots = new int[params.size()];
+        vector<int>& storedParamSlots = functionParamSlots[funcName];
         for (int i = 0; i < (int)params.size(); i++) {
-            pSlots[i] = symbolTable[params[i]];
+            pSlots[i] = (i < (int)storedParamSlots.size()) ? storedParamSlots[i] : 0;
             aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
         }
         callNode->call_inst.param_slots   = pSlots;
@@ -412,6 +1492,7 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
     else if (token.token_type == ID) 
     {
         if (functionTable.find(token.lexeme) != functionTable.end()) return parse_function_call(head, tracker);
+
         if (arrayTable.find(token.lexeme) != arrayTable.end()) 
         {
             string arrName = token.lexeme;
@@ -437,7 +1518,83 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
             lastExprType = TYPE_INT;
             return tempSlot;
         }
+
+        if (typeTable.count(token.lexeme) && typeTable[token.lexeme] == TYPE_FLOAT)
+        {
+            lastExprType = TYPE_FLOAT;
+            int idx = floatSymbolTable[token.lexeme];
+            token = lexer.GetToken();
+            return idx;
+        }
+
+        if (typeTable.count(token.lexeme) && typeTable[token.lexeme] == TYPE_DOUBLE)
+        {
+            lastExprType = TYPE_DOUBLE;
+            int idx = doubleSymbolTable[token.lexeme];
+            token = lexer.GetToken();
+            return idx;
+        }
+
+        // SELF keyword: self.field read inside a class method
+        // (handled as a separate else-if branch outside this ID block;
+        //  but if someone aliases "self" as an ID, handle gracefully)
+
+        // class instance field read or method call: obj.field or obj.method(args)
+        if (varClassType.count(token.lexeme) && lexer.peek(1).token_type == DOT)
+        {
+            string varName = token.lexeme;
+            token = lexer.GetToken();  // consume var name → '.'
+            token = lexer.GetToken();  // consume '.' → member name
+            string memberName = token.lexeme;
+            token = lexer.GetToken();  // consume member name → next token
+
+            if (token.token_type == LPAREN)
+            {
+                // method call in expression context: obj.method(args)
+                return parse_method_call(varName, memberName, head, tracker);
+            }
+            else
+            {
+                // field read: obj.field
+                if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(memberName))
+                {
+                    report_error(token.line_no, "class instance '" + varName + "' has no field '" + memberName + "'");
+                    lastExprType = TYPE_UNKNOWN;
+                    return 0;
+                }
+                lastExprType = classFieldTypes[varName][memberName];
+                return classFieldSlots[varName][memberName];
+            }
+        }
+
+        // struct field read: p.x or L.a.x
+        if (varStructType.count(token.lexeme) && lexer.peek(1).token_type == DOT)
+        {
+            string varName = token.lexeme;
+            token = lexer.GetToken();  // consume var name -> token = DOT
+
+            string fieldPath = "";
+            while (token.token_type == DOT)
+            {
+                token = lexer.GetToken();  // consume DOT -> token = field segment
+                if (!fieldPath.empty()) fieldPath += ".";
+                fieldPath += token.lexeme;
+                token = lexer.GetToken();  // consume field segment -> next token
+            }
+            // token is now whatever follows the field access
+
+            if (!structFieldSlots[varName].count(fieldPath))
+            {
+                report_error(token.line_no, "struct '" + varName + "' has no field '" + fieldPath + "'");
+                lastExprType = TYPE_UNKNOWN;
+                return 0;
+            }
+            lastExprType = structFieldTypes[varName][fieldPath];
+            return structFieldSlots[varName][fieldPath];
+        }
+
         if (!check_declared(token.lexeme, token.line_no)) { token = lexer.GetToken(); lastExprType = TYPE_UNKNOWN; return 0; }
+
         lastExprType = typeTable.count(token.lexeme) ? typeTable[token.lexeme] : TYPE_UNKNOWN;
         int idx = symbolTable[token.lexeme];
         token = lexer.GetToken();
@@ -453,6 +1610,70 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         token = lexer.GetToken();
         return slot;
     }
+    else if (token.token_type == FLOAT_LITERAL)
+    {
+        // store in fmem, return from index
+        int idx = alloc_float_slot();
+        fmem[idx] = stof(token.lexeme);
+        lastExprType = TYPE_FLOAT;
+        token = lexer.GetToken();
+        return idx;
+    }
+    else if (token.token_type == SELF)
+    {
+        // self.field read inside a class method
+        if (!insideFunction || currentSelfClassName.empty())
+        {
+            report_error(token.line_no, "'self' used outside of a class method");
+            lastExprType = TYPE_UNKNOWN;
+            return 0;
+        }
+        token = lexer.GetToken();  // consume SELF → '.'
+        string fieldPath = "";
+        while (token.token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume '.' → field segment
+            if (!fieldPath.empty()) fieldPath += ".";
+            fieldPath += token.lexeme;
+            token = lexer.GetToken();  // consume field segment → next token
+        }
+        if (!currentSelfFieldSlots.count(fieldPath))
+        {
+            report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
+            lastExprType = TYPE_UNKNOWN;
+            return 0;
+        }
+        lastExprType = currentSelfFieldTypes[fieldPath];
+        return currentSelfFieldSlots[fieldPath];
+    }
+    else if (token.token_type == FLOAT_TYPE || token.token_type == DOUBLE_TYPE || token.token_type == INT_TYPE)
+    {
+        // explicit cast: float(x), double(x), int(x)
+        VarType dstType = (token.token_type == FLOAT_TYPE) ? TYPE_FLOAT :
+                          (token.token_type == DOUBLE_TYPE) ? TYPE_DOUBLE : TYPE_INT;
+        token = lexer.GetToken(); // '('
+        token = lexer.GetToken(); // expression start
+        int srcIdx = parse_expression(head, tracker);
+        VarType srcType = lastExprType;
+        token = lexer.GetToken(); // past ')'
+
+        // allocate destination slot 
+        int dstIdx = 0;
+        if (dstType == TYPE_FLOAT) dstIdx = alloc_float_slot();
+        else if (dstType == TYPE_DOUBLE) dstIdx = alloc_double_slot();
+        else dstIdx = alloc_slot();
+
+        struct InstructionNode* node = new InstructionNode();
+        node->type = CAST;
+        node->cast_inst.src_index = srcIdx;
+        node->cast_inst.dst_index = dstIdx;
+        node->cast_inst.src_type = srcType;
+        node->cast_inst.dst_type = dstType;
+        append(head, tracker, node);
+
+        lastExprType = dstType;
+        return dstIdx;
+    }
     lastExprType = TYPE_UNKNOWN;
     return 0;
 }
@@ -464,12 +1685,47 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
     while (token.token_type == MULT || token.token_type == DIV) {
         int opLine = token.line_no;
         ArithmeticOperatorType op = (token.token_type == MULT) ? OPERATOR_MULT : OPERATOR_DIV;
+
+        if (leftType == TYPE_FLOAT)
+        {
+            token = lexer.GetToken();
+            int right = parse_factor(head, tracker);
+            int tmp = alloc_float_slot();
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = tmp;
+            node->assign_f_inst.operand1_index = left;
+            node->assign_f_inst.operand2_index = right;
+            node->assign_f_inst.op = op;
+            append(head, tracker, node);
+            left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
+            continue;
+        }
+
+        if (leftType == TYPE_DOUBLE)
+        {
+            token = lexer.GetToken();
+            int right = parse_factor(head, tracker);
+            int tmp = alloc_double_slot();
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = tmp;
+            node->assign_d_inst.operand1_index = left;
+            node->assign_d_inst.operand2_index = right;
+            node->assign_d_inst.op = op;
+            append(head, tracker, node);
+            left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+            continue;
+        }
+
         if (leftType != TYPE_UNKNOWN && leftType != TYPE_INT) report_error(opLine, "arithmetic requires int operands, got " + typeToString(leftType));
         token = lexer.GetToken();
         int right = parse_factor(head, tracker);
         VarType rightType = lastExprType;
+
         if (rightType != TYPE_UNKNOWN && rightType != TYPE_INT) report_error(opLine, "arithmetic requires int operands, got " + typeToString(rightType));
         int tmp = alloc_temp();
+
         struct InstructionNode* node = new InstructionNode();
         node->type = ASSIGN;
         node->assign_inst.left_hand_side_index = tmp;
@@ -512,6 +1768,38 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
             continue;
         }
 
+        if (leftType == TYPE_FLOAT)
+        {
+            token = lexer.GetToken();
+            int right = parse_term(head, tracker);
+            int tmp = alloc_float_slot();
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = tmp;
+            node->assign_f_inst.operand1_index       = left;
+            node->assign_f_inst.operand2_index       = right;
+            node->assign_f_inst.op                   = op;
+            append(head, tracker, node);
+            left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
+            continue;
+        }
+
+        if (leftType == TYPE_DOUBLE)
+        {
+            token = lexer.GetToken();
+            int right = parse_term(head, tracker);
+            int tmp = alloc_double_slot();
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = tmp;
+            node->assign_d_inst.operand1_index       = left;
+            node->assign_d_inst.operand2_index       = right;
+            node->assign_d_inst.op                   = op;
+            append(head, tracker, node);
+            left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+            continue;
+        }
+
         if (leftType != TYPE_UNKNOWN && leftType != TYPE_INT)
         {
             report_error(opLine, "arithmetic requires int operands, got " + typeToString(leftType));
@@ -540,6 +1828,61 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
 {
     string lhs = token.lexeme;
     int lhs_line = token.line_no;
+
+    // struct field write: p.x = 3.14 ; or L.a.x = 1.0 ;
+    if (varStructType.count(lhs) && lexer.peek(1).token_type == DOT)
+    {
+        token = lexer.GetToken();  // consume var name -> DOT
+
+        string fieldPath = "";
+        while (token.token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume DOT → field segment
+            if (!fieldPath.empty()) fieldPath += ".";
+            fieldPath += token.lexeme;
+            token = lexer.GetToken();  // consume field segment → next token
+        }
+
+        // token = '='
+        token = lexer.GetToken();  // consume '=' → RHS start
+
+        int resultIdx = parse_expression(head, tracker);
+        // token = ';'
+
+        if (!structFieldSlots[lhs].count(fieldPath))
+        {
+            report_error(lhs_line, "struct '" + lhs + "' has no field '" + fieldPath + "'");
+            return;
+        }
+
+        int slot = structFieldSlots[lhs][fieldPath];
+        VarType fieldType = structFieldTypes[lhs][fieldPath];
+
+        struct InstructionNode* node = new InstructionNode();
+        if (fieldType == TYPE_FLOAT)
+        {
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = slot;
+            node->assign_f_inst.operand1_index = resultIdx;
+            node->assign_f_inst.op = OPERATOR_NONE;
+        }
+        else if (fieldType == TYPE_DOUBLE)
+        {
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = slot;
+            node->assign_d_inst.operand1_index = resultIdx;
+            node->assign_d_inst.op = OPERATOR_NONE;
+        }
+        else
+        {
+            node->type = ASSIGN;
+            node->assign_inst.left_hand_side_index = slot;
+            node->assign_inst.operand1_index = resultIdx;
+            node->assign_inst.op = OPERATOR_NONE;
+        }
+        append(head, tracker, node);
+        return;
+    }
 
     if (arrayTable.find(lhs) != arrayTable.end()) {
         token = lexer.GetToken();  // '['
@@ -955,6 +2298,12 @@ void parse_function_definition()
     vector<string>  params;
     vector<VarType> paramTypes;
 
+    // save symbol tables — restored after body so function-scoped names don't leak
+    map<string, int>     savedSymbolTable       = symbolTable;
+    map<string, VarType> savedTypeTable         = typeTable;
+    map<string, int>     savedFloatSymbolTable  = floatSymbolTable;
+    map<string, int>     savedDoubleSymbolTable = doubleSymbolTable;
+
     token = lexer.GetToken(); token = lexer.GetToken();
     while (token.token_type != RPAREN) {
         VarType paramType = TYPE_UNKNOWN;
@@ -974,6 +2323,13 @@ void parse_function_definition()
 
     functionParams[funcName]     = params;
     functionParamTypes[funcName] = paramTypes;
+
+    // persist param slots before symbol table is restored at end of body
+    {
+        vector<int> pslots;
+        for (const string& p : params) pslots.push_back(symbolTable[p]);
+        functionParamSlots[funcName] = pslots;
+    }
 
     int retIdx = alloc_slot();
     functionReturnIndex[funcName] = retIdx;
@@ -1027,6 +2383,12 @@ void parse_function_definition()
 
     insideFunction = false; currentFuncRetIdx = -1; currentFuncRetType = TYPE_UNKNOWN;
 
+    // restore symbol tables — remove function-scoped params and locals
+    symbolTable       = savedSymbolTable;
+    typeTable         = savedTypeTable;
+    floatSymbolTable  = savedFloatSymbolTable;
+    doubleSymbolTable = savedDoubleSymbolTable;
+
     struct InstructionNode* fallbackRet = new InstructionNode();
     fallbackRet->type = RET; fallbackRet->ret_inst.ret_val_index = retIdx;
     append(head, tracker, fallbackRet);
@@ -1069,9 +2431,11 @@ struct InstructionNode* parse_repl_input(const std::string& s)
     token = lexer.GetToken();
 
     // function definitions
-    while (token.token_type == DEF)
+    while (token.token_type == STRUCT || token.token_type == DEF || token.token_type == CLASS)
     {
-        parse_function_definition();
+        if (token.token_type == STRUCT) parse_struct_definition();
+        else if (token.token_type == CLASS) parse_class_definition();
+        else parse_function_definition();
         token = lexer.GetToken();
     }
 
@@ -1122,16 +2486,18 @@ struct InstructionNode* parse_repl_input(const std::string& s)
 
 struct InstructionNode* parse_generate_intermediate_representation()
 {
-    lexer.Initialize();
     if (!check_balanced_parens()) 
     {
         for (const string& err : errorList) fprintf(stderr, "%s\n", err.c_str());
         exit(1);
     }
     token = lexer.GetToken();
-    while (token.token_type == DEF) 
-    { 
-        parse_function_definition(); token = lexer.GetToken(); 
+    while (token.token_type == STRUCT || token.token_type == DEF || token.token_type == CLASS)
+    {
+        if (token.token_type == STRUCT) parse_struct_definition();
+        else if (token.token_type == CLASS) parse_class_definition();
+        else parse_function_definition();
+        token = lexer.GetToken();
     }
 
     struct InstructionNode* head = nullptr, *tracker = nullptr;
