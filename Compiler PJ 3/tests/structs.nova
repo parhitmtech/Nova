@@ -1,0 +1,23 @@
+struct Point {
+    int x ;
+    int y ;
+}
+
+struct Rect {
+    int w ;
+    int h ;
+}
+
+{
+    Point p ;
+    p.x = 10 ;
+    p.y = 20 ;
+    print(p.x) ;
+    print(p.y) ;
+    print(p.x + p.y) ;
+
+    Rect r ;
+    r.w = 5 ;
+    r.h = 8 ;
+    print(r.w * r.h) ;
+}

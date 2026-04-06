@@ -1,0 +1,22 @@
+def add(int a, int b) -> int {
+    return a + b ;
+}
+
+def multiply(int a, int b) -> int {
+    return a * b ;
+}
+
+def max(int a, int b) -> int {
+    if a > b {
+        return a ;
+    }
+    return b ;
+}
+
+{
+    print(add(3, 4)) ;
+    print(multiply(5, 6)) ;
+    print(add(multiply(2, 3), 4)) ;
+    print(max(10, 20)) ;
+    print(max(99, 3)) ;
+}

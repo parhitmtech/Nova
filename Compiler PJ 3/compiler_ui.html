@@ -6,6 +6,7 @@
 <title>NovaComp — Compiler IDE</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./node_modules/xterm/css/xterm.css"/>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -660,6 +661,34 @@
   #editor-view { display: flex; flex: 1; height: 100%; }
   #repl-view    { display: none; flex-direction: column; flex: 1; height: 100%; }
 
+  /* ── Right panel sub-tabs (Output | Terminal) ── */
+  .right-sub-tabs { display: flex; }
+  .right-sub-tab {
+    font-family: var(--font-ui);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0 14px;
+    height: 36px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    background: none;
+    color: var(--muted);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s;
+    margin-bottom: -1px;
+  }
+  .right-sub-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .right-sub-tab:hover:not(.active) { color: var(--text); }
+
+  /* ── Output / Terminal panes ── */
+  #output-pane   { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+  #terminal-pane { flex: 1; display: none; overflow: hidden; background: #0c0e0f; }
+  #xterm-container { width: 100%; height: 100%; padding: 4px 8px; }
+  .xterm { height: 100%; }
+  .xterm-viewport { overflow-y: auto !important; }
+
   /* ── Monaco editor container ── */
   #monaco-editor { flex: 1; overflow: hidden; }
 
@@ -811,19 +840,27 @@
     <!-- Resizer -->
     <div class="resizer" id="resizer"></div>
 
-    <!-- Right: output -->
+    <!-- Right: output + terminal -->
     <div class="panel" id="right-panel">
       <div class="panel-header">
-        <span class="panel-title" id="right-panel-title">Output</span>
+        <div class="right-sub-tabs">
+          <button class="right-sub-tab active" id="rtab-output"   onclick="switchRightTab('output')">Output</button>
+          <button class="right-sub-tab"        id="rtab-terminal" onclick="switchRightTab('terminal')">Terminal</button>
+        </div>
         <button class="copy-btn" id="copy-btn" onclick="copyOutput()">copy</button>
       </div>
-      <div class="output-area" id="output-area">
-        <span class="output-idle">// Run your program to see output here.</span>
-      </div>
-      <div class="compare-panel" id="compare-panel" style="display:none;">
-        <div class="compare-body" id="compare-body">
-          <span class="output-idle">// Run in Compare mode to see optimization analysis.</span>
+      <div id="output-pane">
+        <div class="output-area" id="output-area">
+          <span class="output-idle">// Run your program to see output here.</span>
         </div>
+        <div class="compare-panel" id="compare-panel" style="display:none;">
+          <div class="compare-body" id="compare-body">
+            <span class="output-idle">// Run in Compare mode to see optimization analysis.</span>
+          </div>
+        </div>
+      </div>
+      <div id="terminal-pane">
+        <div id="xterm-container"></div>
       </div>
     </div>
 
@@ -876,6 +913,10 @@
   </span>
 </div>
 
+<!-- xterm.js must load BEFORE Monaco's AMD loader, otherwise Monaco's define()
+     intercepts xterm's UMD registration and window.Terminal is never set. -->
+<script src="./node_modules/xterm/lib/xterm.js"></script>
+<script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs/loader.js"></script>
 <script>
 // ── Examples ──────────────────────────────────────────────────────────────────
@@ -985,20 +1026,38 @@ function fsLoad() {
   fsSave();
 }
 
+let _diskWriteTimer = null;
 function saveCurrentFile() {
   if (!_monaco || !fsData?.active) return;
   const f = fsData.items[fsData.active];
-  if (f && !f.isFolder) { f.content = codeArea.value; f.inputs = inputsArea.value; fsSave(); diskWrite(fsData.active); }
+  if (f && !f.isFolder) {
+    f.content = codeArea.value;
+    f.inputs  = inputsArea.value;
+    fsSave();
+    // Debounced disk write — 500 ms after last keystroke so the terminal
+    // always sees up-to-date content without writing on every character.
+    clearTimeout(_diskWriteTimer);
+    const activeId = fsData.active;
+    _diskWriteTimer = setTimeout(() => diskWrite(activeId), 500);
+  }
 }
 
 function openTab(id) {
   if (!fsData.items[id] || fsData.items[id].isFolder) return;
   saveCurrentFile();
-  if (!fsData.tabs.includes(id)) fsData.tabs.push(id);
-  fsData.active    = id;
-  codeArea.value   = fsData.items[id].content || '';
-  inputsArea.value = fsData.items[id].inputs  || '';
-  fsSave(); updateGutter(); renderExplorer(); renderTabs();
+  const needsTabAdd = !fsData.tabs.includes(id);
+  if (needsTabAdd) fsData.tabs.push(id);
+  const switching = fsData.active !== id;
+  fsData.active = id;
+  if (switching) {
+    codeArea.value   = fsData.items[id].content || '';
+    inputsArea.value = fsData.items[id].inputs  || '';
+  }
+  // Only re-render when the tab structure or active file actually changed;
+  // clicking an already-active tab is a no-op to avoid unnecessary DOM rebuilds.
+  if (switching || needsTabAdd) {
+    fsSave(); updateGutter(); renderExplorer(); renderTabs();
+  }
 }
 
 function closeTab(id, e) {
@@ -1139,7 +1198,7 @@ function diskWrite(id) {
   fetch('http://localhost:3001/fs/write', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ path: p, content: item.content || '' })
-  }).then(() => fetchGitStatus()).catch(() => {});
+  }).catch(() => {});
 }
 
 function diskDelete(id) {
@@ -1162,21 +1221,84 @@ function diskRename(oldPath, newPath) {
   fetch('http://localhost:3001/fs/rename', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ from: oldPath, to: newPath })
-  }).then(() => fetchGitStatus()).catch(() => {});
+  }).catch(() => {});
 }
 
-// ── Git status ────────────────────────────────────────────────────────────────
+// ── Terminal filesystem sync ──────────────────────────────────────────────────
+// When the terminal (echo, touch, rm, mkdir, cp, mv) modifies workspace files,
+// the server sends a JSON control message and these helpers sync fsData.
 
-let gitStatus = {};  // { 'main.nova': 'M', 'examples/test.nova': 'U', ... }
+function findIdByRelPath(relPath) {
+  const norm = relPath.replace(/\\/g, '/');
+  for (const id of Object.keys(fsData.items)) {
+    const fp = getFilePath(id);
+    if (fp && fp.replace(/\\/g, '/') === norm) return id;
+  }
+  return null;
+}
 
-async function fetchGitStatus() {
-  try {
-    const res  = await fetch('http://localhost:3001/git/status', { signal: AbortSignal.timeout(2000) });
-    const data = await res.json();
-    gitStatus = data.status || {};
-    renderExplorer();
-    renderTabs();
-  } catch (_) {}
+function addItemByRelPath(relPath, isFolder) {
+  const existing = findIdByRelPath(relPath);
+  if (existing) return existing;
+  const parts     = relPath.replace(/\\/g, '/').split('/');
+  const name      = parts[parts.length - 1];
+  const parentRel = parts.slice(0, -1).join('/');
+  const parentId  = parentRel ? (findIdByRelPath(parentRel) || addItemByRelPath(parentRel, true)) : null;
+  const id = fsGenId();
+  fsData.items[id] = isFolder
+    ? { id, name, isFolder: true,  parentId, open: true }
+    : { id, name, isFolder: false, parentId, content: '', inputs: '' };
+  return id;
+}
+
+function removeByRelPath(relPath) {
+  const id = findIdByRelPath(relPath);
+  if (!id) return;
+  // Collect the item and all its descendants
+  const toRemove = new Set([id]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const [itemId, item] of Object.entries(fsData.items)) {
+      if (!toRemove.has(itemId) && toRemove.has(item.parentId)) {
+        toRemove.add(itemId); changed = true;
+      }
+    }
+  }
+  for (const rid of toRemove) {
+    delete fsData.items[rid];
+    fsData.tabs = fsData.tabs.filter(t => t !== rid);
+    if (fsData.active === rid) fsData.active = null;
+  }
+  if (!fsData.active && fsData.tabs.length > 0) fsData.active = fsData.tabs[0];
+}
+
+async function handleFsChange(msg) {
+  const { op, paths } = msg;
+  for (const relPath of (paths || [])) {
+    if (op === 'update') {
+      let id = findIdByRelPath(relPath) || addItemByRelPath(relPath, false);
+      const item = id ? fsData.items[id] : null;
+      if (!item || item.isFolder) continue;
+      try {
+        const r = await fetch(`http://localhost:3001/fs/read?path=${encodeURIComponent(relPath)}`);
+        if (!r.ok) continue;
+        const { content } = await r.json();
+        item.content = content;
+        // Live-update the editor if this file is currently open and active
+        if (fsData.active === id && _monaco) {
+          const model = _monaco.getModel();
+          if (model && model.getValue() !== content)
+            model.pushEditOperations([], [{ range: model.getFullModelRange(), text: content }], () => null);
+        }
+      } catch (_) {}
+    } else if (op === 'delete') {
+      removeByRelPath(relPath);
+    } else if (op === 'mkdir') {
+      addItemByRelPath(relPath, true);
+    }
+  }
+  fsSave(); renderExplorer(); renderTabs();
 }
 
 // ── Drag-and-drop state ───────────────────────────────────────────────────────
@@ -1212,16 +1334,6 @@ function renderExplorer() {
   const tree = document.getElementById('file-tree');
   tree.innerHTML = '';
   renderTreeLevel(null, 0, tree);
-  // drop onto empty tree area = move to root
-  tree.addEventListener('dragover', e => {
-    if (!draggedId || e.target.closest('.tree-item')) return;
-    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
-  }, { once: false });
-  tree.addEventListener('drop', e => {
-    if (draggedId && !e.target.closest('.tree-item')) {
-      e.preventDefault(); doDrop(null);
-    }
-  }, { once: false });
 }
 
 function renderTreeLevel(parentId, depth, container) {
@@ -1296,13 +1408,6 @@ function renderTreeLevel(parentId, depth, container) {
       const icon  = document.createElement('span'); icon.className  = 'tree-icon';  icon.textContent  = getFileIcon(item.name);
       const label = document.createElement('span'); label.className = 'tree-label'; label.textContent = item.name;
       row.append(icon, label);
-      const gs = gitStatus[getFilePath(item.id)];
-      if (gs) {
-        const badge = document.createElement('span');
-        badge.className = 'git-badge git-' + gs[0];
-        badge.textContent = gs[0];
-        row.appendChild(badge);
-      }
       row.addEventListener('click', () => openTab(item.id));
 
       // ── drop target: file → move to same parent ──────────────────────────
@@ -1331,12 +1436,6 @@ function renderTabs() {
     const tab  = document.createElement('div');
     tab.className = 'file-tab' + (fsData.active === id ? ' active' : '');
     tab.addEventListener('click', () => openTab(id));
-    const gs = gitStatus[getFilePath(id)];
-    if (gs) {
-      const dot = document.createElement('span');
-      dot.className = 'file-tab-git git-' + gs[0];
-      tab.appendChild(dot);
-    }
     const name  = document.createElement('span'); name.textContent = item.name;
     const close = document.createElement('button');
     close.className = 'file-tab-close'; close.textContent = '×';
@@ -1347,15 +1446,13 @@ function renderTabs() {
 
 // ── Mode switch ───────────────────────────────────────────────────────────────
 const modeSelect      = document.getElementById('mode-select');
-const outputArea      = document.getElementById('output-area');
-const comparePanel    = document.getElementById('compare-panel');
-const rightPanelTitle = document.getElementById('right-panel-title');
+const outputArea   = document.getElementById('output-area');
+const comparePanel = document.getElementById('compare-panel');
 
 modeSelect.addEventListener('change', () => {
   const isCompare = modeSelect.value === 'compare';
-  outputArea.style.display    = isCompare ? 'none' : 'flex';
-  comparePanel.style.display  = isCompare ? 'flex' : 'none';
-  rightPanelTitle.textContent = isCompare ? 'Optimization Analysis' : 'Output';
+  outputArea.style.display   = isCompare ? 'none' : 'flex';
+  comparePanel.style.display = isCompare ? 'flex' : 'none';
   document.getElementById('copy-btn').style.display = isCompare ? 'none' : 'block';
 });
 
@@ -1627,15 +1724,26 @@ fsLoad();
 if (fsData.active && fsData.items[fsData.active]) {
   inputsArea.value = fsData.items[fsData.active].inputs || '';
 }
-// sync all existing localStorage files to disk on first load
-Object.values(fsData.items).forEach(item => {
-  if (!item.isFolder) diskWrite(item.id);
-  else diskMkdir(item.id);
-});
+// Sync only the active file to disk on startup; other files are written
+// lazily when opened or modified to avoid a burst of requests on every load.
+if (fsData.active && fsData.items[fsData.active]) {
+  diskWrite(fsData.active);
+}
+// drop onto empty tree area = move to root (registered once, not per-render)
+(function() {
+  const tree = document.getElementById('file-tree');
+  tree.addEventListener('dragover', e => {
+    if (!draggedId || e.target.closest('.tree-item')) return;
+    e.preventDefault(); e.dataTransfer.dropEffect = 'move';
+  });
+  tree.addEventListener('drop', e => {
+    if (draggedId && !e.target.closest('.tree-item')) {
+      e.preventDefault(); doDrop(null);
+    }
+  });
+})();
 renderExplorer();
 renderTabs();
-fetchGitStatus();
-setInterval(fetchGitStatus, 5000);
 
 // ── Monaco Editor init ────────────────────────────────────────────────────────
 require.config({ paths: { vs: 'https://cdn.jsdelivr.net/npm/monaco-editor@0.44.0/min/vs' } });
@@ -1661,6 +1769,64 @@ require(['vs/editor/editor.main'], function() {
         [/[;,]/,              'delimiter'],
       ]
     }
+  });
+
+  monaco.languages.setLanguageConfiguration('nova', {
+    // Bracket matching + colorization
+    brackets: [
+      ['{', '}'],
+      ['[', ']'],
+      ['(', ')'],
+    ],
+
+    // Auto-close pairs: type { and } appears automatically, etc.
+    autoClosingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"', notIn: ['string', 'comment'] },
+    ],
+
+    // Surround selection with brackets when text is selected and user types
+    surroundingPairs: [
+      { open: '{', close: '}' },
+      { open: '[', close: ']' },
+      { open: '(', close: ')' },
+      { open: '"', close: '"' },
+    ],
+
+    // Comment toggling (Ctrl+/)
+    comments: {
+      lineComment: '//',
+    },
+
+    // Auto-indentation rules:
+    // - after a line ending with {, indent the next line
+    // - a line starting with } de-indents back
+    indentationRules: {
+      increaseIndentPattern: /^.*\{[^}"']*$/,
+      decreaseIndentPattern: /^\s*\}/,
+    },
+
+    // On-enter rules: pressing Enter after { inserts a blank indented line
+    // and puts } on the line after, matching VS Code / Python IDE behavior.
+    onEnterRules: [
+      {
+        // Enter after a line ending with {
+        beforeText: /^.*\{[^}"']*$/,
+        afterText:  /^\s*\}/,
+        action: {
+          indentAction: monaco.languages.IndentAction.IndentOutdent,
+        },
+      },
+      {
+        // Enter after a line ending with { (no closing brace on same line)
+        beforeText: /^.*\{[^}"']*$/,
+        action: {
+          indentAction: monaco.languages.IndentAction.Indent,
+        },
+      },
+    ],
   });
 
   monaco.editor.defineTheme('nova-dark', {
@@ -1709,8 +1875,7 @@ require(['vs/editor/editor.main'], function() {
   // Ctrl+Enter to run  (Ctrl+F / Ctrl+H are Monaco built-ins, always active)
   _monaco.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, runCode);
 
-  // Auto-save + clear error squiggles on every edit
-  _monaco.onDidChangeModelContent(() => { saveCurrentFile(); clearEditorErrors(); });
+  _monaco.onDidChangeModelContent(() => { saveCurrentFile(); });
 
   // ── Autocomplete provider ────────────────────────────────────────────────────
   const KW      = monaco.languages.CompletionItemKind.Keyword;
@@ -2039,6 +2204,163 @@ async function checkBackend() {
 
 checkBackend();
 setInterval(checkBackend, 5000);
+</script>
+
+<script>
+// ── Right panel sub-tabs (Output | Terminal) ──────────────────────────────────
+
+let activeRightTab = 'output';
+
+function switchRightTab(tab) {
+  activeRightTab = tab;
+  const outputPane = document.getElementById('output-pane');
+  const termPane   = document.getElementById('terminal-pane');
+  const rtabOut    = document.getElementById('rtab-output');
+  const rtabTerm   = document.getElementById('rtab-terminal');
+  const copyBtn    = document.getElementById('copy-btn');
+
+  if (tab === 'output') {
+    outputPane.style.display = 'flex';
+    termPane.style.display   = 'none';
+    rtabOut.classList.add('active');
+    rtabTerm.classList.remove('active');
+    copyBtn.style.display    = '';
+  } else {
+    outputPane.style.display = 'none';
+    termPane.style.display   = 'flex';
+    rtabOut.classList.remove('active');
+    rtabTerm.classList.add('active');
+    copyBtn.style.display    = 'none';
+
+    // Wait one animation frame so the browser finishes laying out the
+    // terminal pane before xterm.js tries to measure its dimensions.
+    requestAnimationFrame(() => {
+      if (!termXterm) {
+        termInit();  // termConnect() is called inside termInit after open
+      } else {
+        if (termFit) termFit.fit();
+        // Only reconnect if not already open or connecting
+        const st = termWs ? termWs.readyState : -1;
+        if (st !== WebSocket.OPEN && st !== WebSocket.CONNECTING) termConnect();
+      }
+    });
+  }
+}
+
+// ── Terminal (xterm.js + node-pty over WebSocket /terminal) ──────────────────
+
+let termXterm = null;
+let termWs    = null;
+let termFit   = null;
+
+function termInit() {
+  if (typeof Terminal === 'undefined' || typeof FitAddon === 'undefined') {
+    document.getElementById('xterm-container').innerHTML =
+      '<div style="color:#f87171;padding:20px;font-family:monospace;font-size:13px;">' +
+      'xterm.js failed to load from CDN. Check your internet connection and reload.</div>';
+    return;
+  }
+
+  termXterm = new Terminal({
+    fontFamily: "'JetBrains Mono', 'Courier New', monospace",
+    fontSize: 13,
+    lineHeight: 1.5,
+    cursorBlink: true,
+    scrollback: 2000,
+    theme: {
+      background:    '#0c0e0f',
+      foreground:    '#e2e8f0',
+      cursor:        '#38bdf8',
+      cursorAccent:  '#0c0e0f',
+      selectionBackground: 'rgba(30,58,95,0.5)',
+      black:         '#1a1d20',
+      red:           '#f87171',
+      green:         '#4ade80',
+      yellow:        '#fbbf24',
+      blue:          '#38bdf8',
+      magenta:       '#a78bfa',
+      cyan:          '#22d3ee',
+      white:         '#e2e8f0',
+      brightBlack:   '#4a5568',
+      brightRed:     '#fca5a5',
+      brightGreen:   '#86efac',
+      brightYellow:  '#fde68a',
+      brightBlue:    '#7dd3fc',
+      brightMagenta: '#c4b5fd',
+      brightCyan:    '#67e8f9',
+      brightWhite:   '#f8fafc',
+    },
+  });
+
+  termFit = new FitAddon.FitAddon();
+  termXterm.loadAddon(termFit);
+  termXterm.open(document.getElementById('xterm-container'));
+
+  // Defer fit() so the browser has finished painting the container
+  requestAnimationFrame(() => {
+    termFit.fit();
+    termConnect();  // connect only after the terminal is fully sized
+  });
+
+  // send keyboard input to server
+  termXterm.onData(data => {
+    if (termWs && termWs.readyState === WebSocket.OPEN)
+      termWs.send(JSON.stringify({ type: 'input', data }));
+  });
+
+  // notify server when terminal is resized so the shell reflows text correctly
+  termXterm.onResize(({ cols, rows }) => {
+    if (termWs && termWs.readyState === WebSocket.OPEN)
+      termWs.send(JSON.stringify({ type: 'resize', cols, rows }));
+  });
+
+  // refit whenever the panel dimensions change (e.g. user drags the resizer)
+  new ResizeObserver(() => {
+    if (termFit && activeRightTab === 'terminal') termFit.fit();
+  }).observe(document.getElementById('terminal-pane'));
+}
+
+async function termConnect() {
+  // Check server health first so we can give a meaningful error message
+  let health = null;
+  try {
+    const r = await fetch('http://localhost:3001/health', { signal: AbortSignal.timeout(2000) });
+    health = await r.json();
+  } catch (_) {}
+
+  if (!health) {
+    termXterm.write('\r\n\x1b[31mCannot reach server at localhost:3001.\x1b[0m\r\n');
+    termXterm.write('\x1b[33mStart the server:  node server.js\x1b[0m\r\n');
+    return;
+  }
+
+  termWs = new WebSocket('ws://localhost:3001/terminal');
+
+  termWs.onopen = () => {
+    if (termFit) termFit.fit();
+    if (termXterm)
+      termWs.send(JSON.stringify({ type: 'resize', cols: termXterm.cols, rows: termXterm.rows }));
+  };
+
+  termWs.onmessage = e => {
+    // Check for JSON control messages before writing to terminal
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg && msg.__nc === 'fs') { handleFsChange(msg); return; }
+    } catch (_) {}
+    if (termXterm) termXterm.write(e.data);
+  };
+
+  termWs.onclose = () => {
+    if (termXterm)
+      termXterm.write('\r\n\x1b[2m[session ended — switch to Terminal tab to reconnect]\x1b[0m\r\n');
+  };
+
+  termWs.onerror = () => {
+    if (termXterm)
+      termXterm.write('\r\n\x1b[31m[WebSocket error — restart server.js then switch tabs]\x1b[0m\r\n');
+  };
+}
 </script>
 </body>
 </html>
