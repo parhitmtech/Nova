@@ -1,0 +1,9 @@
+{
+    int a = 5 ;
+    int b = a + 3 ;
+    a = b * 2 ;
+    print(a) ;
+    print(b) ;
+    int c = a - b ;
+    print(c) ;
+}

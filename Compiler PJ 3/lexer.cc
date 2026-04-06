@@ -328,7 +328,23 @@ Token LexicalAnalyzer::GetTokenMain()
             return tmp;
         }
 
-        case '/':   tmp.token_type = DIV;       return tmp;
+        case '/': {
+            char next;
+            input.GetChar(next);
+            if (next == '/') {
+                // line comment — skip to end of line, then re-lex
+                char ch;
+                while (!input.EndOfInput()) {
+                    input.GetChar(ch);
+                    if (ch == '\n') { line_no++; break; }
+                }
+                return GetTokenMain();  // recurse to get the real next token
+            } else {
+                if (!input.EndOfInput()) input.UngetChar(next);
+                tmp.token_type = DIV;
+                return tmp;
+            }
+        }
         case '*':   tmp.token_type = MULT;      return tmp;
         case '=':   tmp.token_type = EQUAL;     return tmp;
         case ':':   tmp.token_type = COLON;     return tmp;

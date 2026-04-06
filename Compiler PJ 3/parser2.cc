@@ -62,6 +62,9 @@ map<string, map<string, VarType>> structFieldTypes;  // var -> {dotted path -> t
 // class support - parser local state
 map<string, int> currentSelfFieldSlots;
 map<string, VarType> currentSelfFieldTypes;
+map<string, int> currentSelfFieldArraySizes;
+map<string, map<string, map<string, int>>> classMethodArraySizes;
+map<string, map<string, vector<int>>> classMethodParamSlots;
 string currentSelfClassName = "";
 
 string typeToString(VarType t)
@@ -397,8 +400,10 @@ void parse_class_definition()
                 {
                     params.push_back(token.lexeme);
                     paramTypes.push_back(pType);
-                    symbolTable[token.lexeme] = alloc_slot();
+                    int pSlot = alloc_slot();
+                    symbolTable[token.lexeme] = pSlot;
                     typeTable[token.lexeme] = pType;
+                    classMethodParamSlots[className][methodName].push_back(pSlot);
                 }
                 token = lexer.GetToken();
                 if (token.token_type == COMMA) token = lexer.GetToken();
@@ -427,10 +432,16 @@ void parse_class_definition()
             // allocate self field slots for this method
             map<string, int> selfSlots;
             map<string, VarType> selfTypes;
+            map<string, int> arraySizes;
             for (auto& f : def.fields)
             {
                 int s = 0;
-                if (f.type == TYPE_FLOAT) s = alloc_float_slot();
+                if (f.array_size > 0)
+                {
+                    s = alloc_slot();  // ONE pointer slot, not N slots
+                    arraySizes[f.name] = f.array_size;
+                }
+                else if (f.type == TYPE_FLOAT) s = alloc_float_slot();
                 else if (f.type == TYPE_DOUBLE) s = alloc_double_slot();
                 else s = alloc_slot();
                 selfSlots[f.name] = s;
@@ -438,6 +449,7 @@ void parse_class_definition()
             }
             classMethodSelfSlots[className][methodName] = selfSlots;
             classMethodSelfTypes[className][methodName] = selfTypes;
+            classMethodArraySizes[className][methodName] = arraySizes;
 
             // save + set parser context
             bool savedInsideFunc = insideFunction;
@@ -446,6 +458,7 @@ void parse_class_definition()
             string savedSelfClass = currentSelfClassName;
             map<string, int> savedSelfSlots = currentSelfFieldSlots;
             map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
+            map<string, int> savedSelfArraySizes = currentSelfFieldArraySizes;
 
             insideFunction = true;
             currentFuncRetIdx = retIdx;
@@ -453,6 +466,8 @@ void parse_class_definition()
             currentSelfClassName = className;
             currentSelfFieldSlots = selfSlots;
             currentSelfFieldTypes = selfTypes;
+            currentSelfFieldArraySizes = arraySizes;
+            classTable[className] = def;
 
             token = lexer.GetToken();  // first token in body
             struct InstructionNode* mhead = nullptr;
@@ -490,6 +505,7 @@ void parse_class_definition()
             currentSelfClassName = savedSelfClass;
             currentSelfFieldSlots = savedSelfSlots;
             currentSelfFieldTypes = savedSelfTypes;
+            currentSelfFieldArraySizes = savedSelfArraySizes;
 
             symbolTable       = savedSymbolTable;
             typeTable         = savedTypeTable;
@@ -520,9 +536,17 @@ void parse_class_definition()
             fi.name = token.lexeme;
             fi.type = fieldType;
             fi.struct_type = "";
-            def.fields.push_back(fi);
+            fi.array_size = 0;
 
-            token = lexer.GetToken();  // ';'
+            token = lexer.GetToken();  // ';' or '['
+            if (token.token_type == LBRAC)
+            {
+                token = lexer.GetToken();  // size number
+                fi.array_size = stoi(token.lexeme);
+                token = lexer.GetToken();  // ']'
+                token = lexer.GetToken();  // ';'
+            }
+            def.fields.push_back(fi);
             token = lexer.GetToken();  // next member or '}'
         }
         else if (token.token_type == ID && classTable.count(token.lexeme))
@@ -587,7 +611,12 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     for (auto& field : def.fields)
     {
         int slot = 0;
-        if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
+        if (field.array_size > 0)
+        {
+            slot = next_available;
+            for (int i = 0;i < field.array_size; i++) alloc_slot();
+        }
+        else if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
         else if (field.type == TYPE_DOUBLE) slot = alloc_double_slot();
         else slot = alloc_slot();
         fieldSlots[field.name] = slot;
@@ -624,6 +653,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             string fullName = className + "::init";
             map<string, int>& selfSlots = classMethodSelfSlots[className]["init"];
             map<string, VarType>& selfTypes = classMethodSelfTypes[className]["init"];
+            map<string, int>& initArrSizes = classMethodArraySizes[className]["init"];
             vector<string>& params = classMethodParams[className]["init"];
 
             // copy caller field slots into self slots
@@ -631,11 +661,21 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             {
                 const string& fieldName = kv.first;
                 int selfSlot = kv.second;
-                if (!classFieldSlots[varName].count(fieldName))
+                if (!classFieldSlots[varName].count(fieldName)) continue;
+                int callerSlot = classFieldSlots[varName][fieldName];
+                // Array field: store caller's base index as literal pointer
+                if (initArrSizes.count(fieldName))
                 {
+                    int ptrSlot = alloc_slot();
+                    mem[ptrSlot] = callerSlot;
+                    struct InstructionNode* copyIn = new InstructionNode();
+                    copyIn->type = ASSIGN;
+                    copyIn->assign_inst.left_hand_side_index = selfSlot;
+                    copyIn->assign_inst.operand1_index       = ptrSlot;
+                    copyIn->assign_inst.op                   = OPERATOR_NONE;
+                    append(head, tracker, copyIn);
                     continue;
                 }
-                int callerSlot = classFieldSlots[varName][fieldName];
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyIn = new InstructionNode();
                 if (fType == TYPE_FLOAT)
@@ -674,9 +714,10 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             {
                 int* pSlots = new int[params.size()];
                 int* aSlots = new int[params.size()];
+                vector<int>& storedParamSlots = classMethodParamSlots[className]["init"];
                 for (int i = 0;i < (int)params.size();i++)
                 {
-                    pSlots[i] = symbolTable.count(params[i]) ? symbolTable[params[i]] : 0;
+                    pSlots[i] = (i < (int)storedParamSlots.size()) ? storedParamSlots[i] : 0;
                     aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
                 }
                 callNode->call_inst.param_slots = pSlots;
@@ -698,6 +739,8 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 {
                     continue;
                 }
+                // Array fields write directly to caller via dynamic_base — no copy-back needed
+                if (initArrSizes.count(fieldName)) continue;
                 int callerSlot = classFieldSlots[varName][fieldName];
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyBack = new InstructionNode();
@@ -906,12 +949,26 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     // Copy caller's field values into the method's self slots (pass self by copy)
     map<string, int>& selfSlots = classMethodSelfSlots[lookupClass][methodName];
     map<string, VarType>& selfTypes = classMethodSelfTypes[lookupClass][methodName];
+    map<string, int>& arrSizes = classMethodArraySizes[lookupClass][methodName];
     for (auto& kv : selfSlots)
     {
         const string& fieldName = kv.first;
         int selfSlot = kv.second;
         if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
         int callerSlot = classFieldSlots[varName][fieldName];
+        // Array field: store the caller's base index as a literal pointer
+        if (arrSizes.count(fieldName))
+        {
+            int ptrSlot = alloc_slot();
+            mem[ptrSlot] = callerSlot;
+            struct InstructionNode* copyIn = new InstructionNode();
+            copyIn->type = ASSIGN;
+            copyIn->assign_inst.left_hand_side_index = selfSlot;
+            copyIn->assign_inst.operand1_index       = ptrSlot;
+            copyIn->assign_inst.op                   = OPERATOR_NONE;
+            append(head, tracker, copyIn);
+            continue;
+        }
         VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
         struct InstructionNode* copyIn = new InstructionNode();
         if (fType == TYPE_FLOAT)
@@ -953,9 +1010,10 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     {
         int* pSlots = new int[params.size()];
         int* aSlots = new int[params.size()];
+        vector<int>& storedParamSlots = classMethodParamSlots[lookupClass][methodName];
         for (int i = 0; i < (int)params.size(); i++)
         {
-            pSlots[i] = symbolTable.count(params[i]) ? symbolTable[params[i]] : 0;
+            pSlots[i] = (i < (int)storedParamSlots.size()) ? storedParamSlots[i] : 0;
             aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
         }
         callNode->call_inst.param_slots   = pSlots;
@@ -974,6 +1032,8 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         const string& fieldName = kv.first;
         int selfSlot = kv.second;
         if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
+        // Array fields write directly to caller via dynamic_base — no copy-back needed
+        if (arrSizes.count(fieldName)) continue;
         int callerSlot = classFieldSlots[varName][fieldName];
         VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
         struct InstructionNode* copyBack = new InstructionNode();
@@ -1214,6 +1274,38 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
+        }
+        // self.field[index] = value (array write)
+        if (token.token_type == LBRAC)
+        {
+            if (!currentSelfFieldSlots.count(fieldPath))
+            {
+                report_error(token.line_no, "'" + currentSelfClassName + "' has no array field '" + fieldPath + "'");
+                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+                {
+                    token = lexer.GetToken();
+                }
+                return;
+            }
+            token = lexer.GetToken();  // first token of index expression
+            int indexSlot = parse_expression(head, tracker);
+            token = lexer.GetToken();  // past ']' -> '='
+            token = lexer.GetToken();  // past '=' -> value expression
+            int valueSlot = parse_expression(head, tracker);
+
+            int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
+
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ARRAY_WRITE;
+            node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
+            node->array_inst.dynamic_base = true;
+            node->array_inst.index_slot = indexSlot;
+            node->array_inst.target_index = valueSlot;
+            node->array_inst.array_size = arrSize;
+            node->array_inst.size_slot = -1;
+            node->array_inst.line_no = token.line_no;
+            append(head, tracker, node);
+            return;
         }
         // token = '='
         token = lexer.GetToken();  // consume '=' → RHS
@@ -1637,6 +1729,37 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
         }
+        // self.field[index] (array read)
+        if (token.token_type == LBRAC)
+        {
+            if (!currentSelfFieldSlots.count(fieldPath))
+            {
+                report_error(token.line_no, "'" + currentSelfClassName + "' has no array field '" + fieldPath + "'");
+                lastExprType = TYPE_UNKNOWN;
+                return 0;
+            }
+            int indexLine = token.line_no;
+            token = lexer.GetToken();  // first token of index expression
+            int indexSlot = parse_expression(head, tracker);
+            token = lexer.GetToken();  // past ']'
+
+            int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
+
+            int tempSlot = alloc_temp();
+            struct InstructionNode* node = new InstructionNode();
+            node->type = ARRAY_READ;
+            node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
+            node->array_inst.dynamic_base = true;
+            node->array_inst.index_slot = indexSlot;
+            node->array_inst.target_index = tempSlot;
+            node->array_inst.array_size = arrSize;
+            node->array_inst.size_slot = -1;
+            node->array_inst.line_no = indexLine;
+            append(head, tracker, node);
+
+            lastExprType = TYPE_INT;
+            return tempSlot;
+        }
         if (!currentSelfFieldSlots.count(fieldPath))
         {
             report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
@@ -2041,12 +2164,21 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
         VarType lhsCondType = lastExprType;
 
         ConditionalOperatorType condOp = CONDITION_NOTEQUAL;
-        if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
-        else if (token.token_type == LESS)     condOp = CONDITION_LESS;
-        else if (token.token_type == NOTEQUAL) condOp = CONDITION_NOTEQUAL;
-        token = lexer.GetToken();
-
-        int rhsIdx = parse_expression(head, tracker);
+        int rhsIdx;
+        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL)
+        {
+            if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
+            else if (token.token_type == LESS)     condOp = CONDITION_LESS;
+            else                                   condOp = CONDITION_NOTEQUAL;
+            token = lexer.GetToken();
+            rhsIdx = parse_expression(head, tracker);
+        }
+        else
+        {
+            int zeroSlot = alloc_slot();
+            mem[zeroSlot] = 0;
+            rhsIdx = zeroSlot;
+        }
         VarType rhsCondType = lastExprType;
 
         bool isStringCmp = (lhsCondType == TYPE_STRING || rhsCondType == TYPE_STRING);
@@ -2208,7 +2340,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     else if (token.token_type == NOTEQUAL) forConditionNode->cjmp_inst.condition_op = CONDITION_NOTEQUAL;
     token = lexer.GetToken();
     if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand2_index = symbolTable[token.lexeme];
-    else if (token.token_type == NUM) { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand2_index = next_available++; }
+    else if (token.token_type == NUM) { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand2_index = s; }
 
     struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
     forConditionNode->cjmp_inst.target = noOpNode;
@@ -2243,7 +2375,6 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
     token = lexer.GetToken();
     struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
     struct InstructionNode* lastCaseNode = nullptr;
-    token = lexer.GetToken();
     while (token.token_type == CASE || token.lexeme == "default") {
         if (token.token_type == CASE) 
         {

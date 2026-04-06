@@ -1,0 +1,17 @@
+{
+    int sum = 0 ;
+    int n = 6 ;
+    int i = 0 ;
+    for(i = 1 ; i < n ; i = i + 1) {
+        sum = sum + i ;
+    }
+    print(sum) ;
+
+    int product = 1 ;
+    int m = 5 ;
+    int j = 0 ;
+    for(j = 1 ; j < m ; j = j + 1) {
+        product = product * j ;
+    }
+    print(product) ;
+}

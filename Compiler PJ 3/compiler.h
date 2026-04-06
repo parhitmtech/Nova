@@ -185,6 +185,7 @@ struct ClassFieldInfo {
     std::string name;  // dotted for nested: "a.x"
     VarType type;
     std::string struct_type;  // non-empty if field is a struct/class
+    int array_size;  // 0 = scalar field, N > 0 = fixed int array of size N
 };
 
 struct ClassDef {
