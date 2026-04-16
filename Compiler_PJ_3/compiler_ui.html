@@ -1,0 +1,1508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovaComp — Compiler IDE</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,300;0,400;0,500;0,600;1,400&family=Syne:wght@400;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./node_modules/xterm/css/xterm.css"/>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0d1117;
+  --bg2:      #161b22;
+  --bg3:      #1c2128;
+  --bg4:      #22272e;
+  --bg5:      #2d333b;
+  --border:   #30363d;
+  --border2:  #444c56;
+  --text:     #cdd9e5;
+  --muted:    #768390;
+  --hint:     #545d68;
+  --accent:   #539bf5;
+  --accent2:  #316dca;
+  --green:    #57ab5a;
+  --red:      #e5534b;
+  --yellow:   #c69026;
+  --orange:   #cc6b2c;
+  --purple:   #986ee2;
+  --cyan:     #39c5cf;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-ui:   'Syne', sans-serif;
+  --tab-h:    35px;
+  --topbar-h: 48px;
+  --statusbar-h: 22px;
+  --sidebar-w: 220px;
+  --activity-w: 48px;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-mono); overflow: hidden; }
+
+/* ── Activity Bar (leftmost icon strip like VS Code) ── */
+.activity-bar {
+  width: var(--activity-w);
+  background: var(--bg2);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 2px;
+  flex-shrink: 0;
+  z-index: 10;
+}
+.activity-btn {
+  width: 36px; height: 36px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: none; cursor: pointer;
+  border-radius: 6px; color: var(--muted);
+  transition: color 0.15s, background 0.15s;
+  position: relative;
+}
+.activity-btn:hover { color: var(--text); background: var(--bg4); }
+.activity-btn.active { color: var(--text); }
+.activity-btn.active::before {
+  content: ''; position: absolute; left: -1px; top: 6px; bottom: 6px;
+  width: 2px; background: var(--accent); border-radius: 0 2px 2px 0;
+}
+
+/* ── Topbar ── */
+.topbar {
+  height: var(--topbar-h);
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center;
+  padding: 0 16px; gap: 12px;
+  flex-shrink: 0;
+}
+.logo {
+  font-family: var(--font-ui); font-weight: 800; font-size: 14px;
+  letter-spacing: -0.01em; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+.logo-icon {
+  width: 22px; height: 22px; background: var(--accent);
+  border-radius: 5px; display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 800; color: #0d1117;
+}
+.divider-v { width: 1px; height: 18px; background: var(--border); }
+
+.tab-switcher {
+  display: flex; gap: 1px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px;
+}
+.tab-btn {
+  font-family: var(--font-ui); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.05em; padding: 3px 12px;
+  border-radius: 4px; border: none; background: none;
+  color: var(--muted); cursor: pointer; transition: all 0.12s;
+}
+.tab-btn.active { background: var(--bg5); color: var(--text); }
+.tab-btn:hover:not(.active) { color: var(--text); }
+
+.examples-select, .mode-select {
+  font-family: var(--font-mono); font-size: 12px;
+  background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 6px; padding: 4px 10px; cursor: pointer;
+  outline: none; transition: border-color 0.12s; color: var(--text);
+}
+.examples-select:hover { border-color: var(--border2); }
+.mode-select { color: var(--accent); border-color: #1f4b8e; }
+.mode-select:hover { border-color: var(--accent); }
+.mode-select option { background: var(--bg3); color: var(--text); }
+
+.topbar-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+.status-pill {
+  font-family: var(--font-ui); font-size: 11px; font-weight: 600;
+  letter-spacing: 0.04em; padding: 3px 10px; border-radius: 20px;
+  border: 1px solid var(--border); color: var(--muted); background: var(--bg3);
+  display: flex; align-items: center; gap: 5px; transition: all 0.2s;
+}
+.status-pill .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); transition: background 0.2s; }
+.status-pill.ok      { color: var(--green);  border-color: #1b4721; }
+.status-pill.ok .dot { background: var(--green); box-shadow: 0 0 5px var(--green); }
+.status-pill.err      { color: var(--red);   border-color: #5c1e1e; }
+.status-pill.err .dot { background: var(--red); }
+.status-pill.running      { color: var(--accent); border-color: #1f4b8e; }
+.status-pill.running .dot { background: var(--accent); animation: blink 0.7s linear infinite; }
+
+@keyframes blink { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+.run-btn {
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.05em; padding: 6px 18px; border-radius: 6px; border: none;
+  background: var(--accent); color: #0d1117; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; transition: background 0.12s, transform 0.08s;
+}
+.run-btn:hover   { background: #6cb6ff; }
+.run-btn:active  { transform: scale(0.97); }
+.run-btn:disabled { background: var(--bg4); color: var(--hint); cursor: not-allowed; transform: none; }
+
+/* ── Layout ── */
+.workspace { display: flex; height: calc(100vh - var(--topbar-h) - var(--statusbar-h)); }
+.sidebar {
+  width: var(--sidebar-w); flex-shrink: 0;
+  background: var(--bg2); border-right: 1px solid var(--border);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.sidebar-header {
+  height: 36px; display: flex; align-items: center;
+  padding: 0 8px 0 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+}
+.sidebar-title {
+  font-family: var(--font-ui); font-size: 10px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); flex: 1;
+}
+.sidebar-action-btn {
+  width: 22px; height: 22px; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  border-radius: 4px; transition: color 0.12s, background 0.12s;
+}
+.sidebar-action-btn:hover { color: var(--text); background: var(--bg4); }
+
+#file-tree { flex: 1; overflow-y: auto; padding: 4px 0; }
+.tree-item {
+  display: flex; align-items: center; height: 24px; padding: 0 8px;
+  cursor: pointer; user-select: none; gap: 4px;
+  position: relative; transition: background 0.08s;
+}
+.tree-item:hover { background: var(--bg4); }
+.tree-item.active-file { background: var(--bg5); }
+.tree-item.active-file::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0;
+  width: 2px; background: var(--accent);
+}
+.tree-icon { font-size: 10px; flex-shrink: 0; width: 14px; text-align: center; color: var(--hint); }
+.tree-label { font-size: 12px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+.tree-label.folder { color: var(--accent); }
+.tree-git { font-size: 10px; font-weight: 700; margin-left: auto; flex-shrink: 0; }
+.tree-git.M { color: var(--yellow); } .tree-git.U { color: var(--green); }
+.tree-git.A { color: var(--green); }  .tree-git.D { color: var(--red); }
+.tree-input {
+  flex: 1; background: var(--bg5); border: 1px solid var(--accent);
+  border-radius: 3px; color: var(--text); font-family: var(--font-mono);
+  font-size: 12px; padding: 1px 5px; outline: none;
+}
+
+/* ── Sidebar resizer ── */
+.sidebar-resizer { width: 3px; background: transparent; cursor: col-resize; flex-shrink: 0; transition: background 0.15s; }
+.sidebar-resizer:hover, .sidebar-resizer.dragging { background: var(--accent); }
+
+/* ── Editor area ── */
+#editor-view { display: flex; flex: 1; height: 100%; overflow: hidden; flex-direction: column; }
+#repl-view   { display: none; flex-direction: column; flex: 1; height: 100%; }
+
+/* File tabs bar */
+.tabs-row {
+  display: flex; align-items: stretch; background: var(--bg2);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; height: var(--tab-h);
+}
+.file-tabs-bar {
+  flex: 1; display: flex; align-items: flex-end;
+  overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+.file-tabs-bar::-webkit-scrollbar { display: none; }
+.file-tab {
+  height: 35px; display: flex; align-items: center; gap: 5px;
+  padding: 0 10px 0 12px; border-right: 1px solid var(--border);
+  background: var(--bg3); cursor: pointer; font-size: 12px;
+  color: var(--muted); white-space: nowrap; flex-shrink: 0;
+  transition: background 0.08s, color 0.08s; position: relative;
+}
+.file-tab:hover { background: var(--bg4); color: var(--text); }
+.file-tab.active { background: var(--bg); color: var(--text); }
+.file-tab.active::after {
+  content: ''; position: absolute; top: 0; left: 0; right: 0;
+  height: 1px; background: var(--accent);
+}
+.file-tab.dirty::before {
+  content: '●'; font-size: 8px; color: var(--yellow);
+  margin-right: 2px;
+}
+.file-tab-close {
+  width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
+  border-radius: 3px; background: none; border: none; color: transparent;
+  cursor: pointer; font-size: 14px; line-height: 1; padding: 0; transition: color 0.1s, background 0.1s;
+}
+.file-tab:hover .file-tab-close, .file-tab.active .file-tab-close { color: var(--muted); }
+.file-tab-close:hover { color: var(--text) !important; background: var(--bg5); }
+
+.editor-toolbar { display: flex; align-items: center; gap: 2px; padding: 0 6px; border-left: 1px solid var(--border); flex-shrink: 0; }
+.toolbar-btn {
+  width: 24px; height: 24px; display: flex; align-items: center; justify-content: center;
+  background: none; border: none; color: var(--muted); cursor: pointer;
+  border-radius: 4px; transition: color 0.12s, background 0.12s;
+}
+.toolbar-btn:hover { color: var(--text); background: var(--bg4); }
+
+/* Editor + right panel split */
+.editor-split { display: flex; flex: 1; overflow: hidden; }
+.left-panel  { display: flex; flex-direction: column; overflow: hidden; min-width: 200px; }
+.right-panel { display: flex; flex-direction: column; overflow: hidden; border-left: 1px solid var(--border); min-width: 200px; }
+
+.resizer { width: 3px; background: transparent; cursor: col-resize; flex-shrink: 0; transition: background 0.15s; }
+.resizer:hover, .resizer.dragging { background: var(--accent); }
+
+#monaco-editor { flex: 1; overflow: hidden; }
+
+/* Inputs section */
+.inputs-section { flex-shrink: 0; border-top: 1px solid var(--border); height: 110px; display: flex; flex-direction: column; }
+.inputs-header {
+  height: 28px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 14px; gap: 8px; flex-shrink: 0;
+}
+.inputs-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.inputs-hint { font-size: 10px; color: var(--hint); margin-left: auto; }
+textarea.inputs-area {
+  flex: 1; resize: none; border: none; outline: none;
+  background: var(--bg3); color: var(--text); font-family: var(--font-mono);
+  font-size: 12px; line-height: 1.7; padding: 6px 14px; caret-color: var(--accent);
+}
+textarea.inputs-area::placeholder { color: var(--hint); }
+
+/* Right panel: Terminal / Compare */
+.panel-header {
+  height: 36px; background: var(--bg2); border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; padding: 0 14px; flex-shrink: 0; gap: 8px;
+}
+.panel-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.copy-btn {
+  margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--hint);
+  background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: color 0.12s, background 0.12s;
+}
+.copy-btn:hover { color: var(--text); background: var(--bg4); }
+
+#terminal-pane { flex: 1; display: flex; overflow: hidden; background: #0d1117; }
+#xterm-container { width: 100%; height: 100%; padding: 4px 8px; }
+.xterm { height: 100%; }
+.xterm-viewport { overflow-y: auto !important; }
+
+/* Compare */
+.compare-panel { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+.compare-body  { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.compare-output { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+.compare-output-label { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); margin-bottom: 6px; }
+.compare-output-text  { font-family: var(--font-mono); font-size: 12px; color: var(--green); white-space: pre-wrap; }
+.speedup-badge { display: flex; align-items: center; justify-content: space-between; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+.speedup-number { font-family: var(--font-ui); font-size: 28px; font-weight: 800; color: var(--green); line-height: 1; }
+.speedup-label  { font-family: var(--font-ui); font-size: 10px; font-weight: 600; color: var(--muted); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 3px; }
+.speedup-stats  { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.speedup-stat   { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.speedup-stat span { color: var(--yellow); }
+.bench-section, .nodes-section { background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; display: flex; flex-direction: column; gap: 12px; }
+.bench-section-title, .nodes-section-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.bench-row { display: flex; flex-direction: column; gap: 5px; }
+.bench-row-header { display: flex; justify-content: space-between; align-items: center; }
+.bench-row-label { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.bench-row-label.normal    { color: var(--accent); } .bench-row-label.optimized { color: var(--green); }
+.bench-row-value { font-family: var(--font-mono); font-size: 11px; color: var(--text); }
+.bench-bar-track { height: 6px; background: var(--bg4); border-radius: 3px; overflow: hidden; }
+.bench-bar-fill { height: 100%; border-radius: 3px; width: 0%; transition: width 0.7s cubic-bezier(0.16, 1, 0.3, 1); }
+.bench-bar-fill.normal    { background: linear-gradient(90deg, var(--accent), #6cb6ff); }
+.bench-bar-fill.optimized { background: linear-gradient(90deg, #2da44e, var(--green)); }
+.nodes-row { display: flex; align-items: center; gap: 10px; }
+.nodes-label { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; width: 70px; flex-shrink: 0; }
+.nodes-label.normal { color: var(--accent); } .nodes-label.optimized { color: var(--green); }
+.nodes-bar-track { flex: 1; height: 6px; background: var(--bg4); border-radius: 3px; overflow: hidden; }
+.nodes-bar-fill { height: 100%; border-radius: 3px; width: 0%; transition: width 0.7s cubic-bezier(0.16, 1, 0.3, 1) 0.15s; }
+.nodes-bar-fill.normal    { background: linear-gradient(90deg, var(--accent), #6cb6ff); }
+.nodes-bar-fill.optimized { background: linear-gradient(90deg, #2da44e, var(--green)); }
+.nodes-value { font-family: var(--font-mono); font-size: 11px; color: var(--text); width: 36px; text-align: right; flex-shrink: 0; }
+.mismatch-warning { background: #2d1f00; border: 1px solid #6e4c00; border-radius: 6px; padding: 8px 12px; font-size: 11px; color: var(--yellow); display: flex; align-items: center; gap: 6px; }
+.output-idle  { color: var(--hint); font-size: 12px; }
+.output-error { color: var(--red); white-space: pre-wrap; font-size: 12px; }
+.spinner-wrap { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.spinner { width: 12px; height: 12px; border: 2px solid var(--border2); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.6s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── REPL ── */
+.repl-header { height: 36px; background: var(--bg2); border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 14px; gap: 8px; flex-shrink: 0; }
+.repl-title { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: 0.1em; text-transform: uppercase; color: var(--muted); }
+.repl-status { display: flex; align-items: center; gap: 5px; }
+.repl-status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--muted); transition: background 0.2s; }
+.repl-status-dot.connected    { background: var(--green); box-shadow: 0 0 4px var(--green); }
+.repl-status-dot.connecting   { background: var(--yellow); animation: blink 0.7s linear infinite; }
+.repl-status-dot.disconnected { background: var(--red); }
+.repl-status-text { color: var(--muted); font-size: 10px; }
+.repl-clear-btn { margin-left: auto; font-family: var(--font-mono); font-size: 10px; color: var(--hint); background: none; border: none; cursor: pointer; padding: 2px 8px; border-radius: 4px; transition: color 0.12s, background 0.12s; }
+.repl-clear-btn:hover { color: var(--red); background: var(--bg4); }
+.repl-terminal { flex: 1; overflow-y: auto; padding: 14px 18px; font-family: var(--font-mono); font-size: 13px; line-height: 1.7; background: var(--bg); }
+.repl-line { display: flex; white-space: pre-wrap; word-break: break-all; }
+.repl-line.output { color: var(--green); }
+.repl-line.error  { color: var(--red); }
+.repl-line.input  { color: var(--text); }
+.repl-line.system { color: var(--hint); font-style: italic; }
+.repl-prompt { color: var(--accent); flex-shrink: 0; user-select: none; margin-right: 4px; }
+.repl-input-row { display: flex; align-items: center; padding: 8px 18px; border-top: 1px solid var(--border); background: var(--bg2); gap: 8px; flex-shrink: 0; }
+.repl-input-prompt { font-family: var(--font-mono); font-size: 13px; color: var(--accent); flex-shrink: 0; user-select: none; }
+.repl-input { flex: 1; background: none; border: none; outline: none; font-family: var(--font-mono); font-size: 13px; color: var(--text); caret-color: var(--accent); }
+.repl-input:disabled { opacity: 0.4; cursor: not-allowed; }
+.repl-connect-btn { font-family: var(--font-ui); font-size: 11px; font-weight: 700; padding: 4px 10px; border-radius: 5px; border: 1px solid #1b4721; background: none; color: var(--green); cursor: pointer; transition: background 0.12s; flex-shrink: 0; }
+.repl-connect-btn:hover { background: #1b4721; }
+
+/* ── Status bar ── */
+.statusbar {
+  height: var(--statusbar-h); background: var(--accent2);
+  display: flex; align-items: center; padding: 0 12px; gap: 12px;
+  font-size: 11px; color: rgba(255,255,255,0.8);
+}
+.statusbar-item { display: flex; align-items: center; gap: 4px; }
+kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-radius: 2px; border: 1px solid rgba(255,255,255,0.3); color: rgba(255,255,255,0.8); background: rgba(255,255,255,0.1); }
+
+/* ── Context menu ── */
+.ctx-menu { position: fixed; background: var(--bg3); border: 1px solid var(--border2); border-radius: 6px; padding: 4px; z-index: 9999; min-width: 160px; box-shadow: 0 8px 24px rgba(0,0,0,0.6); }
+.ctx-item { font-family: var(--font-mono); font-size: 12px; color: var(--text); padding: 5px 10px; border-radius: 3px; cursor: pointer; transition: background 0.08s; display: flex; align-items: center; gap: 8px; }
+.ctx-item:hover { background: var(--bg5); }
+.ctx-item.danger { color: var(--red); }
+.ctx-separator { height: 1px; background: var(--border); margin: 3px 0; }
+
+/* scrollbar */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- Top bar -->
+<div class="topbar">
+  <div class="logo">
+    <div class="logo-icon">N</div>
+    NOVACOMP
+  </div>
+  <div class="divider-v"></div>
+  <div class="tab-switcher">
+    <button class="tab-btn active" id="tab-editor" onclick="switchTab('editor')">Editor</button>
+    <button class="tab-btn"        id="tab-repl"   onclick="switchTab('repl')">REPL</button>
+  </div>
+  <div class="divider-v"></div>
+  <select class="examples-select" id="examples-select">
+    <option value="">Load example...</option>
+    <option value="hello">Hello world</option>
+    <option value="bodmas">BODMAS expression</option>
+    <option value="if">if / elif / else</option>
+    <option value="while">while loop</option>
+    <option value="for">for loop</option>
+    <option value="switch">switch / case</option>
+    <option value="func">Function + recursion</option>
+    <option value="array">Array</option>
+    <option value="constfold">Constant folding demo</option>
+  </select>
+  <div class="divider-v" id="mode-divider"></div>
+  <select class="mode-select" id="mode-select">
+    <option value="normal">Normal</option>
+    <option value="compare">Compare: Normal vs Optimized</option>
+  </select>
+  <div class="topbar-right">
+    <div class="status-pill" id="status-pill"><div class="dot"></div><span id="status-text">Ready</span></div>
+    <button class="run-btn" id="run-btn" onclick="runCode()">
+      <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg>
+      RUN
+    </button>
+  </div>
+</div>
+
+<!-- Context menu -->
+<div id="ctx-menu" class="ctx-menu" style="display:none;"></div>
+
+<!-- Workspace -->
+<div class="workspace">
+
+  <!-- Sidebar -->
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-header">
+      <span class="sidebar-title">Explorer</span>
+      <button class="sidebar-action-btn" onclick="startNewFile(null)" title="New File">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M9 1H3a1 1 0 0 0-1 1v12a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V6L9 1zm0 1.5L13.5 6H9V2.5z"/>
+          <path stroke="var(--bg2)" stroke-width="1.8" fill="none" d="M7.5 9.5v3M6 11h3"/>
+        </svg>
+      </button>
+      <button class="sidebar-action-btn" onclick="startNewFolder(null)" title="New Folder">
+        <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M1 3.5A1.5 1.5 0 0 1 2.5 2h2.764c.418 0 .818.165 1.115.464L7.5 3.5H13.5A1.5 1.5 0 0 1 15 5v7a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 1 12.5v-9z"/>
+          <path stroke="var(--bg2)" stroke-width="1.8" fill="none" d="M8 7v4M6 9h4"/>
+        </svg>
+      </button>
+    </div>
+    <div id="file-tree"></div>
+  </div>
+  <div class="sidebar-resizer" id="sidebar-resizer"></div>
+
+  <!-- Editor view -->
+  <div id="editor-view">
+    <div class="tabs-row">
+      <div class="file-tabs-bar" id="file-tabs"></div>
+      <div class="editor-toolbar">
+        <button class="toolbar-btn" onclick="if(_monaco)_monaco.getAction('actions.find').run()" title="Find (Ctrl+F)">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="6.5" cy="6.5" r="4.5"/><line x1="10" y1="10" x2="14" y2="14"/></svg>
+        </button>
+        <button class="toolbar-btn" onclick="if(_monaco)_monaco.getAction('editor.action.startFindReplaceAction').run()" title="Find & Replace (Ctrl+H)">
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="6.5" cy="5.5" r="3.5"/><line x1="9.5" y1="9" x2="13" y2="12.5"/><path d="M2 12h8M7 10l3 2-3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="editor-split">
+      <div class="left-panel" id="left-panel">
+        <div id="monaco-editor"></div>
+        <div class="inputs-section">
+          <div class="inputs-header">
+            <span class="inputs-title">Inputs</span>
+            <span class="inputs-hint">One value per line &nbsp;·&nbsp; read by input() at runtime</span>
+          </div>
+          <textarea class="inputs-area" id="inputs-area" spellcheck="false" placeholder="5&#10;3&#10;42"></textarea>
+        </div>
+      </div>
+      <div class="resizer" id="resizer"></div>
+      <div class="right-panel" id="right-panel">
+        <div class="panel-header">
+          <span class="panel-title">Terminal</span>
+          <button class="copy-btn" onclick="copyTermOutput()">copy</button>
+        </div>
+        <div id="terminal-pane"><div id="xterm-container"></div></div>
+        <div class="compare-panel" id="compare-panel">
+          <div class="compare-body" id="compare-body">
+            <span class="output-idle">// Run in Compare mode to see optimization analysis.</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- REPL view -->
+  <div id="repl-view">
+    <div class="repl-header">
+      <span class="repl-title">Interactive REPL</span>
+      <div class="repl-status">
+        <div class="repl-status-dot disconnected" id="repl-status-dot"></div>
+        <span class="repl-status-text" id="repl-status-text">Disconnected</span>
+      </div>
+      <button class="repl-clear-btn" onclick="replClear()">clear</button>
+    </div>
+    <div class="repl-terminal" id="repl-terminal">
+      <div class="repl-line system">// Switch to REPL tab to start an interactive session.</div>
+      <div class="repl-line system">// Variables and functions persist across lines.</div>
+    </div>
+    <div class="repl-input-row">
+      <span class="repl-input-prompt" id="repl-prompt">&gt;&gt;&gt;</span>
+      <input class="repl-input" id="repl-input" type="text" placeholder="Connect to start typing..." disabled autocomplete="off" spellcheck="false"/>
+      <button class="repl-connect-btn" id="repl-connect-btn" onclick="replConnect()">Connect</button>
+    </div>
+  </div>
+</div>
+
+<!-- Status bar -->
+<div class="statusbar">
+  <span class="statusbar-item">NovaComp v2.0</span>
+  <span class="statusbar-item">·</span>
+  <span class="statusbar-item">Backend: <span id="bar-backend" style="color:rgba(255,255,255,0.5)">checking...</span></span>
+  <span class="statusbar-item">·</span>
+  <span class="statusbar-item" id="bar-cursor"></span>
+  <span style="margin-left:auto;display:flex;align-items:center;gap:6px;" id="editor-shortcuts">
+    <kbd>Ctrl</kbd>+<kbd>Enter</kbd> run &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>S</kbd> save &nbsp;·&nbsp; <kbd>Ctrl</kbd>+<kbd>F</kbd> find
+  </span>
+</div>
+
+<!-- Load xterm BEFORE Monaco's AMD loader -->
+<script src="./node_modules/xterm/lib/xterm.js"></script>
+<script src="./node_modules/xterm-addon-fit/lib/xterm-addon-fit.js"></script>
+<script src="./node_modules/monaco-editor/min/vs/loader.js"></script>
+
+<script>
+'use strict';
+// ═══════════════════════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════════
+const API = 'http://localhost:3001';
+const WS  = 'ws://localhost:3001';
+
+const EXAMPLES = {
+  hello:     { source: `{\n    print("Hello, World!") ;\n}`, inputs: `` },
+  bodmas:    { source: `{\n    a = input() ;\n    b = input() ;\n    c = input() ;\n    result = a + b * c - (a / 2) ;\n    print(result) ;\n}`, inputs: `10\n3\n4` },
+  if:        { source: `{\n    x = input() ;\n    if x > 89 {\n        print(4) ;\n    }\n    elif x > 79 {\n        print(3) ;\n    }\n    elif x > 69 {\n        print(2) ;\n    }\n    else {\n        print(1) ;\n    }\n}`, inputs: `75` },
+  while:     { source: `{\n    n = input() ;\n    i = 1 ;\n    sum = 0 ;\n    while i < n {\n        sum = sum + i ;\n        i = i + 1 ;\n    }\n    print(sum) ;\n}`, inputs: `6` },
+  for:       { source: `{\n    n = input() ;\n    result = 1 ;\n    for(i = 1 ; i < n ; i = i + 1) {\n        result = result * i ;\n    }\n    print(result) ;\n}`, inputs: `6` },
+  switch:    { source: `{\n    x = input() ;\n    switch(x) {\n        case 1: {\n            print(100) ;\n        }\n        case 2: {\n            print(200) ;\n        }\n        default: {\n            print(0) ;\n        }\n    }\n}`, inputs: `2` },
+  func:      { source: `def factorial(n) {\n    if n < 2 {\n        return 1 ;\n    }\n    return n * factorial(n - 1) ;\n}\n\n{\n    n = input() ;\n    print(factorial(n)) ;\n}`, inputs: `6` },
+  array:     { source: `{\n    nums = array(5) ;\n    i = 0 ;\n    while i < 5 {\n        nums[i] = i * i ;\n        i = i + 1 ;\n    }\n    i = 0 ;\n    while i < 5 {\n        print(nums[i]) ;\n        i = i + 1 ;\n    }\n}`, inputs: `` },
+  constfold: { source: `{\n    x = input() ;\n    multiplier = 2 * 3 * 4 ;\n    result = x * multiplier + 10 * 5 - 100 / 4 ;\n    print(result) ;\n}`, inputs: `7` }
+};
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  FILE SYSTEM STATE
+//  Key insight: the in-memory model IS the source of truth.
+//  Server is a persistence layer only — we NEVER re-read from server
+//  while a file is open and unmodified since last server-sync.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const fs = {
+  // flat list of {path, name, isFolder} — from server
+  tree: [],
+  // in-memory file contents: path → string
+  // populated on open, kept in sync with Monaco
+  cache: {},
+  // dirty flags: path → bool (true = has unsaved changes)
+  dirty: {},
+  // open tabs in order
+  tabs: [],
+  // currently active file path (or null)
+  active: null,
+  // git status: path → 'M'|'U'|'A'|'D'
+  git: {},
+  // expanded folders
+  expanded: new Set(),
+};
+
+// ── Load file tree from server (never touches open file content) ──────────────
+async function fsLoadTree() {
+  try {
+    const r = await fetch(`${API}/fs/tree`);
+    if (!r.ok) return;
+    const data = await r.json();
+    fs.tree = data.files || [];
+  } catch { fs.tree = []; }
+  renderExplorer();
+  renderTabs();
+}
+
+// ── Load git status ───────────────────────────────────────────────────────────
+async function fsLoadGit() {
+  try {
+    const r = await fetch(`${API}/git/status`);
+    if (!r.ok) return;
+    const data = await r.json();
+    fs.git = data.status || {};
+    renderExplorer();
+    renderTabs();  // in-place update — safe, no innerHTML reset
+  } catch {}
+}
+
+// ── Open a file — loads content from server ONCE, then caches ─────────────────
+// Track the most recently requested file open — used to cancel stale concurrent opens
+let _openingFile = null;
+
+async function fsOpen(filePath) {
+  const item = fs.tree.find(f => f.path === filePath);
+  if (!item || item.isFolder) return;
+
+  // Set the target immediately — no awaits before this so no race possible
+  _openingFile = filePath;
+
+  // Kick off a background save of the previous file (don't await — no yield point)
+  const prevFile = fs.active;
+  if (prevFile && prevFile !== filePath && fs.dirty[prevFile]) {
+    fsSaveNow(prevFile);  // fire-and-forget — intentionally NOT awaited
+  }
+
+  const needsTab = !fs.tabs.includes(filePath);
+  if (needsTab) fs.tabs.push(filePath);
+
+  fs.active = filePath;
+  renderExplorer();  // immediately show active highlight — don't wait for fetch
+  renderTabs();
+
+  // Load from server ONLY if not already in cache
+  if (!(filePath in fs.cache)) {
+    try {
+      const r = await fetch(`${API}/fs/read?path=${encodeURIComponent(filePath)}`);
+      // After the await — check if user clicked something else while we were fetching
+      if (_openingFile !== filePath) return;
+      if (r.ok) {
+        const { content } = await r.json();
+        if (_openingFile !== filePath) return;  // check again after second await
+        fs.cache[filePath] = content || '';
+      } else {
+        fs.cache[filePath] = '';
+      }
+    } catch {
+      fs.cache[filePath] = '';
+    }
+  }
+
+  // Final guard — if user clicked elsewhere while we were fetching, bail
+  if (_openingFile !== filePath) return;
+
+  // Push to Monaco — suppress onDidChangeModelContent to avoid false dirty mark
+  if (_monaco) {
+    _monacoSuppressChange = true;
+    _monaco.setValue(fs.cache[filePath]);
+    _monacoSuppressChange = false;
+    _monaco.setScrollPosition({ scrollTop: 0 });
+    _monaco.focus();
+  }
+}
+
+// ── Save a specific file to server ─────────────────────────────────────────────
+let _saveTimers = {};  // path → timer id
+
+function fsSaveDebounced(filePath) {
+  clearTimeout(_saveTimers[filePath]);
+  _saveTimers[filePath] = setTimeout(() => fsSaveNow(filePath), 800);
+}
+
+async function fsSaveNow(filePath) {
+  clearTimeout(_saveTimers[filePath]);
+  if (!(filePath in fs.cache)) return;
+  try {
+    await fetch(`${API}/fs/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: filePath, content: fs.cache[filePath] })
+    });
+    fs.dirty[filePath] = false;
+    renderTabs();  // remove dirty dot
+  } catch (e) {
+    console.warn('Save failed:', e);
+  }
+}
+
+// ── Close a tab ────────────────────────────────────────────────────────────────
+async function fsClose(filePath, e) {
+  if (e) e.stopPropagation();
+  // Save if dirty before closing
+  if (fs.dirty[filePath]) await fsSaveNow(filePath);
+  const idx = fs.tabs.indexOf(filePath);
+  fs.tabs = fs.tabs.filter(t => t !== filePath);
+  delete fs.cache[filePath];
+  delete fs.dirty[filePath];
+  if (fs.active === filePath) {
+    const next = fs.tabs[Math.max(0, idx - 1)] ?? fs.tabs[0] ?? null;
+    fs.active = next;
+    if (next) {
+      await fsOpen(next);
+    } else {
+      if (_monaco) {
+        _monacoSuppressChange = true;
+        _monaco.setValue('');
+        _monacoSuppressChange = false;
+      }
+    }
+  }
+  renderExplorer();
+  renderTabs();
+}
+
+// ── Delete ─────────────────────────────────────────────────────────────────────
+async function fsDelete(filePath) {
+  const item = fs.tree.find(f => f.path === filePath);
+  if (!item || !confirm(`Delete "${item.name}"?`)) return;
+  try {
+    await fetch(`${API}/fs/delete?path=${encodeURIComponent(filePath)}`, { method: 'DELETE' });
+    // Close any affected tabs
+    const affected = fs.tabs.filter(t => t === filePath || t.startsWith(filePath + '/'));
+    for (const t of affected) await fsClose(t);
+    await fsLoadTree();
+  } catch (e) { console.error(e); }
+}
+
+// ── Rename ─────────────────────────────────────────────────────────────────────
+async function fsRename(filePath, newName) {
+  if (!newName.trim()) return;
+  const parts = filePath.split('/');
+  parts[parts.length - 1] = newName.trim();
+  const newPath = parts.join('/');
+  try {
+    await fetch(`${API}/fs/rename`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: filePath, to: newPath })
+    });
+    // Update cache
+    if (filePath in fs.cache) { fs.cache[newPath] = fs.cache[filePath]; delete fs.cache[filePath]; }
+    if (fs.dirty[filePath])   { fs.dirty[newPath] = true; delete fs.dirty[filePath]; }
+    fs.tabs = fs.tabs.map(t => t === filePath ? newPath : t);
+    if (fs.active === filePath) fs.active = newPath;
+    await fsLoadTree();
+  } catch (e) { console.error(e); }
+}
+
+// ── Create ─────────────────────────────────────────────────────────────────────
+let _creating = null;  // { parentPath, isFolder }
+
+function startNewFile(parentPath)   { _creating = { parentPath, isFolder: false }; renderExplorer(); setTimeout(() => document.getElementById('create-input')?.focus(), 0); }
+function startNewFolder(parentPath) { _creating = { parentPath, isFolder: true  }; renderExplorer(); setTimeout(() => document.getElementById('create-input')?.focus(), 0); }
+
+async function commitCreate(name) {
+  if (!name.trim()) { _creating = null; renderExplorer(); return; }
+  const { parentPath, isFolder } = _creating;
+  _creating = null;
+  const filePath = parentPath ? `${parentPath}/${name.trim()}` : name.trim();
+  try {
+    if (isFolder) {
+      await fetch(`${API}/fs/mkdir`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: filePath }) });
+    } else {
+      await fetch(`${API}/fs/write`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: filePath, content: '' }) });
+    }
+    await fsLoadTree();
+    if (!isFolder) {
+      fs.cache[filePath] = '';
+      await fsOpen(filePath);
+    }
+  } catch (e) { console.error(e); }
+}
+
+// ── Handle real-time FS changes from terminal WebSocket ───────────────────────
+// Debounce so rapid file operations (e.g. compiling) don't flood re-renders
+let _fsChangeTimer = null;
+function handleFsChange(msg) {
+  // Invalidate cache for externally-changed files immediately
+  if (msg.paths) {
+    for (const p of msg.paths) {
+      if (p in fs.cache && !fs.dirty[p] && p !== fs.active) {
+        delete fs.cache[p];
+      }
+    }
+  }
+  // Debounce the tree reload — wait 300ms for rapid changes to settle
+  clearTimeout(_fsChangeTimer);
+  _fsChangeTimer = setTimeout(() => fsLoadTree(), 300);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  EXPLORER RENDER
+// ═══════════════════════════════════════════════════════════════════════════
+
+function getFileIcon(name) {
+  if (name.endsWith('.nova') || name.endsWith('.csl')) return '◆';
+  if (name.endsWith('.csv') || name.endsWith('.txt')) return '≡';
+  return '·';
+}
+function getDepth(p) { return p ? p.split('/').length - 1 : 0; }
+function getParent(p) { const parts = p.split('/'); return parts.length > 1 ? parts.slice(0,-1).join('/') : null; }
+
+function renderExplorer() {
+  console.log('[renderExplorer] called', new Error().stack.split('\n')[2]);
+  // Don't use innerHTML='' — it causes layout reflow which fires ResizeObserver
+  // on the terminal pane and triggers termFit.fit() clearing the viewport.
+  // Instead just re-render into the same container (renderLevel clears it safely).
+  const tree = document.getElementById('file-tree');
+  while (tree.firstChild) tree.removeChild(tree.firstChild);
+  const rootItems = fs.tree.filter(f => !f.path.includes('/'));
+  renderLevel(rootItems, null, tree);
+}
+
+function renderLevel(items, parentPath, container) {
+  items.sort((a,b) => { if (a.isFolder !== b.isFolder) return a.isFolder ? -1 : 1; return a.name.localeCompare(b.name); });
+
+  // Inline create input
+  if (_creating && _creating.parentPath === parentPath) {
+    const row = document.createElement('div');
+    row.className = 'tree-item';
+    row.style.paddingLeft = (8 + getDepth(parentPath || '') * 16 + 14) + 'px';
+    const inp = document.createElement('input');
+    inp.className = 'tree-input'; inp.id = 'create-input';
+    inp.placeholder = _creating.isFolder ? 'folder name' : 'filename.nova';
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commitCreate(inp.value); }
+      if (e.key === 'Escape') { _creating = null; renderExplorer(); }
+    });
+    inp.addEventListener('blur', () => { if (_creating) { _creating = null; renderExplorer(); } });
+    row.appendChild(inp);
+    container.appendChild(row);
+  }
+
+  items.forEach(item => {
+    const row = document.createElement('div');
+    row.className = 'tree-item' + (fs.active === item.path ? ' active-file' : '');
+    row.dataset.path = item.path;
+    row.style.paddingLeft = (8 + getDepth(item.path) * 16) + 'px';
+
+    if (item.isFolder) {
+      const isExp = fs.expanded.has(item.path);
+      const arrow = document.createElement('span'); arrow.className = 'tree-icon'; arrow.textContent = isExp ? '▾' : '▸';
+      const label = document.createElement('span'); label.className = 'tree-label folder'; label.textContent = item.name;
+      row.append(arrow, label);
+      row.addEventListener('click', () => { fs.expanded.has(item.path) ? fs.expanded.delete(item.path) : fs.expanded.add(item.path); renderExplorer(); });
+    } else {
+      const icon  = document.createElement('span'); icon.className  = 'tree-icon';  icon.textContent  = getFileIcon(item.name);
+      const label = document.createElement('span'); label.className = 'tree-label'; label.textContent = item.name;
+      row.append(icon, label);
+      // Git badge
+      if (fs.git[item.path]) {
+        const badge = document.createElement('span'); badge.className = `tree-git ${fs.git[item.path]}`; badge.textContent = fs.git[item.path];
+        row.appendChild(badge);
+      }
+      row.addEventListener('click', () => fsOpen(item.path));
+    }
+    row.addEventListener('contextmenu', e => showCtxMenu(e, item.path));
+    container.appendChild(row);
+
+    if (item.isFolder && fs.expanded.has(item.path)) {
+      const children = fs.tree.filter(f => getParent(f.path) === item.path);
+      renderLevel(children, item.path, container);
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TABS RENDER
+// ═══════════════════════════════════════════════════════════════════════════
+
+function renderTabs() {
+  console.log('[renderTabs] called', new Error().stack.split('\n')[2]);
+  const bar = document.getElementById('file-tabs');
+  // In-place update — never use innerHTML='' which triggers ResizeObserver
+  // on the terminal pane and clears the xterm viewport.
+
+  // Remove stale tabs
+  Array.from(bar.querySelectorAll('[data-tab-path]')).forEach(el => {
+    if (!fs.tabs.includes(el.dataset.tabPath)) el.remove();
+  });
+
+  // Add/update tabs in order
+  fs.tabs.forEach((filePath, i) => {
+    const item = fs.tree.find(f => f.path === filePath);
+    if (!item) return;
+    let tab = bar.querySelector('[data-tab-path="' + CSS.escape(filePath) + '"]');
+    if (!tab) {
+      tab = document.createElement('div');
+      tab.dataset.tabPath = filePath;
+      const nm = document.createElement('span'); nm.className = 'tab-name';
+      const cl = document.createElement('button'); cl.className = 'file-tab-close'; cl.textContent = '×';
+      cl.addEventListener('click', e => fsClose(filePath, e));
+      tab.append(nm, cl);
+      tab.addEventListener('click', () => fsOpen(filePath));
+    }
+    tab.className = 'file-tab' + (fs.active === filePath ? ' active' : '') + (fs.dirty[filePath] ? ' dirty' : '');
+    tab.querySelector('.tab-name').textContent = item.name;
+    // Ensure correct order
+    const current = bar.children[i];
+    if (current !== tab) bar.insertBefore(tab, current || null);
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  CONTEXT MENU
+// ═══════════════════════════════════════════════════════════════════════════
+
+const ctxEl = document.getElementById('ctx-menu');
+document.addEventListener('click', () => { ctxEl.style.display = 'none'; });
+
+function showCtxMenu(e, filePath) {
+  e.preventDefault(); e.stopPropagation();
+  const item = fs.tree.find(f => f.path === filePath);
+  if (!item) return;
+  ctxEl.innerHTML = '';
+  if (item.isFolder) {
+    addCtx('New File Here',   () => startNewFile(filePath));
+    addCtx('New Folder Here', () => startNewFolder(filePath));
+    ctxEl.appendChild(Object.assign(document.createElement('div'), { className: 'ctx-separator' }));
+  }
+  addCtx('Rename', () => startRename(filePath));
+  addCtx('Delete', () => fsDelete(filePath), true);
+  ctxEl.style.display = 'block';
+  requestAnimationFrame(() => {
+    const x = Math.min(e.clientX, window.innerWidth  - ctxEl.offsetWidth  - 8);
+    const y = Math.min(e.clientY, window.innerHeight - ctxEl.offsetHeight - 8);
+    ctxEl.style.left = x + 'px'; ctxEl.style.top = y + 'px';
+  });
+}
+function addCtx(label, fn, danger=false) {
+  const d = document.createElement('div'); d.className = 'ctx-item' + (danger ? ' danger' : '');
+  d.textContent = label;
+  d.addEventListener('click', () => { ctxEl.style.display = 'none'; fn(); });
+  ctxEl.appendChild(d);
+}
+
+// Inline rename
+function startRename(filePath) {
+  const row = document.querySelector(`.tree-item[data-path="${CSS.escape(filePath)}"]`);
+  if (!row) return;
+  const label = row.querySelector('.tree-label');
+  if (!label) return;
+  const orig = label.textContent;
+  const inp = document.createElement('input'); inp.className = 'tree-input'; inp.value = orig;
+  label.replaceWith(inp); inp.select();
+  inp.addEventListener('keydown', async e => {
+    if (e.key === 'Enter') { e.preventDefault(); await fsRename(filePath, inp.value); }
+    if (e.key === 'Escape') { inp.replaceWith(label); }
+  });
+  inp.addEventListener('blur', () => inp.replaceWith(label));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MONACO EDITOR
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _monaco = null;
+let _monacoSuppressChange = false;  // prevents false dirty marks during programmatic setValue
+let _monacoInitDone = false;        // prevents Monaco require callback firing twice
+let _initialLoadDone = false;       // prevents startup fsOpen from re-firing on tree refreshes
+
+require.config({ paths: { vs: './node_modules/monaco-editor/min/vs' } });
+require(['vs/editor/editor.main'], function() {
+  console.log('[Monaco] require callback fired, initDone=', _monacoInitDone);
+  if (_monacoInitDone) return;
+  _monacoInitDone = true;
+
+  monaco.languages.register({ id: 'nova' });
+  monaco.languages.setMonarchTokensProvider('nova', {
+    keywords: ['def','if','elif','else','while','do','for','switch','case','default','return','class','struct','self'],
+    builtins: ['print','input','array','tensor','matmul','relu','sigmoid','softmax','backward','requires_grad','zero_grad','grad_step'],
+    tokenizer: {
+      root: [
+        [/\/\/.*$/, 'comment'],
+        [/"[^"]*"/, 'string'],
+        [/\b\d+\.\d+f?\b/, 'number.float'],
+        [/\b\d+\b/, 'number'],
+        [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@builtins': 'type.identifier', '@default': 'identifier' }}],
+        [/[{}()\[\]]/, 'delimiter.bracket'],
+        [/[+\-*\/=<>!&|]+/, 'operator'],
+        [/[;,]/, 'delimiter'],
+      ]
+    }
+  });
+
+  monaco.languages.setLanguageConfiguration('nova', {
+    brackets: [['{','}'],['[',']'],['(',')']],
+    autoClosingPairs: [{ open:'{',close:'}' },{ open:'[',close:']' },{ open:'(',close:')' },{ open:'"',close:'"',notIn:['string','comment'] }],
+    surroundingPairs: [{ open:'{',close:'}' },{ open:'[',close:']' },{ open:'(',close:')' },{ open:'"',close:'"' }],
+    comments: { lineComment: '//' },
+    indentationRules: { increaseIndentPattern: /^.*\{[^}"']*$/, decreaseIndentPattern: /^\s*\}/ },
+    onEnterRules: [
+      { beforeText: /^.*\{[^}"']*$/, afterText: /^\s*\}/, action: { indentAction: monaco.languages.IndentAction.IndentOutdent } },
+      { beforeText: /^.*\{[^}"']*$/, action: { indentAction: monaco.languages.IndentAction.Indent } },
+    ],
+  });
+
+  monaco.editor.defineTheme('nova-dark', {
+    base: 'vs-dark', inherit: true,
+    rules: [
+      { token: 'keyword',           foreground: '539bf5', fontStyle: 'bold' },
+      { token: 'type.identifier',   foreground: '57ab5a' },
+      { token: 'string',            foreground: '96d0ff' },
+      { token: 'number',            foreground: 'f69d50' },
+      { token: 'number.float',      foreground: 'f69d50' },
+      { token: 'comment',           foreground: '545d68', fontStyle: 'italic' },
+      { token: 'operator',          foreground: 'cba6f7' },
+      { token: 'delimiter.bracket', foreground: 'cdd9e5' },
+    ],
+    colors: {
+      'editor.background':                  '#0d1117',
+      'editor.foreground':                  '#cdd9e5',
+      'editorLineNumber.foreground':        '#30363d',
+      'editorLineNumber.activeForeground':  '#768390',
+      'editor.selectionBackground':         '#1f4b8e50',
+      'editor.lineHighlightBackground':     '#161b22',
+      'editorCursor.foreground':            '#539bf5',
+      'editor.inactiveSelectionBackground': '#1f4b8e30',
+      'editorIndentGuide.background':       '#21262d',
+      'editorIndentGuide.activeBackground': '#30363d',
+    }
+  });
+
+  _monaco = monaco.editor.create(document.getElementById('monaco-editor'), {
+    value: '',
+    language: 'nova',
+    theme: 'nova-dark',
+    fontSize: 13,
+    fontFamily: "'JetBrains Mono', monospace",
+    lineNumbers: 'on',
+    minimap: { enabled: false },
+    scrollBeyondLastLine: false,
+    tabSize: 4,
+    insertSpaces: true,
+    wordWrap: 'off',
+    automaticLayout: false,
+    scrollbar: { verticalScrollbarSize: 5, horizontalScrollbarSize: 5 },
+    overviewRulerLanes: 0,
+    renderLineHighlight: 'line',
+    padding: { top: 14, bottom: 14 },
+    fixedOverflowWidgets: true,
+    suggest: { showKeywords: true },
+  });
+
+  new ResizeObserver(() => _monaco.layout()).observe(document.getElementById('monaco-editor'));
+
+  // ── Mark dirty on change — but NOT when we programmatically set value ────────
+  let _dirtyRenderTimer = null;
+  _monaco.onDidChangeModelContent(() => {
+    if (_monacoSuppressChange) return;
+    if (!fs.active) return;
+    fs.cache[fs.active] = _monaco.getValue();
+    if (!fs.dirty[fs.active]) {
+      fs.dirty[fs.active] = true;
+      // Defer renderTabs so it doesn't fire on every keystroke
+      clearTimeout(_dirtyRenderTimer);
+      _dirtyRenderTimer = setTimeout(() => renderTabs(), 500);
+    }
+    fsSaveDebounced(fs.active);
+  });
+
+  // ── Cursor position in status bar ────────────────────────────────────────────
+  _monaco.onDidChangeCursorPosition(e => {
+    document.getElementById('bar-cursor').textContent =
+      `Ln ${e.position.lineNumber}, Col ${e.position.column}`;
+  });
+
+  // ── Keybindings ───────────────────────────────────────────────────────────────
+  _monaco.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter, () => runCode());
+  _monaco.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, async () => {
+    if (fs.active) await fsSaveNow(fs.active);
+  });
+
+  // ── Autocomplete ──────────────────────────────────────────────────────────────
+  const KW=monaco.languages.CompletionItemKind.Keyword, FN=monaco.languages.CompletionItemKind.Function, SNIPPET=monaco.languages.CompletionItemKind.Snippet, VAR=monaco.languages.CompletionItemKind.Variable, AS_S=monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet;
+  monaco.languages.registerCompletionItemProvider('nova', {
+    provideCompletionItems(model, position) {
+      const word = model.getWordUntilPosition(position);
+      const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
+      const suggestions = [
+        { label:'print',   kind:FN, insertText:'print(${1:value}) ;', insertTextRules:AS_S, detail:'print(value)', range },
+        { label:'input',   kind:FN, insertText:'input()', detail:'read stdin', range },
+        { label:'array',   kind:FN, insertText:'array(${1:size})', insertTextRules:AS_S, detail:'allocate array', range },
+        { label:'return',  kind:KW, insertText:'return', range },
+        { label:'if',      kind:SNIPPET, insertText:'if ${1:cond} {\n\t$0\n}', insertTextRules:AS_S, range },
+        { label:'if-else', kind:SNIPPET, insertText:'if ${1:cond} {\n\t$0\n} else {\n\t\n}', insertTextRules:AS_S, range },
+        { label:'while',   kind:SNIPPET, insertText:'while ${1:cond} {\n\t$0\n}', insertTextRules:AS_S, range },
+        { label:'do-while',kind:SNIPPET, insertText:'do {\n\t$0\n} while ${1:cond} ;', insertTextRules:AS_S, range },
+        { label:'for',     kind:SNIPPET, insertText:'for(${1:i} = 0 ; ${1:i} < ${2:n} ; ${1:i} = ${1:i} + 1) {\n\t$0\n}', insertTextRules:AS_S, range },
+        { label:'def',     kind:SNIPPET, insertText:'def ${1:name}(${2:params}) {\n\t$0\n}', insertTextRules:AS_S, range },
+        { label:'switch',  kind:SNIPPET, insertText:'switch(${1:expr}) {\n\tcase ${2:1}: {\n\t\t$0\n\t}\n\tdefault: {\n\t}\n}', insertTextRules:AS_S, range },
+      ];
+      const code = model.getValue();
+      const rxV = /\b([a-zA-Z_]\w*)\s*=/g; const rxD = /\bdef\s+([a-zA-Z_]\w*)\s*\(/g;
+      const seen = new Set(['print','input','array','if','else','elif','while','for','switch','return','def']);
+      let m;
+      while ((m=rxV.exec(code))!==null) if (!seen.has(m[1])) { seen.add(m[1]); suggestions.push({ label:m[1], kind:VAR, insertText:m[1], range }); }
+      while ((m=rxD.exec(code))!==null) if (!seen.has(m[1])) { seen.add(m[1]); suggestions.push({ label:m[1], kind:FN,  insertText:m[1], range }); }
+      return { suggestions };
+    }
+  });
+
+  // ── Error markers ─────────────────────────────────────────────────────────────
+  window.setEditorErrors = function(errorText) {
+    if (!_monaco) return;
+    const model = _monaco.getModel();
+    const markers = [];
+    const rx = /Error at line (\d+):\s*(.+)/g; let match;
+    while ((match = rx.exec(errorText)) !== null) {
+      const ln = parseInt(match[1]);
+      const lc = model && ln <= model.getLineCount() ? model.getLineContent(ln) : '';
+      markers.push({ startLineNumber:ln, startColumn:(lc.search(/\S/)+1)||1, endLineNumber:ln, endColumn:lc.length+1||2, message:match[2].trim(), severity:monaco.MarkerSeverity.Error });
+    }
+    monaco.editor.setModelMarkers(model, 'novacomp', markers);
+  };
+  window.clearEditorErrors = function() {
+    if (_monaco) monaco.editor.setModelMarkers(_monaco.getModel(), 'novacomp', []);
+  };
+
+  // Initial load — open first .nova/.csl file exactly once on startup
+  fsLoadTree().then(() => {
+    if (!_initialLoadDone) {
+      _initialLoadDone = true;
+      const first = fs.tree.find(f => !f.isFolder && (f.name.endsWith('.nova') || f.name.endsWith('.csl')));
+      if (first) fsOpen(first.path);
+    }
+  });
+  fsLoadGit();
+  setInterval(fsLoadGit, 10000);
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  EXAMPLES
+// ═══════════════════════════════════════════════════════════════════════════
+document.getElementById('examples-select').addEventListener('change', function() {
+  const ex = EXAMPLES[this.value];
+  if (!ex) return;
+  if (_monaco) {
+    _monacoSuppressChange = false;  // allow dirty marking for examples
+    _monaco.setValue(ex.source);
+  }
+  document.getElementById('inputs-area').value = ex.inputs;
+  this.value = '';
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RUN — SSE streaming with real-time output
+//  This is what makes tqdm / ML training output work in real time.
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _runAbort = null;  // AbortController for current run
+
+async function runCode() {
+  if (document.getElementById('mode-select').value === 'compare') { await runCompare(); return; }
+
+  const btn    = document.getElementById('run-btn');
+  const source = _monaco ? _monaco.getValue() : '';
+  const inputs = document.getElementById('inputs-area').value.trim();
+
+  // Kick off background save without awaiting — don't yield control here
+  if (fs.active && fs.dirty[fs.active]) fsSaveNow(fs.active);
+
+  // Init terminal if not yet ready — termInit is non-blocking
+  if (!termXterm) termInit();
+
+  // Cancel any previous run
+  if (_runAbort) _runAbort.abort();
+  _runAbort = new AbortController();
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:10px;height:10px;border-width:1.5px"></div> RUNNING';
+  setStatus('running', 'Running...');
+  document.getElementById('bar-cursor').textContent = '';
+
+  const write = t => { if (termXterm) termXterm.write(t); };
+  write('\r\n\x1b[36m▶  Running...\x1b[0m\r\n');
+
+  const startTime = Date.now();
+  let hasError = false;
+  let errorText = '';
+
+  try {
+    const res = await fetch(`${API}/run-stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source, inputs }),
+      signal: _runAbort.signal,
+    });
+
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+    const reader  = res.body.getReader();
+    const decoder = new TextDecoder();
+    let   buf     = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buf += decoder.decode(value, { stream: true });
+
+      // Process all complete SSE lines in buffer
+      let newline;
+      while ((newline = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, newline).trimEnd();
+        buf = buf.slice(newline + 1);
+
+        if (!line.startsWith('data: ')) continue;
+        let msg;
+        try { msg = JSON.parse(line.slice(6)); } catch { continue; }
+
+        switch (msg.type) {
+          case 'stdout':
+            // Convert \n → \r\n for terminal, handle \r for tqdm carriage-return updates
+            write(msg.text.replace(/\r?\n/g, '\r\n'));
+            break;
+          case 'stderr':
+            if (msg.text.trim()) write('\x1b[33m' + msg.text.replace(/\r?\n/g, '\r\n') + '\x1b[0m');
+            break;
+          case 'error':
+            write('\x1b[31m' + msg.text.replace(/\r?\n/g, '\r\n') + '\x1b[0m');
+            hasError = true; errorText += msg.text;
+            break;
+          case 'done': {
+            const ms = parseInt(msg.text) || (Date.now() - startTime);
+            write(`\r\n\x1b[2m──────────────────────── ${ms}ms\x1b[0m\r\n`);
+            document.getElementById('bar-cursor').textContent = `${ms}ms`;
+            break;
+          }
+        }
+      }
+    }
+
+    if (hasError) { setStatus('err', 'Error'); if(window.setEditorErrors) setEditorErrors(errorText); }
+    else          { setStatus('ok', 'Done'); if(window.clearEditorErrors) clearEditorErrors(); }
+
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      write('\r\n\x1b[33m[cancelled]\x1b[0m\r\n');
+      setStatus('ok', 'Cancelled');
+    } else {
+      write('\x1b[31mCannot reach server — run: node server.js\x1b[0m\r\n');
+      setStatus('err', 'Offline');
+    }
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg> RUN';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  COMPARE RUN
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function runCompare() {
+  const btn  = document.getElementById('run-btn');
+  const body = document.getElementById('compare-body');
+  const source = _monaco ? _monaco.getValue() : '';
+  const inputs = document.getElementById('inputs-area').value.trim();
+
+  btn.disabled = true;
+  btn.innerHTML = '<div class="spinner" style="width:10px;height:10px;border-width:1.5px"></div> RUNNING';
+  body.innerHTML = '<div class="spinner-wrap"><div class="spinner"></div>Running benchmarks...</div>';
+  setStatus('running', 'Comparing...');
+
+  try {
+    const res  = await fetch(`${API}/compare`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({source,inputs}), signal:AbortSignal.timeout(60000) });
+    const data = await res.json();
+    if (data.error) { body.innerHTML = `<span class="output-error">${esc(data.error)}</span>`; setStatus('err','Error'); }
+    else            { renderCompare(data); setStatus('ok','Compared'); }
+  } catch(e) {
+    body.innerHTML = `<span class="output-error">${esc(e.name==='TimeoutError'?'Timed out.':'Server offline — run: node server.js')}</span>`;
+    setStatus('err','Error');
+  }
+
+  btn.disabled = false;
+  btn.innerHTML = '<svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg> RUN';
+}
+
+function renderCompare(data) {
+  const body = document.getElementById('compare-body');
+  const { output, normal, optimized, speedup, nodesEliminated, outputMismatch } = data;
+  const nUs = normal?.us??0, oUs = optimized?.us??0, maxUs = Math.max(nUs,oUs)||1;
+  const nN = normal?.nodes??0, oN = optimized?.nodes??0, maxN = Math.max(nN,oN)||1;
+  const sp = parseFloat(speedup)||1;
+  const spColor = sp>=1.5?'var(--green)':sp>=1.1?'var(--yellow)':'var(--muted)';
+  body.innerHTML = `
+    ${outputMismatch?`<div class="mismatch-warning">⚠ Normal and optimized outputs differ.</div>`:''}
+    <div class="compare-output"><div class="compare-output-label">Output</div><div class="compare-output-text">${esc(output||'(no output)')}</div></div>
+    <div class="speedup-badge"><div><div class="speedup-number" style="color:${spColor}">${sp.toFixed(2)}x</div><div class="speedup-label">Speedup</div></div>
+    <div class="speedup-stats"><div class="speedup-stat">Nodes eliminated: <span>${nodesEliminated??0}</span></div><div class="speedup-stat">Folds: <span>${optimized?.folds??0}</span></div><div class="speedup-stat">Iters: <span>${(normal?.iters??10000).toLocaleString()}</span></div></div></div>
+    <div class="bench-section"><div class="bench-section-title">Execution Time (μs)</div>
+    <div class="bench-row"><div class="bench-row-header"><span class="bench-row-label normal">Normal</span><span class="bench-row-value">${nUs.toFixed(3)} μs</span></div><div class="bench-bar-track"><div class="bench-bar-fill normal" id="b-n-us"></div></div></div>
+    <div class="bench-row"><div class="bench-row-header"><span class="bench-row-label optimized">Optimized</span><span class="bench-row-value">${oUs.toFixed(3)} μs</span></div><div class="bench-bar-track"><div class="bench-bar-fill optimized" id="b-o-us"></div></div></div></div>
+    <div class="nodes-section"><div class="nodes-section-title">IR Node Count</div>
+    <div class="nodes-row"><span class="nodes-label normal">Normal</span><div class="nodes-bar-track"><div class="nodes-bar-fill normal" id="b-n-nd"></div></div><span class="nodes-value">${nN}</span></div>
+    <div class="nodes-row"><span class="nodes-label optimized">Optimized</span><div class="nodes-bar-track"><div class="nodes-bar-fill optimized" id="b-o-nd"></div></div><span class="nodes-value">${oN}</span></div></div>`;
+  requestAnimationFrame(()=>setTimeout(()=>{
+    const set=(id,w)=>{const e=document.getElementById(id);if(e)e.style.width=w+'%';};
+    set('b-n-us',(nUs/maxUs*100).toFixed(1)); set('b-o-us',(oUs/maxUs*100).toFixed(1));
+    set('b-n-nd',(nN/maxN*100).toFixed(1));   set('b-o-nd',(oN/maxN*100).toFixed(1));
+  },50));
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TERMINAL (xterm.js + WebSocket /terminal)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let termXterm = null, termWs = null, termFit = null;
+
+function termInit() {
+  if (termXterm) return;
+  if (typeof Terminal === 'undefined') return;
+
+  termXterm = new Terminal({
+    fontFamily: "'JetBrains Mono', 'Courier New', monospace",
+    fontSize: 13, lineHeight: 1.5, cursorBlink: true, scrollback: 5000,
+    theme: {
+      background:'#0d1117', foreground:'#cdd9e5', cursor:'#539bf5',
+      black:'#1c2128', red:'#e5534b', green:'#57ab5a', yellow:'#c69026',
+      blue:'#539bf5', magenta:'#986ee2', cyan:'#39c5cf', white:'#cdd9e5',
+      brightBlack:'#545d68', brightRed:'#f47067', brightGreen:'#8ddb8c',
+      brightYellow:'#daaa3f', brightBlue:'#6cb6ff', brightMagenta:'#b083f0',
+      brightCyan:'#56d4dd', brightWhite:'#f0f3f6',
+    },
+  });
+
+  termFit = new FitAddon.FitAddon();
+  termXterm.loadAddon(termFit);
+  termXterm.open(document.getElementById('xterm-container'));
+  requestAnimationFrame(() => { termFit.fit(); termConnect(); });
+
+  termXterm.onData(data => { if (termWs?.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({ type:'input', data })); });
+  termXterm.onResize(({cols,rows}) => { if (termWs?.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({ type:'resize', cols, rows })); });
+  // Debounce fit() — prevents every minor DOM reflow from clearing the terminal viewport
+  let _fitTimer = null;
+  new ResizeObserver(() => {
+    if (!termFit) return;
+    clearTimeout(_fitTimer);
+    _fitTimer = setTimeout(() => {
+      console.log('[termFit] fit() called from ResizeObserver', new Error().stack.split('\n')[2]);
+      termFit.fit();
+    }, 150);
+  }).observe(document.getElementById('terminal-pane'));
+}
+
+async function termConnect() {
+  console.log('[termConnect] opening WebSocket', new Error().stack.split('\n')[2]);
+  termWs = new WebSocket(`${WS}/terminal`);
+  termWs.onopen = () => { if(termFit)termFit.fit(); if(termXterm)termWs.send(JSON.stringify({type:'resize',cols:termXterm.cols,rows:termXterm.rows})); };
+  termWs.onmessage = e => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg?.__nc === 'fs') { handleFsChange(msg); return; }
+    } catch {}
+    if (termXterm) termXterm.write(e.data);
+  };
+  termWs.onclose = () => { console.log('[termWs] closed'); if(termXterm) termXterm.write('\r\n\x1b[2m[disconnected]\x1b[0m\r\n'); };
+  termWs.onerror = () => { if(termXterm) termXterm.write('\r\n\x1b[31m[terminal error]\x1b[0m\r\n'); };
+}
+
+function copyTermOutput() {
+  if (!termXterm) return;
+  termXterm.selectAll();
+  document.execCommand('copy');
+  termXterm.clearSelection();
+  const btn = document.querySelector('.copy-btn');
+  if (btn) { btn.textContent = 'copied!'; setTimeout(()=>btn.textContent='copy',1500); }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  MODE SELECT
+// ═══════════════════════════════════════════════════════════════════════════
+document.getElementById('mode-select').addEventListener('change', function() {
+  const isCompare = this.value === 'compare';
+  document.getElementById('terminal-pane').style.display  = isCompare ? 'none'  : 'flex';
+  document.getElementById('compare-panel').style.display  = isCompare ? 'flex'  : 'none';
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TAB SWITCHING
+// ═══════════════════════════════════════════════════════════════════════════
+let currentTab = 'editor';
+function switchTab(tab) {
+  currentTab = tab;
+  document.getElementById('editor-view').style.display  = tab==='editor' ? 'flex'  : 'none';
+  document.getElementById('repl-view').style.display    = tab==='repl'   ? 'flex'  : 'none';
+  document.getElementById('tab-editor').classList.toggle('active', tab==='editor');
+  document.getElementById('tab-repl').classList.toggle('active', tab==='repl');
+  document.getElementById('run-btn').style.display      = tab==='editor' ? '' : 'none';
+  document.getElementById('examples-select').style.display = tab==='editor' ? '' : 'none';
+  document.getElementById('mode-divider').style.display    = tab==='editor' ? '' : 'none';
+  document.getElementById('mode-select').style.display     = tab==='editor' ? '' : 'none';
+  if (tab === 'repl' && (!replWs || replWs.readyState !== WebSocket.OPEN)) replConnect();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  REPL WebSocket
+// ═══════════════════════════════════════════════════════════════════════════
+let replWs=null, replBraceDepth=0, replHistory=[], replHistIdx=-1, replDraft='';
+const replTerm  = document.getElementById('repl-terminal');
+const replInput = document.getElementById('repl-input');
+const replPrompt= document.getElementById('repl-prompt');
+
+function replAppend(text, cls) {
+  text.split('\n').forEach((line,i,arr) => {
+    if (i===arr.length-1 && line==='') return;
+    const div = document.createElement('div'); div.className = 'repl-line ' + cls;
+    if (line.startsWith('>>> ')||line==='>>>') {
+      const p=document.createElement('span'); p.className='repl-prompt'; p.textContent='>>> ';
+      div.append(p, document.createTextNode(line.slice(4)));
+    } else if (line.startsWith('... ')||line==='...') {
+      const p=document.createElement('span'); p.className='repl-prompt'; p.style.color='var(--muted)'; p.textContent='... ';
+      div.append(p, document.createTextNode(line.slice(4)));
+    } else { div.textContent = line; }
+    replTerm.appendChild(div);
+  });
+  replTerm.scrollTop = replTerm.scrollHeight;
+}
+
+function setReplStatus(s) {
+  const dot=document.getElementById('repl-status-dot'), txt=document.getElementById('repl-status-text'), btn=document.getElementById('repl-connect-btn');
+  dot.className = 'repl-status-dot ' + s;
+  if (s==='connected')    { txt.textContent='Connected';    replInput.disabled=false; replInput.placeholder='Type a statement...'; btn.textContent='Disconnect'; btn.style.borderColor='#5c1e1e'; btn.style.color='var(--red)'; btn.onclick=replDisconnect; replInput.focus(); }
+  else if (s==='connecting') { txt.textContent='Connecting...'; replInput.disabled=true; replInput.placeholder='Connecting...'; }
+  else                    { txt.textContent='Disconnected'; replInput.disabled=true; replInput.placeholder='Connect to start typing...'; btn.textContent='Connect'; btn.style.borderColor='#1b4721'; btn.style.color='var(--green)'; btn.onclick=replConnect; }
+}
+
+function replConnect() {
+  if (replWs?.readyState===WebSocket.OPEN) return;
+  setReplStatus('connecting');
+  replWs = new WebSocket(`${WS}/repl`);
+  replWs.onopen = () => { setReplStatus('connected'); replAppend('Session started.','system'); };
+  replWs.onmessage = e => {
+    let msg; try { msg=JSON.parse(e.data); } catch { return; }
+    if (msg.type==='output') {
+      const t=msg.text.trim(); if(t==='>>>'||t==='...') { replBraceDepth=t==='...'?1:0; replPrompt.textContent=t==='...'?'...':'>>>'; return; }
+      const c=msg.text.replace(/\n?>>> $/,'').replace(/\n?\.\.\. $/,'');
+      if(c.trim()) replAppend(c,'output');
+    } else if (msg.type==='error') { replAppend(msg.text.trim(),'error'); }
+    else if (msg.type==='closed') { replAppend('Session ended.','system'); setReplStatus('disconnected'); replWs=null; }
+  };
+  replWs.onerror = () => { replAppend('Connection error.','error'); setReplStatus('disconnected'); };
+  replWs.onclose = () => { setReplStatus('disconnected'); replWs=null; };
+}
+function replDisconnect() {
+  try { replWs?.send(JSON.stringify({type:'input',line:'exit'})); } catch {}
+  setTimeout(()=>{ replWs?.close(); replWs=null; },300);
+  setReplStatus('disconnected');
+}
+function replClear() { replTerm.innerHTML=''; }
+function replSend(line) {
+  if (!replWs||replWs.readyState!==WebSocket.OPEN) return;
+  replAppend((replBraceDepth>0?'... ':'>>> ')+line,'input');
+  for(const c of line){ if(c==='{')replBraceDepth++;if(c==='}')replBraceDepth--; }
+  if(replBraceDepth<0)replBraceDepth=0;
+  replPrompt.textContent=replBraceDepth>0?'...':'>>>';
+  replWs.send(JSON.stringify({type:'input',line}));
+}
+replInput.addEventListener('keydown', e => {
+  if (e.key==='Enter') {
+    e.preventDefault(); const line=replInput.value;
+    if(!line.trim()&&replBraceDepth===0) return;
+    if(line.trim()&&(replHistory.length===0||replHistory[replHistory.length-1]!==line)) replHistory.push(line);
+    replHistIdx=-1; replDraft='';
+    replSend(line); replInput.value='';
+    if(line.trim()==='exit'||line.trim()==='quit') setTimeout(()=>{setReplStatus('disconnected');replWs=null;},400);
+  } else if (e.key==='ArrowUp') {
+    e.preventDefault(); if(!replHistory.length) return;
+    if(replHistIdx===-1){replDraft=replInput.value;replHistIdx=replHistory.length-1;}
+    else if(replHistIdx>0)replHistIdx--;
+    replInput.value=replHistory[replHistIdx];
+    setTimeout(()=>replInput.setSelectionRange(replInput.value.length,replInput.value.length),0);
+  } else if (e.key==='ArrowDown') {
+    e.preventDefault(); if(replHistIdx===-1) return;
+    if(replHistIdx<replHistory.length-1){replHistIdx++;replInput.value=replHistory[replHistIdx];}
+    else{replHistIdx=-1;replInput.value=replDraft;}
+    setTimeout(()=>replInput.setSelectionRange(replInput.value.length,replInput.value.length),0);
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  RESIZABLE PANELS
+// ═══════════════════════════════════════════════════════════════════════════
+function makeResizable(resizerEl, leftEl, rightEl, containerEl, vertical=false) {
+  let dragging=false, startPos=0, startSize=0;
+  resizerEl.addEventListener('mousedown', e => {
+    dragging=true; startPos=e.clientX; startSize=leftEl.getBoundingClientRect().width;
+    resizerEl.classList.add('dragging'); document.body.style.userSelect='none'; document.body.style.cursor='col-resize';
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const total=containerEl.getBoundingClientRect().width-3;
+    const newW=Math.min(Math.max(startSize+(e.clientX-startPos),150),total-150);
+    leftEl.style.flex='none'; leftEl.style.width=newW+'px'; rightEl.style.flex='1';
+    if(_monaco)_monaco.layout();
+  });
+  document.addEventListener('mouseup', ()=>{ if(!dragging)return; dragging=false; resizerEl.classList.remove('dragging'); document.body.style.userSelect=''; document.body.style.cursor=''; });
+}
+makeResizable(document.getElementById('resizer'),document.getElementById('left-panel'),document.getElementById('right-panel'),document.querySelector('.editor-split'));
+
+// Sidebar resizer
+const sidebarEl=document.getElementById('sidebar'), sbResizer=document.getElementById('sidebar-resizer');
+let sbDrag=false, sbX=0, sbW=0;
+sbResizer.addEventListener('mousedown',e=>{sbDrag=true;sbX=e.clientX;sbW=sidebarEl.getBoundingClientRect().width;sbResizer.classList.add('dragging');document.body.style.userSelect='none';document.body.style.cursor='col-resize';});
+document.addEventListener('mousemove',e=>{if(!sbDrag)return;sidebarEl.style.width=Math.min(Math.max(sbW+(e.clientX-sbX),100),500)+'px';});
+document.addEventListener('mouseup',()=>{if(!sbDrag)return;sbDrag=false;sbResizer.classList.remove('dragging');document.body.style.userSelect='';document.body.style.cursor='';});
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  UTILS
+// ═══════════════════════════════════════════════════════════════════════════
+function setStatus(state, text) {
+  const pill=document.getElementById('status-pill'), span=document.getElementById('status-text');
+  pill.className='status-pill '+state; span.textContent=text;
+}
+function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function checkBackend() {
+  const el=document.getElementById('bar-backend');
+  try {
+    const r=await fetch(`${API}/health`,{signal:AbortSignal.timeout(2000)});
+    const d=await r.json();
+    el.style.color=d.exists?'rgba(255,255,255,0.9)':'rgba(255,150,100,0.9)';
+    el.textContent=d.exists?'online':'binary missing';
+  } catch { el.style.color='rgba(255,100,100,0.9)'; el.textContent='offline'; }
+}
+checkBackend(); setInterval(checkBackend,5000);
+
+// Init terminal eagerly
+window.addEventListener('load', ()=>setTimeout(termInit, 200));
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+class SGD {
+    double lr ;
+
+    def init(double learning_rate) {
+        self.lr = learning_rate ;
+    }
+
+    def step(int param, int grad) -> int {
+        return tensor_sub(param, tensor_scale(grad, self.lr)) ;
+    }
+}

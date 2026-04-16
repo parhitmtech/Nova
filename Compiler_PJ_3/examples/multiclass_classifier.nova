@@ -1,0 +1,75 @@
+import <novatorch.nn> ;
+import <novatorch.optim> ;
+
+main() {
+    // Dataset: 3-class problem (6 samples, 2 features, 3 classes)
+    // Class 0: top-left, Class 1: top-right, Class 2: bottom-center
+    int X = tensor_zeros(6, 2) ;
+    tensor_set(X, 0, 0, 0) ; tensor_set(X, 0, 1, 1) ;
+    tensor_set(X, 1, 0, 0) ; tensor_set(X, 1, 1, 2) ;
+    tensor_set(X, 2, 0, 2) ; tensor_set(X, 2, 1, 1) ;
+    tensor_set(X, 3, 0, 2) ; tensor_set(X, 3, 1, 2) ;
+    tensor_set(X, 4, 0, 1) ; tensor_set(X, 4, 1, 0) ;
+    tensor_set(X, 5, 0, 1) ; tensor_set(X, 5, 1, 0) ;
+
+    // One-hot labels: 6x3
+    // rows 0,1 = class 0 → [1,0,0]
+    // rows 2,3 = class 1 → [0,1,0]
+    // rows 4,5 = class 2 → [0,0,1]
+    int Y = tensor_zeros(6, 3) ;
+    tensor_set(Y, 0, 0, 1) ;
+    tensor_set(Y, 1, 0, 1) ;
+    tensor_set(Y, 2, 1, 1) ;
+    tensor_set(Y, 3, 1, 1) ;
+    tensor_set(Y, 4, 2, 1) ;
+    tensor_set(Y, 5, 2, 1) ;
+
+    // Model: Linear(2→8) → ReLU → Linear(8→3) → Softmax (implicit in CE loss)
+    Linear layer1 ;
+    layer1.init(2, 8) ;
+
+    ReLU act1 ;
+    act1.init() ;
+
+    Linear layer2 ;
+    layer2.init(8, 3) ;
+
+    SGD optim ;
+    optim.init(0.05) ;
+
+    int epoch = 0 ;
+    int h1   = 0 ;
+    int a1   = 0 ;
+    int logits = 0 ;
+    int pred   = 0 ;
+
+    while epoch < 5000 {
+        // Forward
+        h1     = layer1.forward(X) ;
+        a1     = act1.forward(h1) ;
+        logits = layer2.forward(a1) ;
+
+        // Backward — cross_entropy_grad includes softmax internally
+        int grad = cross_entropy_grad(logits, Y) ;
+        int dW2  = layer2.get_dW(grad) ;
+        int db2  = tensor_sum_rows(grad) ;
+        layer2.W = optim.step(layer2.W, dW2) ;
+        layer2.b = optim.step(layer2.b, db2) ;
+
+        int g1   = layer2.backward(grad) ;
+        int ga1  = act1.backward(g1) ;
+        int dW1  = layer1.get_dW(ga1) ;
+        int db1  = tensor_sum_rows(ga1) ;
+        layer1.W = optim.step(layer1.W, dW1) ;
+        layer1.b = optim.step(layer1.b, db1) ;
+
+        epoch = epoch + 1 ;
+    }
+
+    // Final prediction — apply softmax for readable probabilities
+    h1     = layer1.forward(X) ;
+    a1     = act1.forward(h1) ;
+    logits = layer2.forward(a1) ;
+    pred   = softmax(logits) ;
+    tensor_print(pred) ;
+}

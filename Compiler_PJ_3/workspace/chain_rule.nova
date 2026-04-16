@@ -1,0 +1,50 @@
+// @ml
+import <novatorch.nn> ;
+
+main()
+{
+    // x: 2x3 input
+    int x = tensor_randn(2, 3) ;
+    requires_grad(x) ;
+
+    // W: 3x2 weight matrix  
+    int W = tensor_randn(3, 2) ;
+    requires_grad(W) ;
+
+    // Forward: z = relu(x @ W)
+    // Chain rule: dL/dx = dL/dz * dz/d(xW) * d(xW)/dx
+    //                   = ones * relu_grad(xW) * W^T
+    int xW     = matmul(x, W) ;
+    int z      = relu(xW) ;
+
+    // Backward from z (seed = ones)
+    backward(z) ;
+
+    // Get gradients
+    int gx = tensor_grad(x) ;
+    int gW = tensor_grad(W) ;
+
+    print("=== x ===") ;
+    tensor_print(x) ;
+    print("=== W ===") ;
+    tensor_print(W) ;
+    print("=== z = relu(x @ W) ===") ;
+    tensor_print(z) ;
+    print("=== grad of x ===") ;
+    tensor_print(gx) ;
+    print("=== grad of W ===") ;
+    tensor_print(gW) ;
+
+    // Manual verification:
+    // gx should equal relu_grad(xW) @ W^T
+    int xW2     = matmul(x, W) ;
+    int mask    = relu_grad(xW2) ;
+    int gx_manual = matmul(mask, tensor_T(W)) ;
+    print("=== gx manual (relu_grad(xW) @ W^T) ===") ;
+    tensor_print(gx_manual) ;
+
+    // gW should equal x^T @ relu_grad(xW)
+    int gW_manual = matmul(tensor_T(x), mask) ;
+    print("=== gW manual (x^T @ relu_grad(xW)) ===") ;
+    tensor_print(gW_manual) ;
+}

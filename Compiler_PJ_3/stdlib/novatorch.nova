@@ -1,0 +1,14 @@
+def tensor_fill_val(int t, double val) -> int {
+    int r = tensor_rows(t) ;
+    int c = tensor_cols(t) ;
+    int i = 0 ;
+    while i < r {
+        int j = 0 ;
+        while j < c {
+            tensor_set(t, i, j, val) ;
+            j = j + 1 ;
+        }
+        i = i + 1 ;
+    }
+    return t ;
+}

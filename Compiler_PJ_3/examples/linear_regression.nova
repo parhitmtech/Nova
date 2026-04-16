@@ -1,0 +1,43 @@
+import <novatorch.nn> ;
+import <novatorch.optim> ;
+
+main() {
+    # Dataset: y = 2x + 1
+    int X = tensor_zeros(5, 1) ;
+    tensor_set(X, 0, 0, 1) ;
+    tensor_set(X, 1, 0, 2) ;
+    tensor_set(X, 2, 0, 3) ;
+    tensor_set(X, 3, 0, 4) ;
+    tensor_set(X, 4, 0, 5) ;
+
+    int Y = tensor_zeros(5, 1) ;
+    tensor_set(Y, 0, 0, 3) ;
+    tensor_set(Y, 1, 0, 5) ;
+    tensor_set(Y, 2, 0, 7) ;
+    tensor_set(Y, 3, 0, 9) ;
+    tensor_set(Y, 4, 0, 11) ;
+
+    Linear layer1 ;
+    layer1.init(1, 1) ;
+
+    SGD optim ;
+    optim.init(0.01) ;
+
+    int epoch = 0 ;
+    int pred  = 0 ;
+
+    while epoch < 5000 {
+        pred      = layer1.forward(X) ;
+
+        int grad  = mse_grad(pred, Y) ;
+        int dW    = layer1.get_dW(grad) ;
+        int db    = tensor_sum_rows(grad) ;
+        layer1.W  = optim.step(layer1.W, dW) ;
+        layer1.b  = optim.step(layer1.b, db) ;
+
+        epoch = epoch + 1 ;
+    }
+
+    pred = layer1.forward(X) ;
+    tensor_print(pred) ;
+}
