@@ -1,0 +1,86 @@
+class Linear {
+    int W ;
+    int b ;
+    int in_f ;
+    int out_f ;
+    int last_input ;
+
+    def init(int in_features, int out_features) {
+        self.W = tensor_xavier(in_features, out_features) ;
+        self.b = tensor_zeros(1, out_features) ;
+        self.in_f = in_features ;
+        self.out_f = out_features ;
+        self.last_input = 0 ;
+    }
+
+    def forward(int x) -> int {
+        self.last_input = x ;
+        int z = matmul(x, self.W) ;
+        return tensor_add(z, self.b) ;
+    }
+
+    def backward(int grad_out) -> int {
+        return matmul(grad_out, tensor_T(self.W)) ;
+    }
+
+    def get_dW(int grad_out) -> int {
+        return matmul(tensor_T(self.last_input), grad_out) ;
+    }
+}
+
+class ReLU {
+    int last_input ;
+
+    def init() {
+        self.last_input = 0 ;
+    }
+
+    def forward(int x) -> int {
+        self.last_input = x ;
+        return relu(x) ;
+    }
+
+    def backward(int grad_out) -> int {
+        int mask = relu_grad(self.last_input) ;
+        return tensor_mul(grad_out, mask) ;
+    }
+}
+
+class Sigmoid {
+    int last_input ;
+
+    def init() {
+        self.last_input = 0 ;
+    }
+
+    def forward(int x) -> int {
+        self.last_input = x ;
+        return sigmoid(x) ;
+    }
+
+    def backward(int grad_out) -> int {
+        int mask = sigmoid_grad(self.last_input) ;
+        return tensor_mul(grad_out, mask) ;
+    }
+}
+
+class Tanh {
+    int last_input ;
+
+    def init() {
+        self.last_input = 0 ;
+    }
+
+    def forward(int x) -> int {
+        self.last_input = x ;
+        return tanh_t(x) ;
+    }
+
+    def backward(int grad_out) -> int {
+        int out = tanh_t(self.last_input) ;
+        int sq  = tensor_mul(out, out) ;
+        int one = tensor_ones(tensor_rows(sq), tensor_cols(sq)) ;
+        int mask = tensor_sub(one, sq) ;
+        return tensor_mul(grad_out, mask) ;
+    }
+}

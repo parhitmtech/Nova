@@ -1,0 +1,11 @@
+main() {
+    float x = 3.5 ;
+    float y = 1.5 ;
+    print(x + y) ;
+    print(x - y) ;
+    print(x * y) ;
+
+    double a = 10.0 ;
+    double b = 4.0 ;
+    print(a / b) ;
+}

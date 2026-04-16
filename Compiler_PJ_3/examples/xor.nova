@@ -1,0 +1,74 @@
+// @ml
+import <novatorch.nn> ;
+
+main() {
+    int X = tensor_zeros(4, 2) ;
+    tensor_set(X, 0, 0, 0) ;
+    tensor_set(X, 0, 1, 0) ;
+    tensor_set(X, 1, 0, 0) ;
+    tensor_set(X, 1, 1, 1) ;
+    tensor_set(X, 2, 0, 1) ;
+    tensor_set(X, 2, 1, 0) ;
+    tensor_set(X, 3, 0, 1) ;
+    tensor_set(X, 3, 1, 1) ;
+
+    int Y = tensor_zeros(4, 1) ;
+    tensor_set(Y, 0, 0, 0) ;
+    tensor_set(Y, 1, 0, 1) ;
+    tensor_set(Y, 2, 0, 1) ;
+    tensor_set(Y, 3, 0, 0) ;
+
+    Linear layer1 ;
+    layer1.init(2, 4) ;
+
+    Linear layer2 ;
+    layer2.init(4, 1) ;
+
+    Sigmoid act1 ;
+    act1.init() ;
+
+    Sigmoid act2 ;
+    act2.init() ;
+
+    double lr = 0.5 ;
+    int epoch = 0 ;
+    int h1 = 0 ;
+    int a1 = 0 ;
+    int h2 = 0 ;
+    int pred = 0 ;
+
+    int bar = progress_bar(10000, 40) ;
+
+    while epoch < 10000 {
+        h1   = layer1.forward(X) ;
+        a1   = act1.forward(h1) ;
+        h2   = layer2.forward(a1) ;
+        pred = act2.forward(h2) ;
+
+        int grad  = mse_grad(pred, Y) ;
+        int g2    = act2.backward(grad) ;
+        int dW2   = layer2.get_dW(g2) ;
+        int db2   = tensor_sum_rows(g2) ;
+
+        // Propagate back through layer2 BEFORE updating layer2.W
+        int g1    = layer2.backward(g2) ;
+        int ga1   = act1.backward(g1) ;
+        int dW1   = layer1.get_dW(ga1) ;
+        int db1   = tensor_sum_rows(ga1) ;
+
+        // Update all weights after all gradients are computed
+        layer2.W  = tensor_sub(layer2.W, tensor_scale(dW2, lr)) ;
+        layer2.b  = tensor_sub(layer2.b, tensor_scale(db2, lr)) ;
+        layer1.W  = tensor_sub(layer1.W, tensor_scale(dW1, lr)) ;
+        layer1.b  = tensor_sub(layer1.b, tensor_scale(db1, lr)) ;
+
+        epoch = epoch + 1 ;
+    }
+    progress_done(bar) ;
+    h1   = layer1.forward(X) ;
+    a1   = act1.forward(h1) ;
+    h2   = layer2.forward(a1) ;
+    pred = act2.forward(h2) ;
+
+    tensor_print(pred) ;
+}

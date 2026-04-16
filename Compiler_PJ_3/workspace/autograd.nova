@@ -1,0 +1,19 @@
+// @ml
+import <novatorch.nn> ;
+
+main()
+{
+    // Simple autograd test
+    // Create a tensor and enable gradients
+    int x = tensor_randn(3, 3) ;
+    requires_grad(x) ;
+    
+    int y = relu(x) ;
+    backward(y) ;
+    
+    int g = tensor_grad(x) ;
+    print("=== x ===") ;
+    tensor_print(x) ;
+    print("=== grad of x after relu backward ===") ;
+    tensor_print(g) ;
+}

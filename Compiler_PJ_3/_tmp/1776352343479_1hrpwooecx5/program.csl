@@ -1,0 +1,67 @@
+// @ml
+import <novatorch.nn> ;
+
+main()
+{
+    // Load data
+    int X = tensor_load_csv("mnist_X.csv", 10, 784) ;
+    int Y = tensor_load_csv("mnist_Y.csv", 10, 10) ;
+
+    // Weights — enable gradients
+    int W1 = tensor_xavier(784, 32) ;
+    int b1 = tensor_zeros(1, 32) ;
+    int W2 = tensor_xavier(32, 10) ;
+    int b2 = tensor_zeros(1, 10) ;
+
+    requires_grad(W1) ;
+    requires_grad(b1) ;
+    requires_grad(W2) ;
+    requires_grad(b2) ;
+
+    int epoch = 0 ;
+    while epoch < 2 {
+        print(epoch) ;
+
+        // Forward pass
+        int h1     = matmul(X, W1) ;
+        int h1b    = tensor_add(h1, b1) ;
+        int a1     = sigmoid(h1b) ;
+        int logits = matmul(a1, W2) ;
+        int out    = tensor_add(logits, b2) ;
+
+        // Loss
+        int loss = cross_entropy_loss(out, Y) ;
+
+        // Backward
+        zero_grad(W1) ;
+        zero_grad(b1) ;
+        zero_grad(W2) ;
+        zero_grad(b2) ;
+        backward(loss) ;
+        int gW2_check = tensor_grad(W2) ;
+        print("=== gW2 sample ===") ;
+        tensor_print(gW2_check) ;
+
+        // Update weights with grad_step (lr=0.1)
+        W1 = grad_step(W1, 0.1) ;
+        requires_grad(W1) ;
+        b1 = grad_step(b1, 0.1) ;
+        requires_grad(b1) ;
+        W2 = grad_step(W2, 0.1) ;
+        requires_grad(W2) ;
+        b2 = grad_step(b2, 0.1) ;
+        requires_grad(b2) ;
+
+        epoch = epoch + 1 ;
+    }
+
+    // Final prediction
+    h1     = matmul(X, W1) ;
+    h1b    = tensor_add(h1, b1) ;
+    a1     = sigmoid(h1b) ;
+    logits = matmul(a1, W2) ;
+    out    = tensor_add(logits, b2) ;
+    int pred   = softmax(out) ;
+    print("=== predictions after 100 epochs ===") ;
+    tensor_print(pred) ;
+}

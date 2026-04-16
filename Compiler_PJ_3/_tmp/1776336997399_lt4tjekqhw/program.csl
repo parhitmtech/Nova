@@ -1,0 +1,84 @@
+// @ml
+import <novatorch.nn> ;
+import <novatorch.optim> ;
+
+main() 
+{
+    // Load dummy MNIST dataset (200x784 inputs, 200x10 one-hot labels)
+    print("=== 1. Starting program ===");
+    int X = tensor_load_csv("mnist_X.csv", 50, 784) ;
+    print("=== 2. Loaded X ===");
+    int Y = tensor_load_csv("mnist_Y.csv", 50, 10) ;
+    print("=== 3. Loaded Y ===");
+
+    // Model: Linear(784→128) → ReLU → Linear(128→64) → ReLU → Linear(64→10)
+    Linear layer1 ;
+    print("=== 4. Created layer1 ===");
+    layer1.init(784, 32) ;
+    print("=== 5. Initialized layer1 ===");
+
+    Sigmoid act1 ;
+    act1.init() ;
+
+    Linear layer2 ;
+    layer2.init(32, 10) ;
+
+    print("=== layer2.W BEFORE training ===") ;
+    tensor_print(layer2.W) ;
+
+    SGD optim ;
+    optim.init(0.1) ;
+
+    int epoch  = 0 ;
+    int h1     = 0 ;
+    int a1     = 0 ;
+    int logits = 0 ;
+    int grad   = 0 ;
+    int dW2    = 0 ;
+    int db2    = 0 ;
+    int g1     = 0 ;
+    int ga1    = 0 ;
+    int dW1    = 0 ;
+    int db1    = 0 ;
+
+    while epoch < 500 {
+        // Forward
+        h1 = layer1.forward(X) ;
+        a1 = act1.forward(h1) ;
+        logits = layer2.forward(a1) ;
+
+        // Compute all gradients BEFORE updating any weights
+        grad = cross_entropy_grad(logits, Y) ;
+
+        // layer2 gradients
+        dW2 = layer2.get_dW(grad) ;
+        db2 = tensor_sum_rows(grad) ;
+
+        // Propagate gradient back through layer2 (uses original W2, before update)
+        g1  = layer2.backward(grad) ;
+
+        // layer1 gradients
+        ga1 = act1.backward(g1) ;
+        dW1 = layer1.get_dW(ga1) ;
+        db1 = tensor_sum_rows(ga1) ;
+
+        // Update all weights after all gradients are computed
+        layer2.W = optim.step(layer2.W, dW2) ;
+        layer2.b = optim.step(layer2.b, db2) ;
+        layer1.W = optim.step(layer1.W, dW1) ;
+        layer1.b = optim.step(layer1.b, db1) ;
+
+        epoch = epoch + 1 ;
+    }
+
+    print("=== layer2.W AFTER 500 epochs ===") ;
+    tensor_print(layer2.W) ;
+
+    // Final prediction — first 5 samples only
+    h1     = layer1.forward(X) ;
+    a1     = act1.forward(h1) ;
+    logits = layer2.forward(a1) ;
+    int pred = softmax(logits) ;
+    print("=== softmax predictions (all 50 samples) ===") ;
+    tensor_print(pred) ;
+}

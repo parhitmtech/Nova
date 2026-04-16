@@ -1,0 +1,27 @@
+main() {
+    x = 2 ;
+    switch(x) {
+        case 1: {
+            print(10) ;
+        }
+        case 2: {
+            print(20) ;
+        }
+        case 3: {
+            print(30) ;
+        }
+        default: {
+            print(99) ;
+        }
+    }
+
+    y = 5 ;
+    switch(y) {
+        case 1: {
+            print(1) ;
+        }
+        default: {
+            print(0) ;
+        }
+    }
+}

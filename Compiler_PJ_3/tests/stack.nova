@@ -1,0 +1,17 @@
+import <collections> ;
+main() {
+    Stack s ;
+    s.init() ;
+    print(s.isEmpty()) ;
+    s.push(10) ;
+    s.push(20) ;
+    s.push(30) ;
+    print(s.size()) ;
+    print(s.peek()) ;
+    print(s.pop()) ;
+    print(s.pop()) ;
+    print(s.size()) ;
+    print(s.isEmpty()) ;
+    print(s.pop()) ;
+    print(s.isEmpty()) ;
+}
