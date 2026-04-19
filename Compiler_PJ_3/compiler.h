@@ -125,7 +125,7 @@ enum InstructionType
 struct InstructionNode
 {
     InstructionType type;
-
+    int line_no;
     union
     {
         struct

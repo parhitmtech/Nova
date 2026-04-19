@@ -376,6 +376,7 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
             int slot = fieldSlots[field.name];
 
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             if (field.type == TYPE_FLOAT)
             {
                 node->type = ASSIGN_F;
@@ -562,6 +563,7 @@ void parse_class_definition()
                     int resultIdx = parse_expression(mhead, mtracker);
 
                     struct InstructionNode* an = new InstructionNode();
+                    an->line_no = token.line_no;
                     if (retType == TYPE_FLOAT)
                     {
                         an->type = ASSIGN_F;
@@ -586,6 +588,7 @@ void parse_class_definition()
                     append(mhead, mtracker, an);
 
                     struct InstructionNode* rn = new InstructionNode();
+                    rn->line_no = token.line_no;
                     rn->type = RET;
                     rn->ret_inst.ret_val_index = retIdx;
                     append(mhead, mtracker, rn);
@@ -613,6 +616,7 @@ void parse_class_definition()
             doubleSymbolTable = savedDoubleSymbolTable;
 
             struct InstructionNode* fb = new InstructionNode();
+            fb->line_no = token.line_no;
             fb->type = RET;
             fb->ret_inst.ret_val_index = retIdx;
             append(mhead, mtracker, fb);
@@ -769,6 +773,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                     int ptrSlot = alloc_slot();
                     mem[ptrSlot] = callerSlot;
                     struct InstructionNode* copyIn = new InstructionNode();
+                    copyIn->line_no = token.line_no;
                     copyIn->type = ASSIGN;
                     copyIn->assign_inst.left_hand_side_index = selfSlot;
                     copyIn->assign_inst.operand1_index       = ptrSlot;
@@ -778,6 +783,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 }
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyIn = new InstructionNode();
+                copyIn->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
                 {
                     copyIn->type = ASSIGN_F;
@@ -804,6 +810,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
 
             // emit CALL
             struct InstructionNode* callNode = new InstructionNode();
+            callNode->line_no = token.line_no;
             callNode->type = CALL;
             callNode->call_inst.function_head = classMethodTable[className]["init"];
             callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
@@ -848,6 +855,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 int callerSlot = classFieldSlots[varName][fieldName];
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyBack = new InstructionNode();
+                copyBack->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
                 {
                     copyBack->type = ASSIGN_F;
@@ -886,6 +894,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             int slot = fieldSlots[field.name];
 
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             if (field.type == TYPE_FLOAT)
             {
                 node->type = ASSIGN_F;
@@ -934,6 +943,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 int callerSlot = classFieldSlots[varName][fieldName];
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyIn = new InstructionNode();
+                copyIn->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
                 {
                     copyIn->type = ASSIGN_F;
@@ -959,6 +969,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             }
 
             struct InstructionNode* callNode = new InstructionNode();
+            callNode->line_no = token.line_no;
             callNode->type = CALL;
             callNode->call_inst.function_head = classMethodTable[className]["init"];
             callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
@@ -984,6 +995,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 int callerSlot = classFieldSlots[varName][fieldName];
                 VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
                 struct InstructionNode* copyBack = new InstructionNode();
+                copyBack->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
                 {
                     copyBack->type = ASSIGN_F;
@@ -1070,6 +1082,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
             int ptrSlot = alloc_slot();
             mem[ptrSlot] = callerSlot;
             struct InstructionNode* copyIn = new InstructionNode();
+            copyIn->line_no = token.line_no;
             copyIn->type = ASSIGN;
             copyIn->assign_inst.left_hand_side_index = selfSlot;
             copyIn->assign_inst.operand1_index       = ptrSlot;
@@ -1079,6 +1092,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         }
         VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
         struct InstructionNode* copyIn = new InstructionNode();
+        copyIn->line_no = token.line_no;
         if (fType == TYPE_FLOAT)
         {
             copyIn->type = ASSIGN_F;
@@ -1108,6 +1122,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     vector<string>& params = classMethodParams[lookupClass][methodName];
 
     struct InstructionNode* callNode = new InstructionNode();
+    callNode->line_no = token.line_no;
     callNode->type = CALL;
     callNode->call_inst.function_head   = classMethodTable[lookupClass][methodName];
     callNode->call_inst.ret_val_index   = functionReturnIndex[fullName];
@@ -1158,6 +1173,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         int callerSlot = classFieldSlots[varName][fieldName];
         VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
         struct InstructionNode* copyBack = new InstructionNode();
+        copyBack->line_no = token.line_no;
         if (fType == TYPE_FLOAT)
         {
             copyBack->type = ASSIGN_F;
@@ -1188,6 +1204,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     int freshSlot = (mRetType == TYPE_FLOAT) ? alloc_float_slot() : 
                     (mRetType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_temp();
     struct InstructionNode* copyRet = new InstructionNode();
+    copyRet->line_no = token.line_no;
     if (mRetType == TYPE_FLOAT)
     {
         copyRet->type = ASSIGN_F;
@@ -1235,6 +1252,7 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     if (!isVoid) { resultSlot = alloc_slot(); }
 
     struct InstructionNode* node = new InstructionNode();
+    node->line_no = token.line_no;
     node->type = TENSOR_CALL;
     node->tensor_call_inst.op = op;
     node->tensor_call_inst.result_slot = resultSlot;
@@ -1284,6 +1302,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
         }
         // emit ASSIGN_F
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = ASSIGN_F;
         node->assign_f_inst.left_hand_side_index = fSlot;
         node->assign_f_inst.operand1_index = resultIdx;
@@ -1308,6 +1327,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
         if (lastExprType == TYPE_FLOAT)
         {
             struct InstructionNode* castNode = new InstructionNode();
+            castNode->line_no = token.line_no;
             castNode->type = CAST;
             castNode->cast_inst.src_index = resultIdx;
             castNode->cast_inst.dst_index = dSlot;
@@ -1317,6 +1337,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
             return;
         }
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = ASSIGN_D;
         node->assign_d_inst.left_hand_side_index = dSlot;
         node->assign_d_inst.operand1_index = resultIdx;
@@ -1341,6 +1362,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
             int constSlot = alloc_temp();
             mem[constSlot] = strIdx;
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN;
             node->assign_inst.left_hand_side_index = symbolTable[name];
             node->assign_inst.operand1_index       = constSlot;
@@ -1355,6 +1377,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
             if (lastExprType != TYPE_STRING && lastExprType != TYPE_UNKNOWN)
                 report_error(nameLine, "cannot assign " + typeToString(lastExprType) + " to string variable '" + name + "'");
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN;
             node->assign_inst.left_hand_side_index = symbolTable[name];
             node->assign_inst.operand1_index       = resultIdx;
@@ -1374,6 +1397,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
         report_error(nameLine, "cannot assign " + typeToString(rhsType) + " to " + typeToString(declType) + " variable '" + name + "'");
     }
     struct InstructionNode* node = new InstructionNode();
+    node->line_no = token.line_no;
     node->type = ASSIGN;
     node->assign_inst.left_hand_side_index = symbolTable[name];
     node->assign_inst.operand1_index       = resultIdx;
@@ -1471,6 +1495,7 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
 
     vector<string> params = functionParams[funcName];
     struct InstructionNode* callNode = new InstructionNode();
+    callNode->line_no = token.line_no;
     callNode->type = CALL;
     callNode->call_inst.function_head = functionTable[funcName];
     callNode->call_inst.ret_val_index = rSlots[0];
@@ -1525,6 +1550,7 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     for (int i = 0;i < (int)varNames.size();i++)
     {
         struct InstructionNode* an = new InstructionNode();
+        an->line_no = token.line_no;
         if (varTypes[i] == TYPE_FLOAT)
         {
             an->type = ASSIGN_F;
@@ -1626,6 +1652,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                 int rSlot = (i < (int)currentFuncRetSlots.size()) ? currentFuncRetSlots[i] : currentFuncRetIdx;
                 VarType rt = (i < (int)currentFuncRetTypes.size()) ? currentFuncRetTypes[i] : currentFuncRetType;
                 struct InstructionNode* an = new InstructionNode();
+                an->line_no = token.line_no;
                 if (rt == TYPE_FLOAT)
                 {
                     an->type = ASSIGN_F;
@@ -1650,6 +1677,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                 append(head, tracker, an);
             }
             struct InstructionNode* retNode = new InstructionNode();
+            retNode->line_no = token.line_no;
             retNode->type = RET;
             retNode->ret_inst.ret_val_index = currentFuncRetIdx;
             append(head, tracker, retNode);
@@ -1694,6 +1722,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
 
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ARRAY_WRITE;
             node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
             node->array_inst.dynamic_base = true;
@@ -1717,6 +1746,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         int slot = currentSelfFieldSlots[fieldPath];
         VarType fType = currentSelfFieldTypes[fieldPath];
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         if (fType == TYPE_FLOAT)
         {
             node->type = ASSIGN_F;
@@ -1782,6 +1812,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                 int slot = classFieldSlots[name][memberName];
                 VarType fType = classFieldTypes[name][memberName];
                 struct InstructionNode* node = new InstructionNode();
+                node->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
                 {
                     node->type = ASSIGN_F;
@@ -1833,6 +1864,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
 void parse_output_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     struct InstructionNode* newNode = new InstructionNode();
+    newNode->line_no = token.line_no;
     newNode->type = OUT;
     newNode->output_inst.newline       = true;
     newNode->output_inst.is_string     = false;
@@ -1897,6 +1929,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
 
     struct InstructionNode* callNode = new InstructionNode();
+    callNode->line_no = token.line_no;
     callNode->type = CALL;
     callNode->call_inst.function_head   = functionTable[funcName];
     callNode->call_inst.ret_val_index   = functionReturnIndex[funcName];
@@ -1940,6 +1973,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
 
     int freshSlot = alloc_temp();
     struct InstructionNode* copyRetNode = new InstructionNode();
+    copyRetNode->line_no = token.line_no;
     copyRetNode->type = ASSIGN;
     copyRetNode->assign_inst.left_hand_side_index = freshSlot;
     copyRetNode->assign_inst.operand1_index       = functionReturnIndex[funcName];
@@ -1991,6 +2025,7 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         token = lexer.GetToken();  // past ')'
         int slot = alloc_temp();
         struct InstructionNode* inNode = new InstructionNode();
+        inNode->line_no = token.line_no;
         inNode->type = IN;
         inNode->input_inst.var_index = slot;
         append(head, tracker, inNode);
@@ -2020,6 +2055,7 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
             token = lexer.GetToken();  // past ']'
             int tempSlot = alloc_temp();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ARRAY_READ;
             bool isDyn = arrayDynamic.count(arrName) && arrayDynamic[arrName];
             node->array_inst.base_index   = base;
@@ -2170,6 +2206,7 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
 
             int tempSlot = alloc_temp();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ARRAY_READ;
             node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
             node->array_inst.dynamic_base = true;
@@ -2210,6 +2247,7 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         else dstIdx = alloc_slot();
 
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = CAST;
         node->cast_inst.src_index = srcIdx;
         node->cast_inst.dst_index = dstIdx;
@@ -2238,6 +2276,7 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
             int right = parse_factor(head, tracker);
             int tmp = alloc_float_slot();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN_F;
             node->assign_f_inst.left_hand_side_index = tmp;
             node->assign_f_inst.operand1_index = left;
@@ -2254,6 +2293,7 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
             int right = parse_factor(head, tracker);
             int tmp = alloc_double_slot();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN_D;
             node->assign_d_inst.left_hand_side_index = tmp;
             node->assign_d_inst.operand1_index = left;
@@ -2273,6 +2313,7 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
         int tmp = alloc_temp();
 
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = ASSIGN;
         node->assign_inst.left_hand_side_index = tmp;
         node->assign_inst.operand1_index       = left;
@@ -2303,6 +2344,7 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
             }
             int dest = alloc_slot();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = STRCAT;
             node->strcat_inst.dest_slot = dest;
             node->strcat_inst.left_slot = left;
@@ -2320,6 +2362,7 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
             int right = parse_term(head, tracker);
             int tmp = alloc_float_slot();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN_F;
             node->assign_f_inst.left_hand_side_index = tmp;
             node->assign_f_inst.operand1_index       = left;
@@ -2336,6 +2379,7 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
             int right = parse_term(head, tracker);
             int tmp = alloc_double_slot();
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN_D;
             node->assign_d_inst.left_hand_side_index = tmp;
             node->assign_d_inst.operand1_index       = left;
@@ -2359,6 +2403,7 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
         }
         int tmp = alloc_temp();
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = ASSIGN;
         node->assign_inst.left_hand_side_index = tmp;
         node->assign_inst.operand1_index       = left;
@@ -2405,6 +2450,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         VarType fieldType = structFieldTypes[lhs][fieldPath];
 
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         if (fieldType == TYPE_FLOAT)
         {
             node->type = ASSIGN_F;
@@ -2443,6 +2489,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         token = lexer.GetToken();
         int valueSlot = parse_expression(head, tracker);
         struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
         node->type = ARRAY_WRITE;
         bool isDyn = arrayDynamic.count(lhs) && arrayDynamic[lhs];
         node->array_inst.base_index   = arrayTable[lhs];
@@ -2486,6 +2533,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
 
             // copy computed size into storedSizeSlot
             struct InstructionNode* copySize = new InstructionNode();
+            copySize->line_no = token.line_no;
             copySize->type = ASSIGN;
             copySize->assign_inst.left_hand_side_index = storedSizeSlot;
             copySize->assign_inst.operand1_index       = sizeSlot;
@@ -2494,6 +2542,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
 
             // emit ALLOC — fills baseSlot at runtime
             struct InstructionNode* allocNode = new InstructionNode();
+            allocNode->line_no = token.line_no;
             allocNode->type = ALLOC;
             allocNode->alloc_inst.base_slot = baseSlot;
             allocNode->alloc_inst.size_slot = storedSizeSlot;
@@ -2517,6 +2566,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
             int constSlot = alloc_temp();
             mem[constSlot] = strIdx;
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN;
             node->assign_inst.left_hand_side_index = symbolTable[lhs];
             node->assign_inst.operand1_index       = constSlot;
@@ -2531,6 +2581,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
             if (lastExprType != TYPE_STRING && lastExprType != TYPE_UNKNOWN)
                 report_error(lhs_line, "cannot assign " + typeToString(lastExprType) + " to string variable '" + lhs + "'");
             struct InstructionNode* node = new InstructionNode();
+            node->line_no = token.line_no;
             node->type = ASSIGN;
             node->assign_inst.left_hand_side_index = symbolTable[lhs];
             node->assign_inst.operand1_index       = resultIdx;
@@ -2554,6 +2605,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         report_error(lhs_line, "cannot assign " + typeToString(rhsType) + " to " + typeToString(lhsType) + " variable '" + lhs + "'");
 
     struct InstructionNode* node = new InstructionNode();
+    node->line_no = token.line_no;
     node->type = ASSIGN;
     node->assign_inst.left_hand_side_index = symbolTable[lhs];
     node->assign_inst.operand1_index       = resultIdx;
@@ -2567,6 +2619,7 @@ void parse_assignment_for_statement(struct InstructionNode*& head, struct Instru
     token = lexer.GetToken(); token = lexer.GetToken();
     int resultIdx = parse_expression(head, tracker);
     struct InstructionNode* node = new InstructionNode();
+    node->line_no = token.line_no;
     node->type = ASSIGN;
     node->assign_inst.left_hand_side_index = symbolTable[lhs];
     node->assign_inst.operand1_index       = resultIdx;
@@ -2608,6 +2661,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
         bool isStringCmp = (lhsCondType == TYPE_STRING || rhsCondType == TYPE_STRING);
 
         struct InstructionNode* cjmpNode = new InstructionNode();
+        cjmpNode->line_no = token.line_no;
         if (isStringCmp) 
         {
             cjmpNode->type = SCMP;
@@ -2624,10 +2678,12 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
         }
 
         struct InstructionNode* bodyEntry = new InstructionNode();
+        bodyEntry->line_no = token.line_no;
         bodyEntry->type = NOOP;
         cjmpNode->cjmp_inst.target = bodyEntry;
         append(head, tracker, cjmpNode);
         struct InstructionNode* skipNode = new InstructionNode();
+        skipNode->line_no = token.line_no;
         skipNode->type = JMP; 
         skipNode->jmp_inst.target = noOpNode;
         append(head, tracker, skipNode);
@@ -2651,6 +2707,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
     bool isStringCmp = (lhsCondType == TYPE_STRING || rhsCondType == TYPE_STRING);
 
     struct InstructionNode* cjmpNode = new InstructionNode();
+    cjmpNode->line_no = token.line_no;
     if (isStringCmp)
     {
         cjmpNode->type = SCMP;
@@ -2676,10 +2733,12 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
     else if (token.token_type == OR) 
     {
         struct InstructionNode* skipSecond = new InstructionNode();
+        skipSecond->line_no = token.line_no;
         skipSecond->type = NOOP;
         cjmpNode->cjmp_inst.target = skipSecond;
         append(head, tracker, cjmpNode);
         struct InstructionNode* jumpToBody = new InstructionNode();
+        jumpToBody->line_no = token.line_no;
         jumpToBody->type = JMP;
         append(head, tracker, jumpToBody);
         append(head, tracker, skipSecond);
@@ -2687,6 +2746,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
         token = lexer.GetToken();
         parse_condition(head, tracker, noOpNode);
         struct InstructionNode* bodyEntry = new InstructionNode();
+        bodyEntry->line_no = token.line_no;
         bodyEntry->type = NOOP;
         jumpToBody->jmp_inst.target = bodyEntry;
         append(head, tracker, bodyEntry);
@@ -2702,7 +2762,9 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
 void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
+    noOpNode->line_no = token.line_no;
     struct InstructionNode* condFailNode = new InstructionNode(); condFailNode->type = NOOP;
+    condFailNode->line_no = token.line_no;
     token = lexer.GetToken();
     bool had_paren = maybe_consume_lparen(); // check for '('
     if (had_paren) token = lexer.GetToken();  // move into condition
@@ -2714,6 +2776,7 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
         parse_statement(head, tracker); token = lexer.GetToken(); 
     }
     struct InstructionNode* skipJmp = new InstructionNode();
+    skipJmp->line_no = token.line_no;
     skipJmp->type = JMP; skipJmp->jmp_inst.target = noOpNode;
     append(head, tracker, skipJmp);
     append(head, tracker, condFailNode);
@@ -2747,7 +2810,9 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
 void parse_while_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
+    noOpNode->line_no = token.line_no;
     struct InstructionNode* condStart = new InstructionNode(); condStart->type = NOOP;
+    condStart->line_no = token.line_no;
     append(head, tracker, condStart);
     token = lexer.GetToken();
     bool had_paren = maybe_consume_lparen();
@@ -2757,6 +2822,7 @@ void parse_while_statement(struct InstructionNode*& head, struct InstructionNode
     token = lexer.GetToken();
     while (token.token_type != RBRACE) { parse_statement(head, tracker); token = lexer.GetToken(); }
     struct InstructionNode* jmpNode = new InstructionNode();
+    jmpNode->line_no = token.line_no;
     jmpNode->type = JMP; jmpNode->jmp_inst.target = condStart;
     tracker->next = jmpNode; jmpNode->next = noOpNode; tracker = noOpNode;
 }
@@ -2765,8 +2831,10 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
 {
     // already parsed the keyword 'do'
     struct InstructionNode* noOpNode = new InstructionNode();
+    noOpNode->line_no = token.line_no;
     noOpNode->type = NOOP;
     struct InstructionNode* bodyStart = new InstructionNode();
+    bodyStart->line_no = token.line_no;
     bodyStart->type = NOOP;
 
     // Mark top of loop body
@@ -2794,6 +2862,7 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
 
     // Unconditional jump back to body top (condition passed)
     struct InstructionNode* jmpBack = new InstructionNode();
+    jmpBack->line_no = token.line_no;
     jmpBack->type = JMP;
     jmpBack->jmp_inst.target = bodyStart;
     append(head, tracker, jmpBack);
@@ -2807,7 +2876,9 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     token = lexer.GetToken(); token = lexer.GetToken();
     if (token.token_type == ID) parse_assignment_statement(head, tracker);
 
-    struct InstructionNode* forConditionNode = new InstructionNode(); forConditionNode->type = CJMP;
+    struct InstructionNode* forConditionNode = new InstructionNode(); 
+    forConditionNode->type = CJMP;
+    forConditionNode->line_no = token.line_no;
     token = lexer.GetToken();
     if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand1_index = symbolTable[token.lexeme];
     else { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand1_index = s; }
@@ -2819,7 +2890,9 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand2_index = symbolTable[token.lexeme];
     else if (token.token_type == NUM) { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand2_index = s; }
 
-    struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
+    struct InstructionNode* noOpNode = new InstructionNode();
+    noOpNode->line_no = token.line_no; 
+    noOpNode->type = NOOP;
     forConditionNode->cjmp_inst.target = noOpNode;
     append(head, tracker, forConditionNode);
 
@@ -2830,6 +2903,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
         token = lexer.GetToken(); token = lexer.GetToken();
         while (token.token_type != RBRACE) { parse_statement(head, tracker); token = lexer.GetToken(); }
         struct InstructionNode* jmpNode = new InstructionNode();
+        jmpNode->line_no = token.line_no;
         jmpNode->type = JMP; jmpNode->jmp_inst.target = forConditionNode;
         tracker->next = updateNode; updateTracker->next = jmpNode; jmpNode->next = noOpNode; tracker = noOpNode;
     }
@@ -2843,6 +2917,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
     int switchSlot = alloc_temp();
     int resultIdx  = parse_expression(head, tracker);
     struct InstructionNode* copyNode = new InstructionNode();
+    copyNode->line_no = token.line_no;
     copyNode->type = ASSIGN;
     copyNode->assign_inst.left_hand_side_index = switchSlot;
     copyNode->assign_inst.operand1_index       = resultIdx;
@@ -2850,7 +2925,9 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
     append(head, tracker, copyNode);
     if (hasParen && token.token_type == RPAREN) token = lexer.GetToken();
     token = lexer.GetToken();
-    struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
+    struct InstructionNode* noOpNode = new InstructionNode(); 
+    noOpNode->line_no = token.line_no;
+    noOpNode->type = NOOP;
     struct InstructionNode* lastCaseNode = nullptr;
     while (token.token_type == CASE || token.lexeme == "default") {
         if (token.token_type == CASE) 
@@ -2859,6 +2936,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
             if (token.token_type == NUM) 
             {
                 struct InstructionNode* caseNode = new InstructionNode();
+                caseNode->line_no = token.line_no;
                 caseNode->type = CJMP;
                 caseNode->cjmp_inst.operand1_index = switchSlot;
                 int s = alloc_slot();
@@ -2872,13 +2950,16 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
                 while (token.token_type != RBRACE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
                 caseNode->cjmp_inst.target = bodyHead;
                 struct InstructionNode* jmpNode = new InstructionNode();
+                jmpNode->line_no = token.line_no;
                 jmpNode->type = JMP; jmpNode->jmp_inst.target = noOpNode;
                 bodyTracker->next = jmpNode;
             }
         } 
         else if (token.lexeme == "default") 
         {
-            struct InstructionNode* defaultNode = new InstructionNode(); defaultNode->type = JMP;
+            struct InstructionNode* defaultNode = new InstructionNode();
+            defaultNode->line_no = token.line_no; 
+            defaultNode->type = JMP;
             if (lastCaseNode) lastCaseNode->next = defaultNode; lastCaseNode = defaultNode;
             if (head == nullptr) { head = tracker = defaultNode; } else { tracker->next = defaultNode; tracker = defaultNode; }
             token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
@@ -2886,7 +2967,9 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
             while (token.token_type != RBRACE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
             defaultNode->jmp_inst.target = bodyHead;
             struct InstructionNode* jmpNode = new InstructionNode();
-            jmpNode->type = JMP; jmpNode->jmp_inst.target = noOpNode;
+            jmpNode->line_no = token.line_no;
+            jmpNode->type = JMP; 
+            jmpNode->jmp_inst.target = noOpNode;
             bodyTracker->next = jmpNode;
         }
         token = lexer.GetToken();
@@ -3021,6 +3104,7 @@ void parse_function_definition()
                     report_error(token.line_no, "return value " + to_string(i+1) + " type mismatch in '" + funcName + "'");
                 }
                 struct InstructionNode* an = new InstructionNode();
+                an->line_no = token.line_no;
                 if (retTypes[i] == TYPE_FLOAT)
                 {
                     an->type = ASSIGN_F;
@@ -3045,6 +3129,7 @@ void parse_function_definition()
                 append(head, tracker, an);
             }
             struct InstructionNode* retNode = new InstructionNode();
+            retNode->line_no = token.line_no;
             retNode->type = RET;
             retNode->ret_inst.ret_val_index = retSlots[0];
             append(head, tracker, retNode);
@@ -3069,7 +3154,9 @@ void parse_function_definition()
     doubleSymbolTable = savedDoubleSymbolTable;
 
     struct InstructionNode* fallbackRet = new InstructionNode();
-    fallbackRet->type = RET; fallbackRet->ret_inst.ret_val_index = retIdx;
+    fallbackRet->line_no = token.line_no;
+    fallbackRet->type = RET; 
+    fallbackRet->ret_inst.ret_val_index = retIdx;
     append(head, tracker, fallbackRet);
     functionTable[funcName] = head;
 
@@ -3147,6 +3234,7 @@ struct InstructionNode* parse_repl_input(const std::string& s)
             cerr << err << "\n";
         // return a no-op so the REPL loop can continue
         struct InstructionNode* noOpNode = new InstructionNode();
+        noOpNode->line_no = token.line_no;
         noOpNode->type = NOOP;
         noOpNode->next = nullptr;
         return noOpNode;
@@ -3155,6 +3243,7 @@ struct InstructionNode* parse_repl_input(const std::string& s)
     if (head == nullptr)
     {
         struct InstructionNode* noOpNode = new InstructionNode();
+        noOpNode->line_no = token.line_no;
         noOpNode->type = NOOP;
         noOpNode->next = nullptr;
         head = noOpNode;
@@ -3209,6 +3298,7 @@ struct InstructionNode* parse_generate_intermediate_representation()
     if (head == nullptr) 
     {
         struct InstructionNode* noOpNode = new InstructionNode();
+        noOpNode->line_no = token.line_no;
         noOpNode->type = NOOP; head = tracker = noOpNode;
     }
     if (!errorList.empty()) 

@@ -32,33 +32,27 @@ inline void tqdm_update(int handle, int step, double loss)
     TqdmBar& pb = tqdm_bars[handle];
     pb.current = step;
 
-    int total  = pb.total;
+    // Only update display every 5% to avoid spam
+    int total = pb.total;
+    if (step % (total / 20 + 1) != 0 && step != 0) return;
+
     int width  = pb.width;
     int filled = (int)((double)step / total * width);
     int empty  = width - filled;
     int pct    = (int)((double)step / total * 100);
 
-    // elapsed time
-    auto now     = std::chrono::steady_clock::now();
+    auto now = std::chrono::steady_clock::now();
     double elapsed = std::chrono::duration<double>(now - pb.start_time).count();
-
-    // estimated time remaining
     double eta = (step > 0) ? (elapsed / step) * (total - step) : 0.0;
-
     int e_min = (int)(elapsed / 60); double e_sec = elapsed - e_min * 60;
-    int r_min = (int)(eta    / 60); double r_sec = eta     - r_min * 60;
+    int r_min = (int)(eta / 60);     double r_sec = eta - r_min * 60;
 
-    // build bar string
-    if (!pb.desc.empty()) fprintf(stderr, "\r%s: ", pb.desc.c_str());
-    else                  fprintf(stderr, "\r");
-
-    fprintf(stderr, "[");
-    for (int i = 0; i < filled; i++) fprintf(stderr, "\xe2\x96\x88");  // █
-    for (int i = 0; i < empty;  i++) fprintf(stderr, "\xe2\x96\x91");  // ░
-    fprintf(stderr, "] %3d%% %d/%d", pct, step, total);
-    fprintf(stderr, "  loss: %.4f", loss);
-    fprintf(stderr, "  [%02d:%05.2f<%02d:%05.2f]", e_min, e_sec, r_min, r_sec);
-    fflush(stderr);
+    fprintf(stdout, "[");
+    for (int i = 0; i < filled; i++) fprintf(stdout, "\xe2\x96\x88");
+    for (int i = 0; i < empty;  i++) fprintf(stdout, "\xe2\x96\x91");
+    fprintf(stdout, "] %3d%% %d/%d  loss: %.4f  [%02d:%05.2f<%02d:%05.2f]\n",
+        pct, step, total, loss, e_min, e_sec, r_min, r_sec);
+    fflush(stdout);
 }
 
 inline void tqdm_done(int handle)
@@ -70,12 +64,14 @@ inline void tqdm_done(int handle)
     double elapsed = std::chrono::duration<double>(now - pb.start_time).count();
     int e_min = (int)(elapsed / 60); double e_sec = elapsed - e_min * 60;
 
-    if (!pb.desc.empty()) fprintf(stderr, "\r%s: ", pb.desc.c_str());
-    else                  fprintf(stderr, "\r");
+    // Move cursor up and clear last update line
+    fprintf(stdout, "\033[1A\033[2K");
 
-    fprintf(stderr, "[");
-    for (int i = 0; i < pb.width; i++) fprintf(stderr, "\xe2\x96\x88");
-    fprintf(stderr, "] 100%% %d/%d", pb.total, pb.total);
-    fprintf(stderr, "  [%02d:%05.2f]\n", e_min, e_sec);
-    fflush(stderr);
-}
+    if (!pb.desc.empty()) fprintf(stdout, "%s: ", pb.desc.c_str());
+
+    fprintf(stdout, "[");
+    for (int i = 0; i < pb.width; i++) fprintf(stdout, "\xe2\x96\x88");
+    fprintf(stdout, "] 100%% %d/%d", pb.total, pb.total);
+    fprintf(stdout, "  [%02d:%05.2f]\n", e_min, e_sec);
+    fflush(stdout);
+}   

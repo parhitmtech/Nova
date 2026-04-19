@@ -16,6 +16,8 @@ const os         = require("os");
 const rateLimit  = require("express-rate-limit");
 const http       = require("http");
 const WebSocket  = require("ws");
+const { types } = require("util");
+const { debug } = require("console");
 
 // node-pty is optional — install with: npm install node-pty
 // Required for the Terminal tab in the web IDE.
@@ -76,6 +78,9 @@ app.use(express.static(__dirname));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "compiler_ui.html"));
+});
+app.get("/landing", (req, res) => {
+  res.sendFile(path.join(__dirname, "landing.html"));
 });
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 
@@ -324,61 +329,184 @@ app.post("/run-stream", (req, res) => {
     const send = (type, text) => res.write(`data: ${JSON.stringify({ type, text })}\n\n`);
     const execTimeout = getExecutionTimeout(source);
 
-    const options = {
-        cwd: WORKSPACE,
-        maxBuffer: 10 * 1024 * 1024,
-        windowsHide: true,
-        env: { 
-          ...process.env,
-          NOVA_HOME: __dirname
-        }
-        // NO timeout here — managed manually below
-    };
-
     let timedOut = false;
-    const child = execFile(BINARY, [tmpFile], options, (error, stdout, stderr) => {
-        clearTimeout(timer);
-        // console.log('execFile done - error:', error?.code, error?.signal);
-        // console.log('execFile done - stdout length:', stdout?.length);
-        // console.log('execFile done - stdout:', stdout);
-        // console.log('execFile done - stderr:', stderr?.substring(0, 100));
+    let stdout = '';
+    let stderr = '';
 
-        // Always send stdout if we have it
-        if (stdout && stdout.length > 0) {
-            send('stdout', stdout);
+    const child = spawn(BINARY, [tmpFile], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: WORKSPACE,
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, NOVA_HOME: __dirname }
+    });
+
+    let stdoutBuf = '';
+    let flushTimer = null;
+
+    // Stream stdout in real-time
+    child.stdout.on('data', d => {
+        stdoutBuf += d.toString();
+        if (stdoutBuf.includes('\n')) {
+            clearTimeout(flushTimer);
+            send('stdout', stdoutBuf);
+            stdoutBuf = '';
+        } else {
+            clearTimeout(flushTimer);
+            flushTimer = setTimeout(() => {
+                if (stdoutBuf) { send('stdout', stdoutBuf); stdoutBuf = ''; }
+            }, 50);
         }
-        if (stderr && stderr.length > 0) {
-            const f = filterStderr(stderr);
-            if (f) send('stderr', f);
-        }
-        // Only show error if we got no output at all and it wasn't a timeout
+    });
+
+    child.stderr.on('data', d => {
+        const text = d.toString();
+        stderr += text;
+    });
+
+    // Write inputs to stdin
+    if (inputs.trim()) child.stdin.write(inputs.trim() + '\n');
+    child.stdin.end();
+
+    // Manual timeout
+    const timer = setTimeout(() => {
+        timedOut = true;
+        child.kill();
+    }, execTimeout);
+
+    child.on('close', (code) => {
+        clearTimeout(timer);
+        if (stdoutBuf) { send('stdout', stdoutBuf); stdoutBuf = ''; }
+        const f = filterStderr(stderr);
+        if (f) send('stderr', f);
         if (timedOut) {
             const secs = Math.round(execTimeout / 1000);
             send('error', `Execution timed out (> ${secs}s). Add // @ml for a 10-minute limit.`);
-        } else if (error && !stdout && !stderr) {
-            send('error', `Runtime error (exit code ${error.code})`);
+        } else if (code !== 0 && !stdout) {
+            send('error', `Runtime error (exit code ${code})`);
         }
-
         send('done', String(Date.now() - start));
         res.end();
         activeExecutions--;
         cleanupTempFile(tmpFile, tmpDir);
     });
 
-    // stdin — always end it
-    if (inputs.trim()) child.stdin.write(inputs.trim() + '\n');
-    child.stdin.end();
+    child.on('error', err => {
+        clearTimeout(timer);
+        send('error', err.message);
+        send('done', String(Date.now() - start));
+        res.end();
+        activeExecutions--;
+        cleanupTempFile(tmpFile, tmpDir);
+    });
+});
 
-    // manual timeout
-    const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-    }, execTimeout);
+// Debug session state
+let debugChild = null;
+let debugRes = null;
+
+app.post("/run-debug/start", (req, res) => {
+    const validationError = validateSource(req.body?.source);
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    let tmpFile, tmpDir;
+    try { ({ tmpFile, tmpDir } = writeTempFile(sanitizeSource(req.body.source))); }
+    catch (err) { return res.status(500).json({ error: "Internal error." }); }
+
+    // Kill any existing debug session
+    if (debugChild) { try { debugChild.kill(); } catch(_) {} debugChild = null; }
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+    debugRes = res;
+
+    const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+    // Use spawn — we need interactive stdin for step/continue commands
+    debugChild = spawn(BINARY, ['--debug', tmpFile], {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        cwd: WORKSPACE,
+        shell: false,
+        windowsHide: true,
+        env: { ...process.env, NOVA_HOME: __dirname }
+    });
+
+    // ADD THESE TEMPORARILY:
+    console.log('DEBUG: spawned PID', debugChild.pid);
+    debugChild.on('error', err => console.log('DEBUG spawn error:', err.message));
+    debugChild.on('close', (code, signal) => console.log('DEBUG close code:', code, signal));
+
+    debugChild.on('error', err => {
+        send({ type: 'error', text: err.message });
+        send({ type: 'done' });
+        res.end();
+        debugChild = null;
+    });
+
+    // Stream stdout line by line
+    let buf = '';
+    debugChild.stdout.on('data', d => {
+        buf += d.toString();
+        let nl;
+        while ((nl = buf.indexOf('\n')) !== -1) {
+            const line = buf.slice(0, nl).trimEnd();
+            buf = buf.slice(nl + 1);
+            if (line.startsWith('__DEBUG__')) {
+                try {
+                    const obj = JSON.parse(line.slice(9));
+                    send({ type: 'debug', line: obj.line, vars: obj.vars || {} });
+                } catch(_) {}
+            } else if (line.length > 0) {
+                send({ type: 'stdout', text: line + '\n' });
+            }
+        }
+    });
+
+    debugChild.stderr.on('data', d => {
+        const f = filterStderr(d.toString());
+        if (f) send({ type: 'stderr', text: f });
+    });
+
+    debugChild.on('close', () => {
+        send({ type: 'done' });
+        res.end();
+        debugChild = null;
+        cleanupTempFile(tmpFile, tmpDir);
+    });
 
     // req.on('close', () => {
-    //     clearTimeout(timer);
-    //     child.kill();
+    //   // Small delay - SSe connections can briefly disconnecting on start
+    //   setTimeout(() => {
+    //     if (debugChild) {
+    //       try { debugChild.kill(); } catch(_) {}
+    //       debugChild = null;
+    //     }
+    //   }, 500);
     // });
+});
+
+app.post("/run-debug/command", (req, res) => {
+  const cmd = req.body?.command;
+  if (!debugChild || !['step', 'continue', 'stop'].includes(cmd)) {
+    return res.json({ ok: false });
+  }
+  try {
+    debugChild.stdin.write(cmd + '\n');
+    res.json({ ok: true });
+  } catch (e) {
+    res.json({ ok: false, error: e.message });
+  }
+});
+
+app.post("/run-debug/breakpoints", (req, res) => {
+  const lines = req.body?.lines || [];
+  if (debugChild)
+  {
+    debugChild.stdin.write('breakpoints:' + lines.join(',') + '\n');
+  }
+  res.json({ ok: true });
 });
 
 // ── POST /compare ─────────────────────────────────────────────────────────────
@@ -638,7 +766,8 @@ function createReplSession(ws) {
 
   // spawn the compiler in REPL mode
   const child = spawn(BINARY, ["--repl"], {
-    stdio: ["pipe", "pipe", "pipe"]
+    stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, NOVA_HOME: __dirname }
   });
 
   // ── helper: send JSON message to browser ──────────────────────────────────

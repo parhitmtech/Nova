@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NovaComp — The Nova Language Compiler</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Space+Mono:wght@400;700&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ink:#05060a;--ink2:#0c0e15;--ink3:#13161f;--surface:#191c27;
+  --border:#ffffff0f;--border2:#ffffff18;--text:#e8ecf5;--muted:#7a8099;
+  --hint:#3d4259;--nova:#00d4ff;--nova2:#0099cc;--amber:#ffb347;
+  --green:#39ff8f;--red:#ff4757;
+  --font-display:'Bebas Neue',sans-serif;
+  --font-mono:'Space Mono',monospace;
+  --font-body:'DM Sans',sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+html{scroll-behavior:smooth;}
+body{background:var(--ink);color:var(--text);font-family:var(--font-body);overflow-x:hidden;cursor:none;}
+#cursor{position:fixed;top:0;left:0;pointer-events:none;z-index:9999;width:8px;height:8px;background:var(--nova);border-radius:50%;transform:translate(-50%,-50%);transition:transform .1s,background .2s;mix-blend-mode:screen;}
+#cursor-ring{position:fixed;top:0;left:0;pointer-events:none;z-index:9998;width:32px;height:32px;border:1px solid var(--nova);border-radius:50%;transform:translate(-50%,-50%);transition:transform .25s cubic-bezier(.16,1,.3,1),width .2s,height .2s;opacity:.4;}
+#gl-canvas{position:fixed;top:0;left:0;width:100%;height:100%;z-index:0;pointer-events:none;}
+.grain{position:fixed;inset:0;z-index:1;pointer-events:none;opacity:.03;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");background-size:200px 200px;}
+nav{position:fixed;top:0;left:0;right:0;z-index:100;display:flex;align-items:center;padding:20px 48px;backdrop-filter:blur(12px);background:rgba(5,6,10,.7);border-bottom:1px solid var(--border);}
+.nav-logo{display:flex;align-items:center;gap:10px;font-family:var(--font-display);font-size:22px;letter-spacing:.1em;color:var(--text);text-decoration:none;}
+.nav-logo-mark{width:28px;height:28px;background:var(--nova);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:900;color:#000;font-family:var(--font-display);}
+.nav-links{display:flex;gap:32px;margin-left:auto;align-items:center;}
+.nav-links a{font-size:13px;color:var(--muted);text-decoration:none;letter-spacing:.04em;font-family:var(--font-mono);transition:color .2s;}
+.nav-links a:hover{color:var(--text);}
+.nav-btn{font-family:var(--font-mono);font-size:12px;letter-spacing:.08em;padding:8px 20px;border-radius:4px;border:1px solid var(--nova);background:transparent;color:var(--nova);cursor:pointer;transition:background .2s,color .2s;}
+.nav-btn:hover{background:var(--nova);color:#000;}
+.nav-btn.filled{background:var(--nova);color:#000;margin-left:8px;}
+.nav-btn.filled:hover{background:#00eeff;border-color:#00eeff;}
+.hero{position:relative;z-index:10;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:120px 48px 80px;text-align:center;}
+.hero-label{font-family:var(--font-mono);font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--nova);margin-bottom:24px;display:flex;align-items:center;gap:10px;}
+.hero-label::before,.hero-label::after{content:'';flex:1;max-width:48px;height:1px;background:var(--nova);opacity:.4;}
+.hero-title{font-family:var(--font-display);font-size:clamp(64px,10vw,140px);line-height:.92;letter-spacing:.02em;color:var(--text);margin-bottom:8px;}
+.hero-title span{color:var(--nova);}
+.hero-subtitle{font-family:var(--font-display);font-size:clamp(22px,3vw,44px);letter-spacing:.08em;color:var(--muted);margin-bottom:32px;}
+.hero-desc{max-width:560px;font-size:16px;line-height:1.8;color:var(--muted);font-weight:300;margin-bottom:48px;}
+.hero-actions{display:flex;gap:16px;flex-wrap:wrap;justify-content:center;}
+.btn-primary{font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;padding:16px 40px;border-radius:4px;border:none;background:var(--nova);color:#000;cursor:pointer;font-weight:700;transition:transform .15s,box-shadow .2s,background .2s;box-shadow:0 0 40px rgba(0,212,255,.25);text-decoration:none;display:inline-flex;align-items:center;gap:8px;}
+.btn-primary:hover{background:#00eeff;transform:translateY(-2px);box-shadow:0 0 60px rgba(0,212,255,.4);}
+.btn-secondary{font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;padding:16px 40px;border-radius:4px;border:1px solid var(--border2);background:transparent;color:var(--text);cursor:pointer;transition:border-color .2s,background .2s;text-decoration:none;display:inline-flex;align-items:center;gap:8px;}
+.btn-secondary:hover{border-color:var(--nova);background:rgba(0,212,255,.05);}
+.hero-code{margin-top:64px;background:var(--ink2);border:1px solid var(--border2);border-radius:8px;padding:24px 32px;text-align:left;max-width:560px;width:100%;font-family:var(--font-mono);font-size:13px;line-height:1.9;position:relative;overflow:hidden;}
+.hero-code::before{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(90deg,transparent,var(--nova),transparent);}
+.code-bar{display:flex;gap:6px;margin-bottom:16px;}
+.dot{width:10px;height:10px;border-radius:50%;}
+.dot-r{background:#ff5f57;}.dot-y{background:#ffbd2e;}.dot-g{background:#28c840;}
+.code-comment{color:var(--hint);}.code-kw{color:var(--nova);}.code-fn{color:var(--amber);}.code-str{color:var(--green);}.code-num{color:#ff9980;}
+.cursor-blink{display:inline-block;width:2px;height:14px;background:var(--nova);vertical-align:middle;margin-left:2px;animation:blink 1s step-end infinite;}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:0}}
+.stats-bar{position:relative;z-index:10;display:flex;justify-content:center;border-top:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--ink2);}
+.stat-item{flex:1;max-width:220px;padding:32px 24px;text-align:center;border-right:1px solid var(--border);}
+.stat-item:last-child{border-right:none;}
+.stat-num{font-family:var(--font-display);font-size:42px;color:var(--nova);line-height:1;margin-bottom:6px;}
+.stat-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);}
+.section{position:relative;z-index:10;padding:120px 48px;max-width:1200px;margin:0 auto;}
+.section-tag{font-family:var(--font-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--nova);margin-bottom:16px;display:block;}
+.section-title{font-family:var(--font-display);font-size:clamp(36px,5vw,68px);line-height:1;letter-spacing:.03em;margin-bottom:24px;}
+.section-title em{color:var(--nova);font-style:normal;}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:48px;align-items:start;margin-top:48px;}
+.problem-card{background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:40px;position:relative;overflow:hidden;}
+.problem-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;}
+.problem-card.problem::before{background:var(--red);}
+.problem-card.solution::before{background:var(--nova);}
+.card-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;margin-bottom:20px;display:flex;align-items:center;gap:8px;}
+.card-label.red{color:var(--red);}.card-label.nova{color:var(--nova);}
+.card-label::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;}
+.card-title{font-family:var(--font-display);font-size:28px;margin-bottom:16px;}
+.card-text{font-size:15px;line-height:1.8;color:var(--muted);font-weight:300;}
+.card-list{list-style:none;margin-top:20px;display:flex;flex-direction:column;gap:10px;}
+.card-list li{font-family:var(--font-mono);font-size:12px;color:var(--muted);padding:8px 12px;background:rgba(255,255,255,.03);border-radius:4px;border-left:2px solid;display:flex;align-items:center;gap:10px;}
+.card-list.red li{border-color:var(--red);}.card-list.nova li{border-color:var(--nova);}
+.features-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:24px;margin-top:64px;}
+.feature-card{background:var(--ink2);border:1px solid var(--border);border-radius:8px;padding:32px;transition:border-color .2s,transform .2s;}
+.feature-card:hover{border-color:var(--nova);transform:translateY(-4px);}
+.feature-icon{width:40px;height:40px;border-radius:8px;background:rgba(0,212,255,.1);border:1px solid rgba(0,212,255,.2);display:flex;align-items:center;justify-content:center;font-size:18px;margin-bottom:20px;}
+.feature-title{font-family:var(--font-display);font-size:22px;margin-bottom:10px;}
+.feature-text{font-size:14px;color:var(--muted);line-height:1.7;font-weight:300;}
+.feature-tag{display:inline-block;margin-top:16px;font-family:var(--font-mono);font-size:10px;letter-spacing:.12em;padding:4px 10px;border-radius:20px;background:rgba(0,212,255,.08);color:var(--nova);border:1px solid rgba(0,212,255,.2);}
+.pipeline{position:relative;z-index:10;padding:80px 48px;background:var(--ink2);border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+.pipeline-inner{max-width:1200px;margin:0 auto;}
+.pipeline-steps{display:flex;gap:0;margin-top:48px;position:relative;}
+.pipeline-steps::before{content:'';position:absolute;top:28px;left:40px;right:40px;height:1px;background:linear-gradient(90deg,var(--nova),var(--amber),var(--green),var(--nova));opacity:.3;}
+.pipeline-step{flex:1;text-align:center;padding:0 12px;position:relative;}
+.step-num{width:56px;height:56px;border-radius:50%;background:var(--ink);border:1px solid var(--border2);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;font-family:var(--font-mono);font-size:11px;color:var(--nova);letter-spacing:.1em;position:relative;z-index:1;}
+.step-title{font-family:var(--font-display);font-size:16px;margin-bottom:8px;letter-spacing:.05em;}
+.step-text{font-size:12px;color:var(--muted);line-height:1.6;}
+.cta-section{position:relative;z-index:10;padding:140px 48px;text-align:center;overflow:hidden;}
+.cta-section::before{content:'';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:600px;height:600px;background:radial-gradient(circle,rgba(0,212,255,.08) 0%,transparent 70%);pointer-events:none;}
+.cta-title{font-family:var(--font-display);font-size:clamp(48px,7vw,96px);line-height:1;letter-spacing:.02em;margin-bottom:24px;}
+.cta-text{font-size:17px;color:var(--muted);max-width:480px;margin:0 auto 48px;line-height:1.7;}
+footer{position:relative;z-index:10;border-top:1px solid var(--border);padding:40px 48px;display:flex;align-items:center;justify-content:space-between;background:var(--ink);}
+.footer-left{font-family:var(--font-mono);font-size:11px;color:var(--hint);}
+.footer-right{display:flex;gap:24px;}
+.footer-right a{font-family:var(--font-mono);font-size:11px;color:var(--hint);text-decoration:none;}
+.footer-right a:hover{color:var(--muted);}
+.modal-overlay{position:fixed;inset:0;z-index:1000;background:rgba(5,6,10,.85);backdrop-filter:blur(16px);display:none;align-items:center;justify-content:center;}
+.modal-overlay.active{display:flex;}
+.modal{background:var(--ink2);border:1px solid var(--border2);border-radius:12px;padding:48px;width:100%;max-width:440px;position:relative;overflow:hidden;}
+.modal::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--nova),var(--amber));}
+.modal-close{position:absolute;top:20px;right:20px;background:none;border:none;color:var(--muted);cursor:pointer;font-size:20px;line-height:1;padding:4px;}
+.modal-close:hover{color:var(--text);}
+.modal-title{font-family:var(--font-display);font-size:32px;margin-bottom:8px;}
+.modal-subtitle{font-size:14px;color:var(--muted);margin-bottom:32px;}
+.modal-tabs{display:flex;gap:0;margin-bottom:32px;border-bottom:1px solid var(--border);}
+.modal-tab{font-family:var(--font-mono);font-size:12px;letter-spacing:.1em;padding:10px 20px;border:none;background:none;color:var(--muted);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;transition:color .15s,border-color .15s;}
+.modal-tab.active{color:var(--nova);border-color:var(--nova);}
+.modal-form{display:flex;flex-direction:column;gap:16px;}
+.form-group{display:flex;flex-direction:column;gap:6px;}
+.form-label{font-family:var(--font-mono);font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:var(--muted);}
+.form-input{background:var(--ink3);border:1px solid var(--border2);border-radius:6px;padding:12px 14px;color:var(--text);font-family:var(--font-mono);font-size:13px;outline:none;transition:border-color .2s;}
+.form-input:focus{border-color:var(--nova);}
+.form-input::placeholder{color:var(--hint);}
+.form-submit{font-family:var(--font-mono);font-size:13px;letter-spacing:.1em;padding:14px;border-radius:6px;border:none;background:var(--nova);color:#000;cursor:pointer;font-weight:700;transition:background .2s,transform .1s;margin-top:8px;}
+.form-submit:hover{background:#00eeff;transform:translateY(-1px);}
+.form-divider{text-align:center;font-family:var(--font-mono);font-size:11px;color:var(--hint);}
+.form-error{font-family:var(--font-mono);font-size:11px;color:var(--red);display:none;}
+.form-error.show{display:block;}
+.fade-up{opacity:0;transform:translateY(32px);transition:opacity .7s cubic-bezier(.16,1,.3,1),transform .7s cubic-bezier(.16,1,.3,1);}
+.fade-up.visible{opacity:1;transform:translateY(0);}
+@media(max-width:768px){nav{padding:16px 24px;}.hero{padding:100px 24px 60px;}.two-col{grid-template-columns:1fr;}.features-grid{grid-template-columns:1fr;}.stats-bar{flex-wrap:wrap;}.stat-item{min-width:50%;}.pipeline-steps{flex-direction:column;gap:32px;}.pipeline-steps::before{display:none;}.section{padding:80px 24px;}footer{flex-direction:column;gap:16px;text-align:center;}}
+</style>
+</head>
+<body>
+<div id="cursor"></div>
+<div id="cursor-ring"></div>
+<div class="grain"></div>
+<canvas id="gl-canvas"></canvas>
+
+<nav>
+  <a class="nav-logo" href="#"><div class="nav-logo-mark">N</div>NOVACOMP</a>
+  <div class="nav-links">
+    <a href="#about">About</a>
+    <a href="#features">Features</a>
+    <a href="#pipeline">Pipeline</a>
+    <button class="nav-btn" onclick="openModal('login')">Sign In</button>
+    <button class="nav-btn filled" onclick="openModal('signup')">Get Started</button>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="hero-label">Nova Language v7.0</div>
+  <h1 class="hero-title"><span>Nova</span>Comp</h1>
+  <p class="hero-subtitle">ML-First Compiled Language</p>
+  <p class="hero-desc">A complete compiler and runtime for Nova — a statically-typed language built for machine learning. Tensor ops, tape-based autograd, CUDA FFI, and a full NovaTorch stdlib. Write ML code that compiles to optimized IR in under 50ms.</p>
+  <div class="hero-actions">
+    <a href="http://localhost:3001" class="btn-primary">
+      <svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><polygon points="0,0 12,7 0,14"/></svg>
+      Try Now &mdash; Free
+    </a>
+    <a href="#about" class="btn-secondary">Learn More &rarr;</a>
+  </div>
+  <div class="hero-code fade-up" style="transition-delay:.4s">
+    <div class="code-bar"><div class="dot dot-r"></div><div class="dot dot-y"></div><div class="dot dot-g"></div></div>
+    <div><span class="code-comment">// @ml &mdash; enables ML timeout + tensor ops</span></div>
+    <div><span class="code-kw">import</span> <span class="code-str">&lt;novatorch.nn&gt;</span> ;</div>
+    <div>&nbsp;</div>
+    <div><span class="code-fn">main</span>() {</div>
+    <div>&nbsp;&nbsp;<span class="code-kw">int</span> X = <span class="code-fn">tensor_load_csv</span>(<span class="code-str">"mnist_X.csv"</span>, <span class="code-num">50</span>, <span class="code-num">784</span>) ;</div>
+    <div>&nbsp;&nbsp;<span class="code-kw">Linear</span> layer1 ; layer1.<span class="code-fn">init</span>(<span class="code-num">784</span>, <span class="code-num">32</span>) ;</div>
+    <div>&nbsp;&nbsp;<span class="code-fn">requires_grad</span>(layer1.W) ;</div>
+    <div>&nbsp;&nbsp;<span class="code-kw">int</span> loss = <span class="code-fn">cross_entropy_loss</span>(out, Y) ;</div>
+    <div>&nbsp;&nbsp;<span class="code-fn">backward</span>(loss) ;<span class="cursor-blink"></span></div>
+    <div>}</div>
+  </div>
+</section>
+
+<div class="stats-bar">
+  <div class="stat-item fade-up"><div class="stat-num" id="s1">0</div><div class="stat-label">IR Instructions / sec</div></div>
+  <div class="stat-item fade-up" style="transition-delay:.1s"><div class="stat-num" id="s2">0</div><div class="stat-label">Tensor Ops Supported</div></div>
+  <div class="stat-item fade-up" style="transition-delay:.2s"><div class="stat-num" id="s3">0</div><div class="stat-label">ms Compile Time</div></div>
+  <div class="stat-item fade-up" style="transition-delay:.3s"><div class="stat-num" id="s4">0</div><div class="stat-label">Optimization Passes</div></div>
+</div>
+
+<div id="about" class="section">
+  <span class="section-tag fade-up">The Problem &amp; Solution</span>
+  <h2 class="section-title fade-up">ML deserves a <em>real</em> language.</h2>
+  <div class="two-col">
+    <div class="problem-card problem fade-up">
+      <div class="card-label red">The Problem</div>
+      <div class="card-title">Python is not enough</div>
+      <p class="card-text">Python was never designed for systems-level ML. Its dynamic typing, GIL, and interpreter overhead force engineers to write performance-critical code in C++ extensions, losing type safety and debuggability.</p>
+      <ul class="card-list red">
+        <li>No static types &rarr; runtime shape errors</li>
+        <li>Slow interpreter &rarr; C++ extensions required</li>
+        <li>GIL &rarr; true parallelism blocked</li>
+        <li>No native tensor syntax &rarr; verbose boilerplate</li>
+        <li>Framework fragmentation across PyTorch/TF/JAX</li>
+      </ul>
+    </div>
+    <div class="problem-card solution fade-up" style="transition-delay:.15s">
+      <div class="card-label nova">The Solution</div>
+      <div class="card-title">Nova &mdash; ML-first language</div>
+      <p class="card-text">Nova is a statically-typed, compiled language where tensors are first-class citizens. Autograd, CUDA dispatch, and the full ML stdlib are built into the compiler, not bolted on as a framework.</p>
+      <ul class="card-list nova">
+        <li>Static types &rarr; shape errors at compile time</li>
+        <li>IR compilation &rarr; 500M instructions/sec</li>
+        <li>Native tensor syntax &rarr; zero boilerplate</li>
+        <li>Tape-based autograd &rarr; automatic differentiation</li>
+        <li>CUDA FFI &rarr; transparent GPU dispatch</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div id="features" class="section" style="padding-top:0">
+  <span class="section-tag fade-up">Capabilities</span>
+  <h2 class="section-title fade-up">Built for the <em>full stack</em> of ML.</h2>
+  <div class="features-grid">
+    <div class="feature-card fade-up"><div class="feature-icon">&#9889;</div><div class="feature-title">Optimizing Compiler</div><p class="feature-text">6-pass IR optimizer: constant folding, copy propagation, dead code elimination, loop invariant code motion, algebraic simplification, and function inlining.</p><span class="feature-tag">500M instr/sec</span></div>
+    <div class="feature-card fade-up" style="transition-delay:.08s"><div class="feature-icon">&#129504;</div><div class="feature-title">Tape-based Autograd</div><p class="feature-text">Full reverse-mode automatic differentiation. Call requires_grad() on any tensor, run your forward pass, call backward(). Chain rule propagates automatically.</p><span class="feature-tag">PyTorch-style API</span></div>
+    <div class="feature-card fade-up" style="transition-delay:.16s"><div class="feature-icon">&#128293;</div><div class="feature-title">CUDA FFI</div><p class="feature-text">Transparent GPU dispatch via the CUDA Driver API. Load PTX kernels, transfer tensors to device, and launch with native Nova syntax. CPU fallback built in.</p><span class="feature-tag">CUDA 11+</span></div>
+    <div class="feature-card fade-up" style="transition-delay:.24s"><div class="feature-icon">&#128230;</div><div class="feature-title">NovaTorch stdlib</div><p class="feature-text">Linear, ReLU, Sigmoid, Tanh layers. SGD optimizer. Cross-entropy and MSE loss. DataLoader, normalize, one_hot. Everything needed to train from scratch.</p><span class="feature-tag">import &lt;novatorch.nn&gt;</span></div>
+    <div class="feature-card fade-up" style="transition-delay:.32s"><div class="feature-icon">&#127758;</div><div class="feature-title">Web IDE</div><p class="feature-text">Monaco-powered editor with Nova syntax highlighting, autocomplete, error markers, real-time terminal output, REPL mode, and file explorer with git integration.</p><span class="feature-tag">Runs in browser</span></div>
+    <div class="feature-card fade-up" style="transition-delay:.40s"><div class="feature-icon">&#128202;</div><div class="feature-title">Optimization Analyzer</div><p class="feature-text">Compare mode shows Normal vs Optimized execution side by side: speedup multiplier, IR node count reduction, folds eliminated &mdash; benchmarked over 10,000 runs.</p><span class="feature-tag">Compare mode</span></div>
+  </div>
+</div>
+
+<div id="pipeline" class="pipeline">
+  <div class="pipeline-inner">
+    <span class="section-tag fade-up">Compiler Pipeline</span>
+    <h2 class="section-title fade-up">From <em>source</em> to execution.</h2>
+    <div class="pipeline-steps">
+      <div class="pipeline-step fade-up"><div class="step-num">01</div><div class="step-title">LEXER</div><p class="step-text">Tokenizes Nova source. Keywords, operators, string/float literals, identifiers.</p></div>
+      <div class="pipeline-step fade-up" style="transition-delay:.08s"><div class="step-num">02</div><div class="step-title">IMPORT</div><p class="step-text">Preprocessor inlines stdlib files. Resolves NOVA_HOME for package imports.</p></div>
+      <div class="pipeline-step fade-up" style="transition-delay:.16s"><div class="step-num">03</div><div class="step-title">PARSER</div><p class="step-text">Recursive descent. Builds IR linked list. Classes, structs, functions.</p></div>
+      <div class="pipeline-step fade-up" style="transition-delay:.24s"><div class="step-num">04</div><div class="step-title">IR GEN</div><p class="step-text">Emits typed IR nodes: ASSIGN, CJMP, CALL, TENSOR_CALL, ARRAY_READ/WRITE.</p></div>
+      <div class="pipeline-step fade-up" style="transition-delay:.32s"><div class="step-num">05</div><div class="step-title">OPTIMIZE</div><p class="step-text">6-pass optimizer reduces node count, eliminates dead code, hoists invariants.</p></div>
+      <div class="pipeline-step fade-up" style="transition-delay:.40s"><div class="step-num">06</div><div class="step-title">EXECUTE</div><p class="step-text">IR interpreter with tensor heap, grad tape, and optional CUDA dispatch.</p></div>
+    </div>
+  </div>
+</div>
+
+<div class="cta-section">
+  <h2 class="cta-title fade-up">Start building <em>now.</em></h2>
+  <p class="cta-text fade-up" style="transition-delay:.1s">No installation. No configuration. Open the IDE, write Nova, and run ML training directly in your browser.</p>
+  <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;" class="fade-up">
+    <a href="http://localhost:3001" class="btn-primary"><svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><polygon points="0,0 12,7 0,14"/></svg>Open the IDE</a>
+    <button class="btn-secondary" onclick="openModal('signup')">Create Account</button>
+  </div>
+</div>
+
+<footer>
+  <div class="footer-left">&copy; 2026 NovaComp. Built with Nova v2.0.</div>
+  <div class="footer-right"><a href="#">GitHub</a><a href="#">Docs</a><a href="#">Changelog</a><a href="#">Privacy</a></div>
+</footer>
+
+<div class="modal-overlay" id="auth-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal()">&times;</button>
+    <div class="modal-title" id="modal-title">Welcome back</div>
+    <p class="modal-subtitle" id="modal-subtitle">Sign in to your NovaComp account</p>
+    <div class="modal-tabs">
+      <button class="modal-tab active" id="tab-login" onclick="switchTab('login')">SIGN IN</button>
+      <button class="modal-tab" id="tab-signup" onclick="switchTab('signup')">CREATE ACCOUNT</button>
+    </div>
+    <div id="form-login" class="modal-form">
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="login-email" placeholder="you@example.com"></div>
+      <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="login-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></div>
+      <div class="form-error" id="login-error">Invalid email or password.</div>
+      <button class="form-submit" onclick="handleLogin()">SIGN IN &rarr; OPEN IDE</button>
+      <div class="form-divider">&mdash; or continue as guest &mdash;</div>
+      <a href="http://localhost:3001" class="btn-secondary" style="justify-content:center;font-size:12px;padding:12px;">Continue without account</a>
+    </div>
+    <div id="form-signup" class="modal-form" style="display:none">
+      <div class="form-group"><label class="form-label">Username</label><input class="form-input" type="text" id="signup-username" placeholder="nova_engineer"></div>
+      <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="signup-email" placeholder="you@example.com"></div>
+      <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="signup-password" placeholder="Min 8 characters"></div>
+      <div class="form-error" id="signup-error">Please fill in all fields.</div>
+      <button class="form-submit" onclick="handleSignup()">CREATE ACCOUNT</button>
+      <div class="form-divider">Each account gets a dedicated workspace + Linux environment.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Cursor
+const cur=document.getElementById('cursor'),ring=document.getElementById('cursor-ring');
+let mx=0,my=0,rx=0,ry=0;
+document.addEventListener('mousemove',e=>{mx=e.clientX;my=e.clientY;});
+(function anim(){cur.style.left=mx+'px';cur.style.top=my+'px';rx+=(mx-rx)*.15;ry+=(my-ry)*.15;ring.style.left=rx+'px';ring.style.top=ry+'px';requestAnimationFrame(anim);})();
+document.querySelectorAll('a,button').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{cur.style.transform='translate(-50%,-50%) scale(2.5)';cur.style.background='#ffb347';ring.style.width='48px';ring.style.height='48px';ring.style.borderColor='#ffb347';ring.style.opacity='.6';});
+  el.addEventListener('mouseleave',()=>{cur.style.transform='translate(-50%,-50%) scale(1)';cur.style.background='var(--nova)';ring.style.width='32px';ring.style.height='32px';ring.style.borderColor='var(--nova)';ring.style.opacity='.4';});
+});
+
+// WebGL neural network animation
+const canvas=document.getElementById('gl-canvas');
+const gl=canvas.getContext('webgl',{antialias:true,alpha:true});
+function resize(){canvas.width=window.innerWidth;canvas.height=window.innerHeight;gl.viewport(0,0,canvas.width,canvas.height);}
+window.addEventListener('resize',resize);resize();
+
+const vs=`attribute vec3 pos;attribute float sz;uniform float t;uniform mat4 proj;uniform mat4 view;varying float vS;
+void main(){vec3 p=pos;p.x+=sin(t*.3+pos.y*2.1)*.15;p.y+=cos(t*.25+pos.x*1.7)*.1;p.z+=sin(t*.2+pos.x*1.3+pos.y*1.1)*.12;
+gl_Position=proj*view*vec4(p,1.0);gl_PointSize=sz*(1.8/gl_Position.w);vS=sz;}`;
+const fs=`precision mediump float;varying float vS;uniform float t;
+void main(){float d=distance(gl_PointCoord,vec2(.5));if(d>.5)discard;float a=(1.-d*2.)*.65*vS;
+vec3 c=mix(vec3(0.,.83,1.),vec3(1.,.7,.28),sin(t*.4+vS*10.)*.15+.15);gl_FragColor=vec4(c,a);}`;
+
+function mkShader(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);return s;}
+const prog=gl.createProgram();
+gl.attachShader(prog,mkShader(gl.VERTEX_SHADER,vs));
+gl.attachShader(prog,mkShader(gl.FRAGMENT_SHADER,fs));
+gl.linkProgram(prog);gl.useProgram(prog);
+
+const N=2200,pos=new Float32Array(N*3),szs=new Float32Array(N);
+for(let i=0;i<N;i++){
+  const layer=Math.floor(i/(N/6));
+  pos[i*3]=(layer-2.5)*1.3+(Math.random()-.5)*.9;
+  pos[i*3+1]=(Math.random()-.5)*4;
+  pos[i*3+2]=(Math.random()-.5)*3;
+  szs[i]=.2+Math.random()*.8;
+}
+const pb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.bufferData(gl.ARRAY_BUFFER,pos,gl.STATIC_DRAW);
+const sb=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,sb);gl.bufferData(gl.ARRAY_BUFFER,szs,gl.STATIC_DRAW);
+const pL=gl.getAttribLocation(prog,'pos'),sL=gl.getAttribLocation(prog,'sz');
+const tU=gl.getUniformLocation(prog,'t'),prU=gl.getUniformLocation(prog,'proj'),vU=gl.getUniformLocation(prog,'view');
+
+function persp(fov,asp,n,f){const ff=1/Math.tan(fov/2);return new Float32Array([ff/asp,0,0,0,0,ff,0,0,0,0,(f+n)/(n-f),-1,0,0,2*f*n/(n-f),0]);}
+function norm(v){const l=Math.hypot(...v);return v.map(x=>x/l);}
+function cross(a,b){return[a[1]*b[2]-a[2]*b[1],a[2]*b[0]-a[0]*b[2],a[0]*b[1]-a[1]*b[0]];}
+function dot(a,b){return a[0]*b[0]+a[1]*b[1]+a[2]*b[2];}
+function lookAt(e,c,u){const z=norm([e[0]-c[0],e[1]-c[1],e[2]-c[2]]),x=norm(cross(u,z)),y=cross(z,x);return new Float32Array([x[0],y[0],z[0],0,x[1],y[1],z[1],0,x[2],y[2],z[2],0,-dot(x,e),-dot(y,e),-dot(z,e),1]);}
+
+let mxN=0,myN=0;
+document.addEventListener('mousemove',e=>{mxN=(e.clientX/window.innerWidth-.5)*2;myN=(e.clientY/window.innerHeight-.5)*2;});
+
+(function frame(ts){
+  requestAnimationFrame(frame);
+  gl.clearColor(0,0,0,0);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  gl.enable(gl.BLEND);gl.blendFunc(gl.SRC_ALPHA,gl.ONE);gl.enable(gl.DEPTH_TEST);
+  const time=ts*.001;
+  const ex=Math.sin(time*.12)*.8+mxN*.5,ey=Math.cos(time*.08)*.4+myN*.3;
+  gl.uniformMatrix4fv(prU,false,persp(.8,canvas.width/canvas.height,.1,100));
+  gl.uniformMatrix4fv(vU,false,lookAt([ex,ey,6],[0,0,0],[0,1,0]));
+  gl.uniform1f(tU,time);
+  gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAttribArray(pL);gl.vertexAttribPointer(pL,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,sb);gl.enableVertexAttribArray(sL);gl.vertexAttribPointer(sL,1,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.POINTS,0,N);
+})();
+
+// Scroll animations
+const obs=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting)e.target.classList.add('visible');}),{threshold:.1});
+document.querySelectorAll('.fade-up').forEach(el=>obs.observe(el));
+
+// Counter animation
+function animCount(el,target,suffix){let v=0;const inc=target/(2000/16);const t=setInterval(()=>{v=Math.min(v+inc,target);el.textContent=Math.floor(v)+suffix;if(v>=target)clearInterval(t);},16);}
+const statsObs=new IntersectionObserver(es=>{if(es[0].isIntersecting){animCount(document.getElementById('s1'),500,'M');animCount(document.getElementById('s2'),40,'+');animCount(document.getElementById('s3'),16,'ms');animCount(document.getElementById('s4'),6,'');statsObs.disconnect();}},{threshold:.5});
+statsObs.observe(document.querySelector('.stats-bar'));
+
+// Auth
+let curTab='login';
+function openModal(tab){document.getElementById('auth-modal').classList.add('active');switchTab(tab);}
+function closeModal(){document.getElementById('auth-modal').classList.remove('active');}
+function switchTab(tab){curTab=tab;document.getElementById('form-login').style.display=tab==='login'?'flex':'none';document.getElementById('form-signup').style.display=tab==='signup'?'flex':'none';document.getElementById('tab-login').classList.toggle('active',tab==='login');document.getElementById('tab-signup').classList.toggle('active',tab==='signup');document.getElementById('modal-title').textContent=tab==='login'?'Welcome back':'Create account';document.getElementById('modal-subtitle').textContent=tab==='login'?'Sign in to your NovaComp account':'Get your dedicated workspace + Linux environment';}
+function getUsers(){try{return JSON.parse(localStorage.getItem('nc_users')||'{}');}catch{return{};}}
+function saveUsers(u){localStorage.setItem('nc_users',JSON.stringify(u));}
+function handleLogin(){const e=document.getElementById('login-email').value.trim(),p=document.getElementById('login-password').value,err=document.getElementById('login-error');err.classList.remove('show');if(!e||!p){err.textContent='Please fill in all fields.';err.classList.add('show');return;}const u=getUsers();if(u[e]&&u[e].password===btoa(p)){localStorage.setItem('nc_user',JSON.stringify({email:e,username:u[e].username}));closeModal();window.location.href='http://localhost:3001';}else{err.textContent='Invalid email or password.';err.classList.add('show');}}
+function handleSignup(){const n=document.getElementById('signup-username').value.trim(),e=document.getElementById('signup-email').value.trim(),p=document.getElementById('signup-password').value,err=document.getElementById('signup-error');err.classList.remove('show');if(!n||!e||!p){err.textContent='Please fill in all fields.';err.classList.add('show');return;}if(p.length<8){err.textContent='Password must be at least 8 characters.';err.classList.add('show');return;}const u=getUsers();if(u[e]){err.textContent='Account already exists.';err.classList.add('show');return;}u[e]={username:n,password:btoa(p),created:Date.now()};saveUsers(u);localStorage.setItem('nc_user',JSON.stringify({email:e,username:n}));closeModal();window.location.href='http://localhost:3001';}
+document.getElementById('auth-modal').addEventListener('click',function(e){if(e.target===this)closeModal();});
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Enter'&&document.getElementById('auth-modal').classList.contains('active')){curTab==='login'?handleLogin():handleSignup();}});
+</script>
+</body>
+</html>

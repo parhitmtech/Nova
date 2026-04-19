@@ -1,0 +1,34 @@
+main()
+{
+    int n = 20 ;
+    arr = array(20) ;
+
+    int i = 0 ;
+    while i < n {
+        arr[i] = n - i ;
+        i = i + 1 ;
+    }
+
+    int j = 0 ;
+    while j < n {
+        i = 0 ;
+        int nm1 = n - 1 ;
+        while i < nm1 {
+            int i1 = i + 1 ;
+            int ai = arr[i] ;
+            int ai1 = arr[i1] ;
+            if ai > ai1 {
+                arr[i] = ai1 ;
+                arr[i1] = ai ;
+            }
+            i = i + 1 ;
+        }
+        j = j + 1 ;
+    }
+
+    i = 0 ;
+    while i < n {
+        print(arr[i]) ;
+        i = i + 1 ;
+    }
+}

@@ -1,0 +1,14 @@
+main()
+{
+    int nums = array(5) ;
+    int i = 0 ;
+    while i < 5 {
+        nums[i] = i ;
+        i = i + 1 ;
+    }
+    i = 0 ;
+    while i < 5 {
+        print(nums[i]) ;
+        i = i + 1 ;
+    }
+}

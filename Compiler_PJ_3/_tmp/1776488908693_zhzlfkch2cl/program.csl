@@ -1,0 +1,12 @@
+// @ml
+main()
+{
+    int bar = progress_bar(100, 40) ;
+    int i = 0 ;
+    while i < 100 {
+        progress_update(bar, i, 0.5) ;
+        i = i + 1 ;
+    }
+    progress_done(bar) ;
+    print("Training complete!") ;
+}
