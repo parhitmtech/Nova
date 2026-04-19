@@ -34,6 +34,16 @@ struct InstructionNode* parse_repl_input(const string& input);
 
 bool suppress_output = false;
 
+// Debug mode
+bool debug_mode = false;
+bool debug_step = false;  // true = pause on every instruction, false = continue until breakpoint
+set<int> debug_breakpoints;  // set of line numbers with break points
+
+// forward declaration
+extern map<string, int> symbolTable;
+extern map<string, int> floatSymbolTable;
+extern map<string, int> doubleSymbolTable;
+
 // ── Call stack ────────────────────────────────────────────────────────────────
 struct CallFrame {
     struct InstructionNode* returnAddress;
@@ -42,6 +52,10 @@ struct CallFrame {
     vector<int> savedSlots;
     vector<int> allRetSlots;
 };
+
+// Add near debug globals
+map<string, pair<int, VarType>> debug_symbol_snapshot;  // name -> {slot, type}
+int import_line_offset = 0; // lines added by imports - used to skip imported code
 
 // Map Definitions for Class 
 map<string, ClassDef> classTable;
@@ -522,6 +536,73 @@ void debug(const char* format, ...)
     }
 }
 
+void debug_print_state(int line_no)
+{
+    // Build JSON with current line + all variable values
+    printf("__DEBUG__{\"type\":\"paused\",\"line\":%d,\"vars\":{", line_no);
+
+    bool first = true;
+    // Int variables
+    for (auto& kv : debug_symbol_snapshot)
+    {
+        int slot = kv.second.first;
+        VarType type = kv.second.second;
+        if (!first) printf(",");
+        if (type == TYPE_FLOAT && slot < (int)fmem.size())
+        {
+            printf("\"%s\":{\"type\":\"float\",\"value\":%.4f}", kv.first.c_str(), fmem[slot]);
+        }
+        else if (type == TYPE_DOUBLE && slot < (int)dmem.size())
+        {
+            printf("\"%s\":{\"type\":\"double\",\"value\":%.4f}", kv.first.c_str(), dmem[slot]);
+        }
+        else if (slot < (int)mem.size())
+        {
+            printf("\"%s\":{\"type\":\"int\",\"value\":%d}", kv.first.c_str(), mem[slot]);
+        }
+        first = false;
+    }
+    printf("}}\n");
+    fflush(stdout);
+}
+
+string debug_wait_command()
+{
+    char buf[256];
+    while (fgets(buf, sizeof(buf), stdin))
+    {
+        string cmd(buf);
+        // trim whitespace
+        while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' '))
+        {
+            cmd.pop_back();
+        }
+        if (cmd == "step" || cmd == "continue" || cmd == "stop")
+        {
+            return cmd;
+        }
+
+        // Handle break points: "breakpoints:5,12,20"
+        if (cmd.size() >= 12 && cmd.substr(0, 12) == "breakpoints:")
+        {
+            string nums = cmd.substr(12);
+            debug_breakpoints.clear();
+            if (!nums.empty())
+            {
+                stringstream ss(nums);
+                string token;
+                while (getline(ss, token, ','))
+                {
+                    try { debug_breakpoints.insert(stoi(token) + import_line_offset); }
+                    catch(...) {}
+                }
+            }
+            continue;
+        }
+    }
+    return "stop";
+}
+
 string read_file(const string& path) 
 {
     ifstream f(path);
@@ -661,6 +742,30 @@ void execute_program(struct InstructionNode* program)
 
     while (pc != NULL)
     {
+        // Debug mode pause
+        if (debug_mode && pc->line_no > 0 && pc->line_no > import_line_offset)
+        {
+            bool should_pause = debug_step;
+            if (!should_pause && debug_breakpoints.count(pc->line_no - import_line_offset))
+            {
+                should_pause = true;
+            }
+            if (should_pause)
+            {
+                debug_print_state(pc->line_no - import_line_offset);
+                string cmd = debug_wait_command();
+                if (cmd == "stop")
+                {
+                    printf("__DEBUG__{\"type\":\"stopped\"}\n");
+                    fflush(stdout);
+                    return;
+                }
+                else if (cmd == "continue")
+                {
+                    debug_step = false;
+                }
+            }
+        }
         // Decrement budget for every instruction.
         // TENSOR_CALL grants a large bonus so ML programs are never falsely killed.
         if (pc->type == TENSOR_CALL)
@@ -1159,18 +1264,24 @@ void execute_program(struct InstructionNode* program)
                     case TEN_PRINT:
                     {
                         Tensor& T = tensor_heap[mem[a[0]]];
-                        printf("[");
-                        for (int i = 0;i < T.rows;i++)
+                        // Build entire output as single string then print once
+                        string out_str = "";
+                        out_str += "[";
+                        for (int i = 0; i < T.rows; i++)
                         {
-                            if (T.rows > 1) printf(i == 0 ? "[" : " [");
-                            for (int j = 0;j < T.cols;j++)
+                            if (T.rows > 1) out_str += (i == 0 ? "[" : " [");
+                            for (int j = 0; j < T.cols; j++)
                             {
-                                printf("%.4f", T.at(i, j));
-                                if (j < T.cols - 1) printf(", ");
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "%.4f", T.at(i, j));
+                                out_str += buf;
+                                if (j < T.cols - 1) out_str += ", ";
                             }
-                            if (T.rows > 1) printf(i < T.rows - 1 ? "],\n" : "]");
+                            if (T.rows > 1) out_str += (i < T.rows - 1 ? "],\n" : "]");
                         }
-                        printf("]\n");
+                        out_str += "]\n";
+                        printf("%s", out_str.c_str());
+                        fflush(stdout);
                         res = 0;
                         break;
                     }
@@ -2506,9 +2617,10 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
         exit(1);
     }
 
-    // collect all unique label targets
-    // we need a label for every node that is a jump target
+    // Pass 1: collect all jump targets and function heads 
     map<struct InstructionNode*, int> labelMap;
+    map<struct InstructionNode*, int> funcLabelMap;
+    set<struct InstructionNode*> funcHeads; // nodes that are function entry points
     int labelCounter = 0;
 
     struct InstructionNode* pc = program;
@@ -2517,82 +2629,71 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
         if (pc->type == CJMP && pc->cjmp_inst.target != nullptr)
         {
             if (!labelMap.count(pc->cjmp_inst.target))
-            {
                 labelMap[pc->cjmp_inst.target] = labelCounter++;
-            }
         }
-        if (pc->type == JMP && pc->jmp_inst.target != nullptr)
+        if (pc->type == JMP && pc->jmp_inst.target != nullptr)  // ← fixed: was cjmp_inst
         {
-            if (!labelMap.count(pc->cjmp_inst.target))
+            if (!labelMap.count(pc->jmp_inst.target))
+                labelMap[pc->jmp_inst.target] = labelCounter++;
+        }
+        if (pc->type == CALL && pc->call_inst.function_head != nullptr)
+        {
+            if (!funcLabelMap.count(pc->call_inst.function_head))
             {
-                labelMap[pc->cjmp_inst.target] = labelCounter++;
+                funcLabelMap[pc->call_inst.function_head] = labelCounter++;
             }
+            funcHeads.insert(pc->call_inst.function_head);
         }
         pc = pc->next;
     }
 
-    // stack frame size
+    // find where main body ends (first function head)
+    // COllect function bodies: map from funchead -> list of nodes until RET
+    map<struct InstructionNode*, vector<struct InstructionNode*>> funcBodies;
+    for (auto& kv : funcLabelMap)
+    {
+        struct InstructionNode* head = kv.first;
+        vector<struct InstructionNode*> body;
+        struct InstructionNode* n = head;
+        while (n != nullptr)
+        {
+            body.push_back(n);
+            if (n->type == RET) break;
+            n = n->next;
+        }
+        funcBodies[head] = body;
+    }
+
+    // Stack frame size 
     int frameSize = (next_available + 1) * 8;
-    // align to 16 bytes (ABI requirement)
     if (frameSize % 16 != 0) frameSize += 16 - (frameSize % 16);
 
-    // data section
-    fprintf(out, "section  .data\n");
-    fprintf(out, "    fmt_out_int  db \"%%d\", 10, 0\n");  // %d\n
-    fprintf(out, "    fmt_in_int   db \"%%d\", 0\n");      // %d
+    // Data section
+    fprintf(out, "section .data\n");
+    fprintf(out, "    fmt_out_int  db \"%%d\", 10, 0\n");
+    fprintf(out, "    fmt_out_str  db \"%%s\", 0\n");
+    fprintf(out, "    fmt_in_int   db \"%%d\", 0\n");
 
-    // emit string literals from strMem
-    for (int i = 0;i < next_str_available;i++)
+    for (int i = 0; i < next_str_available; i++)
     {
         fprintf(out, "    strlit_%d db ", i);
         for (unsigned char ch : strMem[i])
-        {
             fprintf(out, "%d, ", (int)ch);
-        }
-        fprintf(out, "0\n");
+        fprintf(out, "10, 0\n");  // newline + null terminator
     }
 
-    // text section
+    // Text section 
     fprintf(out, "\nsection .text\n");
     fprintf(out, "    extern printf\n");
     fprintf(out, "    extern scanf\n");
     fprintf(out, "    global main\n\n");
 
-    // main entry point
-    fprintf(out, "main:\n");
-    fprintf(out, "    push rbp\n");
-    fprintf(out, "    mov  rbp, rsp\n");
-    fprintf(out, "    sub  rsp, %d\n\n", frameSize);
-
-    // initialize all slots to 0
-    fprintf(out, "   ; zero-initialize all mem slots\n");
-    for (int i = 0;i < next_available;i++)
+    // Helper methods
+    auto emitNode = [&](struct InstructionNode* pc)
     {
-        if (mem[i] != 0)
+        switch(pc->type)
         {
-            fprintf(out, "    mov  %s, %d\n", slot(i).c_str(), mem[i]);
-        }
-        else
-        {
-            fprintf(out, "    mov %s, 0\n", slot(i).c_str());
-        }
-        fprintf(out, "\n");
-    }
-
-    // emit IR instructions
-    pc = program;
-    while (pc != nullptr)
-    {
-        // emit label if this node is a jump target
-        if (labelMap.count(pc))
-        {
-            fprintf(out, ".L%d:\n", labelMap[pc]);
-        }
-
-        switch (pc->type)
-        {
-            case NOOP:
-                break;
+            case NOOP: break;
 
             case ASSIGN:
             {
@@ -2604,9 +2705,9 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 else
                 {
                     fprintf(out, "    mov  rax, %s\n", slot(pc->assign_inst.operand1_index).c_str());
-                    switch (pc->assign_inst.op)
+                    switch(pc->assign_inst.op)
                     {
-                        case OPERATOR_PLUS:
+                        case OPERATOR_PLUS:     
                         {
                             fprintf(out, "    add  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
                             break;
@@ -2618,12 +2719,13 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                         }
                         case OPERATOR_MULT:
                         {
-                            fprintf(out, "    imul  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            fprintf(out, "    imul rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
                             break;
                         }
                         case OPERATOR_DIV:
                         {
-                            fprintf(out, "    cqo\n");  // sign-extend rax into rdx:rax
+                            fprintf(out, "    xor  rdx, rdx\n");
+                            fprintf(out, "    cqo\n");
                             fprintf(out, "    mov  rcx, %s\n", slot(pc->assign_inst.operand2_index).c_str());
                             fprintf(out, "    idiv rcx\n");
                             break;
@@ -2634,7 +2736,6 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 }
                 break;
             }
-
             case IN:
             {
                 fprintf(out, "    lea  rdi, [rel fmt_in_int]\n");
@@ -2643,28 +2744,26 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 fprintf(out, "    call scanf\n");
                 break;
             }
-            
             case OUT:
             {
                 if (!pc->output_inst.is_string)
                 {
-                    fprintf(out, "   lea  rdi, [rel fmt_out_int]\n]");
-                    fprintf(out, "   mov  rsi, %s\n", slot(pc->output_inst.var_index).c_str());
-                    fprintf(out, "   xor  eax, eax\n");
-                    fprintf(out, "   call printf\n");
+                    fprintf(out, "    lea  rdi, [rel fmt_out_int]\n");
+                    fprintf(out, "    mov  rsi, %s\n", slot(pc->output_inst.var_index).c_str());
+                    fprintf(out, "    xor  eax, eax\n");
+                    fprintf(out, "    call printf\n");
                 }
                 else
                 {
                     int strIdx = pc->output_inst.is_string_var
                                  ? mem[pc->output_inst.var_index]
                                  : pc->output_inst.var_index;
-                    fprintf(out, "   lea  rdi, [rel strlit_%d]\n", strIdx);
-                    fprintf(out, "   xor  eax, eax\n");
-                    fprintf(out, "   call printf\n");
+                    fprintf(out, "    lea  rdi, [rel strlit_%d]\n", strIdx);
+                    fprintf(out, "    xor  eax, eax\n");
+                    fprintf(out, "    call printf\n");
                 }
                 break;
             }
-
             case CJMP:
             {
                 fprintf(out, "    mov  rax, %s\n", slot(pc->cjmp_inst.operand1_index).c_str());
@@ -2673,74 +2772,198 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 switch (pc->cjmp_inst.condition_op)
                 {
                     case CONDITION_GREATER:
-                    {
-                        // pass if op1 > op2 -> jump to target if op1 <= op2
                         fprintf(out, "    jle  .L%d\n", targetLabel);
                         break;
-                    }
                     case CONDITION_LESS:
-                    {
-                        // pass if op1 < op2 -> jump to target if op1 >= op2
                         fprintf(out, "    jge  .L%d\n", targetLabel);
                         break;
-                    }
                     case CONDITION_NOTEQUAL:
-                    {
-                        // pass if op1 != op2 -> jump to target if op1 == op2
-                        fprintf(out, "    je  .L%d\n", targetLabel);
+                        fprintf(out, "    je   .L%d\n", targetLabel);
                         break;
-                    }
                 }
                 break;
             }
-
             case JMP:
             {
                 int targetLabel = labelMap[pc->jmp_inst.target];
-                fprintf(out, "    jmp  .L%d\n", targetLabel);   
+                fprintf(out, "   jmp  .L%d\n", targetLabel);
                 break;
             }
-
             case CALL:
             {
-                // save caller-saved registers used by us
-                fprintf(out, "    jle  .L%d\n", (void*)pc->call_inst.function_head);
-                // copy args into param slots before jumping
-                for (int i = 0;i < pc->call_inst.num_params;i++)
+                // Copy args into param slots before call
+                for (int i = 0; i < pc->call_inst.num_params; i++)
                 {
                     fprintf(out, "    mov  rax, %s\n", slot(pc->call_inst.arg_val_slots[i]).c_str());
                     fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.param_slots[i]).c_str());
                 }
-                // we use label-based call for now - functions labels emitted separately
-                fprintf(out, "    call func_%p\n", (void*)pc->call_inst.function_head);
+                int funcLabel = funcLabelMap[pc->call_inst.function_head];
+                fprintf(out, "    call nova_f%d\n", funcLabel);
+                // Store return value from rax
                 fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.ret_val_index).c_str());
                 break;
             }
-
             case RET:
             {
-                fprintf(out, "    call func_%p\n", slot(pc->ret_inst.ret_val_index).c_str());
+                // Move return value into rax (System V ABI)
+                fprintf(out, "    mov  rax, %s\n", slot(pc->ret_inst.ret_val_index).c_str());
                 fprintf(out, "    leave\n");
                 fprintf(out, "    ret\n");
                 break;
             }
-            default:
+            case ALLOC:
+            {
+                fprintf(out, "    ; ALLOC base=slot[%d] size=slot[%d]\n",
+                    pc->alloc_inst.base_slot, pc->alloc_inst.size_slot);
+                break;
+            }
+            case ARRAY_READ:
+            {
+                if (pc->array_inst.dynamic_base) 
+                {
+                    // base_index slot contains the base index value at runtime
+                    fprintf(out, "    mov  rax, %s\n", slot(pc->array_inst.base_index).c_str()); // rax = base slot index
+                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str()); // rcx = idx
+                    fprintf(out, "    add  rax, rcx\n");
+                }
+                else
+                {
+                    // base_index IS the base index directly
+                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    mov  rax, %d\n", pc->array_inst.base_index);
+                    fprintf(out, "    add  rax, rcx\n");
+                }
+                fprintf(out, "    inc  rax\n");
+                fprintf(out, "    imul rax, 8\n");
+                fprintf(out, "    neg  rax\n");
+                fprintf(out, "    mov  rdx, [rbp + rax]\n");
+                fprintf(out, "    mov  %s, rdx\n", slot(pc->array_inst.target_index).c_str());
+                break;
+            }
+            case ARRAY_WRITE:
+            {
+                fprintf(out, "    mov  rdx, %s\n", slot(pc->array_inst.target_index).c_str());
+                if (pc->array_inst.dynamic_base) 
+                {
+                    fprintf(out, "    mov  rax, %s\n", slot(pc->array_inst.base_index).c_str());
+                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    add  rax, rcx\n");
+                }
+                else 
+                {
+                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    mov  rax, %d\n", pc->array_inst.base_index);
+                    fprintf(out, "    add  rax, rcx\n");
+                }
+                fprintf(out, "    inc  rax\n");
+                fprintf(out, "    imul rax, 8\n");
+                fprintf(out, "    neg  rax\n");
+                fprintf(out, "    mov  [rbp + rax], rdx\n");
+                break;
+            }
+            default: 
             {
                 fprintf(out, "    ; unhandled IR type %d\n", pc->type);
                 break;
             }
         }
+    };
+
+    // main entry 
+    fprintf(out, "main:\n");
+    fprintf(out, "    push rbp\n");
+    fprintf(out, "    mov  rbp, rsp\n");
+    fprintf(out, "    sub  rsp, %d\n\n", frameSize);
+
+    // Initialize constant slots
+    fprintf(out, "    ; initialize constant slots\n");
+    for (int i = 0; i < next_available; i++)
+    {
+        if (mem[i] != 0)
+        {
+            fprintf(out, "    mov  %s, %d\n", slot(i).c_str(), mem[i]);
+        }
+    }
+    fprintf(out, "\n");
+
+    // EMIT main body - stop when we hit the first function head
+    set<int> emittedLabels;
+    pc = program;
+    while (pc != nullptr)
+    {
+        // skip nodes that belong to function bodies
+        if (funcHeads.count(pc))
+        {  
+            // skip entire function body
+            while (pc != nullptr && pc->type != RET) pc = pc->next;
+            if (pc != nullptr) pc = pc->next;  // skip RET
+            continue;
+        }
+        // EMIT label if jump target
+        if (labelMap.count(pc))
+        {
+            int lbl = labelMap[pc];
+            if (!emittedLabels.count(lbl))
+            {
+                fprintf(out, ".L%d:\n", lbl);
+                emittedLabels.insert(lbl);
+            }
+        }
+
+        emitNode(pc);
         pc = pc->next;
     }
 
-    // main exit
-    fprintf(out, "\n    ; program exit\n");
+
+    // ── Main exit ──────────────────────────────────────────────────────────
+    fprintf(out, "\n    ; exit\n");
     fprintf(out, "    xor  eax, eax\n");
     fprintf(out, "    leave\n");
     fprintf(out, "    ret\n");
 
+    // EMIT each function as a seperate labeled block
+    for (auto& kv : funcLabelMap)
+    {
+        struct InstructionNode* head = kv.first;
+        int funcLabel = kv.second;
+
+        fprintf(out, "\n; ── function nova_f%d ─────────────────────────────────\n", funcLabel);
+        fprintf(out, "nova_f%d:\n", funcLabel);
+        fprintf(out, "    push rbp\n");
+        fprintf(out, "    mov  rbp, rsp\n");
+        fprintf(out, "    sub  rsp, %d\n\n", frameSize);
+
+        // Emit function body nodes - stop at last RET or next function head
+        struct InstructionNode* fn = head;
+       
+        // Now emit up to and including RET
+        bool afterRet = false;
+        while (fn != nullptr)
+        {
+            if (fn != head && funcHeads.count(fn)) break; // hit next function
+
+            if (labelMap.count(fn))
+            {
+                int lbl = labelMap[fn];
+                if (!emittedLabels.count(lbl))
+                {
+                    fprintf(out, ".L%d:\n", lbl);
+                    emittedLabels.insert(lbl);
+                }
+                afterRet = false;
+            }
+
+            // Only emit instruction if not in dead code after ret
+            if (!afterRet) emitNode(fn);
+            if (fn->type == RET) afterRet = true;
+
+            fn = fn->next;
+        }
+        fprintf(out, "\n");
+    }
+
     fclose(out);
-    printf("Assembly written to: %s\n", outputFile.c_str());
+    printf("assembly written to: %s\n", outputFile.c_str());
 }
 
 void run_repl()
@@ -2816,13 +3039,35 @@ void run_repl()
         errorList.clear();
 
         // parse
-        struct InstructionNode* program = parse_repl_input(accumulated);
+        string wrapped = accumulated;
+        bool hasTopLevel = (accumulated.find("main()") != string::npos ||
+                           accumulated.find("def ") != string::npos ||
+                           accumulated.find("class ") != string::npos ||
+                           accumulated.find("struct ") != string::npos ||
+                           accumulated.find("import ") != string::npos);
+        if (!hasTopLevel) 
+        {
+            // Pure statement - wrap in main()
+            wrapped = "main()\n{\n" + accumulated + "\n}\n";
+        }
+        else if (accumulated.find("main()") == string::npos)
+        {
+            // Top-level def/class/import without main() - append empty main()
+            wrapped = accumulated + "\nmain()\n{\n}\n";
+        }
+        set<string> already_imported;
+        string processed = preprocess_import(wrapped, ".", already_imported);
+        lexer.ReinitializeFromString(processed);
+        struct InstructionNode* program = parse_generate_intermediate_representation();
 
         if (!errorList.empty())
         {
             for (const string& err : errorList)
                 fprintf(stderr, "%s\n", err.c_str());
             errorList.clear();
+            accumulated = "";
+            brace_depth = 0;
+            continue; // recover insterad of crashing
         }
         else if (program != nullptr)
         {
@@ -2864,6 +3109,7 @@ int main(int argc, char* argv[])
         if (arg == "--emit-asm")  { flag_emit_asm  = true; continue; }
         if (arg == "--build")     { flag_build     = true; continue; }
         if (arg == "--repl") { flag_repl = true; continue; }
+        if (arg == "--debug") { debug_mode = true; debug_step = true; continue; }
         if (arg[0] != '-')       { inputFile = arg; continue; }
 
         if (arg == "--iters" && i + 1 < argc)
@@ -2885,13 +3131,18 @@ int main(int argc, char* argv[])
         return 0;
     }
 
+    string processed = "";
+
     // file mode 
     if (!inputFile.empty())
     {
-        if (inputFile.size() < 5 ||
-            inputFile.substr(inputFile.size() - 4) != ".csl")
+        // Accept both .csl and .nova extensions
+        bool validExt = false;
+        if (inputFile.size() >= 5 && inputFile.substr(inputFile.size() - 4) == ".csl") validExt = true;
+        if (inputFile.size() >= 6 && inputFile.substr(inputFile.size() - 5) == ".nova") validExt = true;
+        if (!validExt)
         {
-            fprintf(stderr, "Error: file must have a .csl extension\n");
+            fprintf(stderr, "Error: file must have a .csl or .nova extension\n");
             return 1;
         }
         FILE* test = fopen(inputFile.c_str(), "r");
@@ -2907,7 +3158,7 @@ int main(int argc, char* argv[])
         size_t last_slash = base_dir.find_last_of("/\\");
         base_dir = (last_slash != string::npos) ? base_dir.substr(0, last_slash) : ".";
         set<string> already_imported;
-        string processed = preprocess_import(raw_source, base_dir, already_imported);
+        processed = preprocess_import(raw_source, base_dir, already_imported);
         lexer.ReinitializeFromString(processed);
     }
     else
@@ -2917,12 +3168,47 @@ int main(int argc, char* argv[])
         raw_stream << cin.rdbuf();
         string raw_source = raw_stream.str();
         set<string> already_imported;
-        string processed = preprocess_import(raw_source, ".", already_imported);
+        processed = preprocess_import(raw_source, ".", already_imported);
         lexer.ReinitializeFromString(processed);
+    }
+
+    //Calculate how many lines were added by imports
+    if (debug_mode)
+    {
+        int processed_lines = (int)std::count(processed.begin(), processed.end(), '\n');
+        int raw_lines = 0;
+        if (!inputFile.empty())
+        {
+            string raw = read_file(inputFile);
+            raw_lines = (int)std::count(raw.begin(), raw.end(), '\n');
+        }
+        import_line_offset = std::max(0, processed_lines - raw_lines);
     }
 
     // parse 
     struct InstructionNode* program = parse_generate_intermediate_representation();
+
+    // // Temporary debug — check if symbolTable has anything
+    // fprintf(stderr, "DEBUG symbolTable size: %d\n", (int)symbolTable.size());
+    // for (auto& kv : symbolTable)
+    //     fprintf(stderr, "  %s -> slot %d\n", kv.first.c_str(), kv.second);
+
+    if (debug_mode)
+    {
+        debug_symbol_snapshot.clear();
+        for (auto& kv : symbolTable)
+        {
+            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_INT};
+        }
+        for (auto& kv : floatSymbolTable)
+        {
+            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_FLOAT};
+        }
+        for (auto& kv : doubleSymbolTable)
+        {
+            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_DOUBLE};
+        }
+    }
 
     // optimize 
     if (flag_optimize)
@@ -3020,16 +3306,10 @@ int main(int argc, char* argv[])
         printf("BENCH_NODES:%d\n", nodeCount);
         printf("BENCH_ITERS:%d\n", bench_iters);
     }
-    else
-    {
-        // normal single execution 
-        input_replay_index = -1;  // live stdin mode
-        fflush(stderr);
-        execute_program(program);
-        fflush(stdout);
-        fflush(stderr);
-    }
-
+    // normal single execution 
+    input_replay_index = -1;  // live stdin mode
+    fflush(stderr);
+    execute_program(program);
     fflush(stdout);
     fflush(stderr);
 

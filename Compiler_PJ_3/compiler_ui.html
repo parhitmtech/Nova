@@ -142,6 +142,38 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .run-btn:active  { transform: scale(0.97); }
 .run-btn:disabled { background: var(--bg4); color: var(--hint); cursor: not-allowed; transform: none; }
 
+.debug-btn {
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.05em; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--yellow);
+  background: transparent; color: var(--yellow); cursor: pointer;
+  display: flex; align-items: center; gap: 6px; transition: background 0.12s, transform 0.08s;
+}
+.debug-btn:hover { background: rgba(198,144,38,0.15); }
+.debug-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.debug-btn.active { background: var(--yellow); color: #0d1117; }
+
+.debug-ctrl-btn {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em;
+  padding: 4px 10px; border-radius: 4px; border: 1px solid var(--border2);
+  background: var(--bg3); color: var(--text); cursor: pointer;
+  display: flex; align-items: center; gap: 5px; transition: background 0.1s;
+}
+.debug-ctrl-btn:hover { background: var(--bg5); }
+.debug-ctrl-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+.debug-ctrl-btn.danger { border-color: #5c1e1e; color: var(--red); }
+.debug-ctrl-btn.danger:hover { background: rgba(229,83,75,0.12); }
+
+.dbg-var-row {
+  display: flex; align-items: center; gap: 8px; padding: 5px 8px;
+  background: var(--bg3); border-radius: 4px; font-family: var(--font-mono); font-size: 11px;
+}
+.dbg-var-name { color: var(--accent); flex-shrink: 0; }
+.dbg-var-type { color: var(--hint); font-size: 10px; flex-shrink: 0; }
+.dbg-var-val { color: var(--text); margin-left: auto; }
+
+.debug-line-highlight { background: rgba(198,144,38,0.15) !important; }
+.breakpoint-glyph { background: #e5534b; border-radius: 50%; width: 10px !important; height: 10px !important; margin-top: 4px; margin-left: 3px; }
+
 /* ── Layout ── */
 .workspace { display: flex; height: calc(100vh - var(--topbar-h) - var(--statusbar-h)); }
 .sidebar {
@@ -401,6 +433,10 @@ kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-ra
   </select>
   <div class="topbar-right">
     <div class="status-pill" id="status-pill"><div class="dot"></div><span id="status-text">Ready</span></div>
+    <button class="debug-btn" id="debug-btn" onclick="debugCode()" title="Debug (step through code)">
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="8" cy="8" r="6"/><line x1="8" y1="5" x2="8" y2="8"/><circle cx="8" cy="11" r="0.5" fill="currentColor"/></svg>
+      DEBUG
+    </button>
     <button class="run-btn" id="run-btn" onclick="runCode()">
       <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg>
       RUN
@@ -471,6 +507,42 @@ kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-ra
             <span class="output-idle">// Run in Compare mode to see optimization analysis.</span>
           </div>
         </div>
+        <!-- Debug panel -->
+        <div id="debug-panel" style="display:none;flex-direction:column;flex:1;overflow:hidden;border-top:1px solid var(--border);">
+          <div class="panel-header" style="background:var(--bg2);">
+            <span class="panel-title" style="color:var(--yellow);">⬡ DEBUGGER</span>
+            <div style="display:flex;align-items:center;gap:6px;margin-left:auto;">
+              <button class="debug-ctrl-btn" id="dbg-step" onclick="debugCommand('step')" title="Step">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><polygon points="0,0 7,5.5 0,11"/><rect x="8" y="0" width="3" height="11"/></svg>
+                Step
+              </button>
+              <button class="debug-ctrl-btn" id="dbg-continue" onclick="debugCommand('continue')" title="Continue">
+                <svg width="11" height="11" viewBox="0 0 11 11" fill="currentColor"><polygon points="0,0 5,5.5 0,11"/><polygon points="5,0 10,5.5 5,11"/></svg>
+                Continue
+              </button>
+              <button class="debug-ctrl-btn danger" id="dbg-stop" onclick="debugCommand('stop')" title="Stop">
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="currentColor"><rect width="10" height="10"/></svg>
+                Stop
+              </button>
+              <button class="debug-ctrl-btn" id="dbg-close" onclick="debugClose()" title="Close debugger" style="margin-left:4px;">
+                &#x2715; Close
+              </button>
+            </div>
+          </div>
+          <div style="flex:1;overflow-y:auto;padding:12px 14px;display:flex;flex-direction:column;gap:12px;">
+            <div id="dbg-status" style="font-family:var(--font-mono);font-size:11px;color:var(--yellow);">Waiting for debug session...</div>
+            <div>
+              <div style="font-family:var(--font-ui);font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Variables</div>
+              <div id="dbg-vars" style="display:flex;flex-direction:column;gap:4px;">
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--hint);">No variables yet.</span>
+              </div>
+            </div>
+            <div>
+              <div style="font-family:var(--font-ui);font-size:10px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);margin-bottom:6px;">Output</div>
+              <div id="dbg-output" style="font-family:var(--font-mono);font-size:11px;color:var(--green);white-space:pre-wrap;background:var(--bg3);padding:8px;border-radius:4px;min-height:40px;"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </div>
@@ -519,8 +591,8 @@ kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-ra
 // ═══════════════════════════════════════════════════════════════════════════
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════════════════════════
-const API = 'http://localhost:3001';
-const WS  = 'ws://localhost:3001';
+const API = window.location.origin;
+const WS  = window.location.origin.replace('http', 'ws');
 
 const EXAMPLES = {
   hello:     { source: `{\n    print("Hello, World!") ;\n}`, inputs: `` },
@@ -1010,15 +1082,44 @@ require(['vs/editor/editor.main'], function() {
     wordWrap: 'off',
     automaticLayout: false,
     scrollbar: { verticalScrollbarSize: 5, horizontalScrollbarSize: 5 },
-    overviewRulerLanes: 0,
+    glyphMargin: true, 
+    overviewRulerLanes: 1,
     renderLineHighlight: 'line',
     padding: { top: 14, bottom: 14 },
     fixedOverflowWidgets: true,
     suggest: { showKeywords: true },
   });
 
+  // ── Breakpoint gutter click ──────────────────────────────────────────────
+  _monaco.onMouseDown(e => {
+      if (e.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+          e.target.type === monaco.editor.MouseTargetType.GUTTER_LINE_NUMBERS) {
+          const line = e.target.position.lineNumber;
+          if (_debugBreakpoints.has(line)) {
+              _debugBreakpoints.delete(line);
+          } else {
+              _debugBreakpoints.add(line);
+          }
+          updateBreakpointDecorations();
+      }
+  });
+
   new ResizeObserver(() => _monaco.layout()).observe(document.getElementById('monaco-editor'));
 
+  let _breakpointDecorations = [];
+  function updateBreakpointDecorations() {
+      if (!_monaco) return;
+      const decorations = Array.from(_debugBreakpoints).map(line => ({
+          range: new monaco.Range(line, 1, line, 1),
+          options: {
+              isWholeLine: false,
+              glyphMarginClassName: 'breakpoint-glyph',
+              glyphMarginHoverMessage: { value: 'Breakpoint' },
+              overviewRuler: { color: '#e5534b', position: monaco.editor.OverviewRulerLane.Left }
+          }
+      }));
+      _breakpointDecorations = _monaco.deltaDecorations(_breakpointDecorations, decorations);
+  }
   // ── Mark dirty on change — but NOT when we programmatically set value ────────
   let _dirtyRenderTimer = null;
   _monaco.onDidChangeModelContent(() => {
@@ -1186,8 +1287,8 @@ async function runCode() {
 
         switch (msg.type) {
           case 'stdout':
-            // Convert \n → \r\n for terminal, handle \r for tqdm carriage-return updates
-            write(msg.text.replace(/\r?\n/g, '\r\n'));
+            // Pass raw - xterm handles \r natively for tqdm progress bars
+            if (termXterm) termXterm.write(msg.text.replace(/\r?\n/g, '\r\n'));
             break;
           case 'stderr':
             if (msg.text.trim()) write('\x1b[33m' + msg.text.replace(/\r?\n/g, '\r\n') + '\x1b[0m');
@@ -1503,6 +1604,241 @@ checkBackend(); setInterval(checkBackend,5000);
 
 // Init terminal eagerly
 window.addEventListener('load', ()=>setTimeout(termInit, 200));
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  DEBUGGER
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _debugAbort = null;
+let _debugActive = false;
+let _debugLineDecoration = [];
+let _debugBreakpoints = new Set();
+
+function debugSetActive(active) {
+  _debugActive = active;
+  const btn = document.getElementById('debug-btn');
+  const step = document.getElementById('dbg-step');
+  const cont = document.getElementById('dbg-continue');
+  const stop = document.getElementById('dbg-stop');
+  const closeBtn = document.getElementById('dbg-close');
+  const runBtn = document.getElementById('run-btn');
+  btn.classList.toggle('active', active);
+  btn.disabled = active;
+  runBtn.disabled = active;
+  if (step) { step.disabled = !active; cont.disabled = !active; stop.disabled = !active; }
+  // Close button always enabled so user can dismiss the panel
+  if (closeBtn) closeBtn.disabled = false;
+}
+
+function debugShowPanel(show) {
+  const panel = document.getElementById('debug-panel');
+  const termPane = document.getElementById('terminal-pane');
+  const xtermContainer = document.getElementById('xterm-container');
+  if (show) {
+    panel.style.display = 'flex';
+    termPane.style.display = 'none';
+  } else {
+    panel.style.display = 'none';
+    termPane.style.display = 'flex';
+    // Force xterm refit by cycling visibility
+    xtermContainer.style.visibility = 'hidden';
+    setTimeout(() => {
+      xtermContainer.style.visibility = 'visible';
+      if (termFit) termFit.fit();
+      if (_monaco) _monaco.layout();
+    }, 100);
+  }
+}
+
+function debugHighlightLine(lineNo) {
+  if (!_monaco || !lineNo) return;
+  // Clear previous highlight
+  _debugLineDecoration = _monaco.deltaDecorations(_debugLineDecoration, [
+    {
+      range: new monaco.Range(lineNo, 1, lineNo, 1),
+      options: {
+        isWholeLine: true,
+        className: 'debug-line-highlight',
+        glyphMarginClassName: 'debug-glyph',
+        overviewRuler: { color: '#c69026', position: monaco.editor.OverviewRulerLane.Left }
+      }
+    }
+  ]);
+  // Scroll to line
+  _monaco.revealLineInCenter(lineNo);
+}
+
+function debugClearHighlight() {
+  if (_monaco) _debugLineDecoration = _monaco.deltaDecorations(_debugLineDecoration, []);
+}
+
+function debugUpdateVars(vars) {
+  const container = document.getElementById('dbg-vars');
+  if (!vars || Object.keys(vars).length === 0) {
+    container.innerHTML = '<span style="font-family:var(--font-mono);font-size:11px;color:var(--hint);">No variables yet.</span>';
+    return;
+  }
+  container.innerHTML = '';
+  for (const [name, info] of Object.entries(vars)) {
+    // Skip internal compiler slots (single-char or numbered)
+    if (name.length === 0) continue;
+    const row = document.createElement('div');
+    row.className = 'dbg-var-row';
+    row.innerHTML = `<span class="dbg-var-name">${esc(name)}</span><span class="dbg-var-type">${esc(info.type)}</span><span class="dbg-var-val">${esc(String(info.value))}</span>`;
+    container.appendChild(row);
+  }
+}
+
+function debugAppendOutput(text) {
+  const el = document.getElementById('dbg-output');
+  el.textContent += text;
+  el.scrollTop = el.scrollHeight;
+}
+
+function debugSetStatus(text) {
+  document.getElementById('dbg-status').textContent = text;
+}
+
+async function debugCode() {
+  if (_debugActive) return;
+
+  const source = _monaco ? _monaco.getValue() : '';
+  if (!source.trim()) return;
+
+  if (fs.active) await fsSaveNow(fs.active);
+
+  document.getElementById('dbg-output').textContent = '';
+  document.getElementById('dbg-vars').innerHTML = '<span style="font-family:var(--font-mono);font-size:11px;color:var(--hint);">No variables yet.</span>';
+  debugSetStatus('Starting debug session...');
+  debugShowPanel(true);
+  debugSetActive(true);
+
+  _debugAbort = new AbortController();
+
+  let res;
+  try {
+    res = await fetch(`${API}/run-debug/start`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source }),
+      signal: _debugAbort.signal,
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  } catch(e) {
+    debugSetStatus('Error: ' + e.message);
+    debugSetActive(false);
+    return;
+  }
+
+  if (_debugBreakpoints.size > 0) {
+    try { await fetch(`${API}/run-debug/breakpoints`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({lines:Array.from(_debugBreakpoints)}) }); } catch(_) {}
+  }
+  // Process stream in background — does NOT block button clicks
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = '';
+
+  function processStream() {
+    reader.read().then(({ done, value }) => {
+      if (done) {
+        debugSetActive(false);
+        debugClearHighlight();
+        return;
+      }
+
+      buf += decoder.decode(value, { stream: true });
+      let nl;
+      while ((nl = buf.indexOf('\n')) !== -1) {
+        const line = buf.slice(0, nl).trimEnd();
+        buf = buf.slice(nl + 1);
+        if (!line.startsWith('data: ')) continue;
+        let msg;
+        try { msg = JSON.parse(line.slice(6)); } catch { continue; }
+
+        switch (msg.type) {
+          case 'debug':
+            debugHighlightLine(msg.line);
+            // vars is needed one level deep due to server wrapping
+            const actualVars = msg.vars?.vars || msg.vars || {};
+            debugUpdateVars(actualVars);
+            debugSetStatus(`Paused at line ${msg.line}`);
+            break;
+          case 'stdout':
+            debugAppendOutput(msg.text);
+            break;
+          case 'stderr':
+            debugAppendOutput('\n[stderr] ' + msg.text);
+            break;
+          case 'stopped':
+            debugSetStatus('Stopped.');
+            debugClearHighlight();
+            break;
+          case 'done':
+            debugSetStatus('Debug session complete.');
+            debugClearHighlight();
+            debugSetActive(false);
+            return;  // stop reading
+        }
+      }
+
+      // Continue reading next chunk
+      processStream();
+    }).catch(e => {
+      if (e.name !== 'AbortError') debugSetStatus('Error: ' + e.message);
+      debugSetActive(false);
+      debugClearHighlight();
+    });
+  }
+
+  processStream();
+}
+
+async function debugCommand(cmd) {
+  if (cmd === 'stop') {
+    if (_debugAbort) _debugAbort.abort();
+    debugClearHighlight();
+    debugSetActive(false);
+    debugSetStatus('Stopped by user.');
+    return;
+  }
+  try {
+    await fetch(`${API}/run-debug/command`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ command: cmd }),
+    });
+  } catch(e) {
+    debugSetStatus('Command failed: ' + e.message);
+  }
+}
+
+function debugStop() {
+  if (_debugAbort) _debugAbort.abort();
+  debugClearHighlight();
+  debugSetActive(false);
+  debugShowPanel(false);
+}
+
+function debugClose() {
+  // Kill session if running, then close panel and restore terminal
+  if (_debugActive) {
+    if (_debugAbort) _debugAbort.abort();
+    try {
+      fetch(API + '/run-debug/command', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'stop' })
+      });
+    } catch(_) {}
+  }
+  debugClearHighlight();
+  debugSetActive(false);
+  debugShowPanel(false);
+  debugSetStatus('Waiting for debug session...');
+  // Force terminal to resize after panel closes
+  document.getElementById('dbg-output').textContent = '';
+  document.getElementById('dbg-vars').innerHTML = '<span style="font-family:var(--font-mono);font-size:11px;color:var(--hint);">No variables yet.</span>';
+}
 </script>
 </body>
 </html>

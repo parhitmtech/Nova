@@ -36,7 +36,7 @@ main()
     int dW1    = 0 ;
     int db1    = 0 ;
 
-    while epoch < 500 {
+    while epoch < 5000 {
         // Forward
         print(epoch) ;
         h1 = layer1.forward(X) ;
