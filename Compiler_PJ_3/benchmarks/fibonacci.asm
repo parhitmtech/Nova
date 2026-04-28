@@ -17,16 +17,16 @@ main:
     mov  qword [rbp - 24], 2
     mov  qword [rbp - 32], 1
     mov  qword [rbp - 56], 2
-    mov  qword [rbp - 88], 35
+    mov  rbx, 35
 
-    mov  rax, qword [rbp - 88]
-    mov  qword [rbp - 8], rax
+    mov  rax, rbx
+    mov  r13, rax
     call nova_f0
-    mov  qword [rbp - 16], rax
-    mov  rax, qword [rbp - 16]
-    mov  qword [rbp - 96], rax
+    mov  r12, rax
+    mov  rax, r12
+    mov  rbx, rax
     lea  rdi, [rel fmt_out_int]
-    mov  rsi, qword [rbp - 96]
+    mov  rsi, rbx
     xor  eax, eax
     call printf
 
@@ -39,41 +39,59 @@ main:
 nova_f0:
     push rbp
     mov  rbp, rsp
-    sub  rsp, 112
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    ; initialize constants
+    mov  rsi, 2
+    mov  rdx, 1
+    mov  rcx, 2
 
-    mov  rax, qword [rbp - 8]
-    cmp  rax, qword [rbp - 24]
+    mov  rax, r13
+    cmp  rax, rcx
     jge  .L0
-    mov  rax, qword [rbp - 8]
-    mov  qword [rbp - 16], rax
-    mov  rax, qword [rbp - 16]
+    mov  rax, r13
+    mov  rbx, rax
+    mov  rax, rbx
+    pop  r15
+    pop  r14
+    pop  r13
+    pop  r12
+    pop  rbx
     leave
     ret
 .L0:
-    mov  rax, qword [rbp - 8]
-    sub  rax, qword [rbp - 32]
-    mov  qword [rbp - 40], rax
-    mov  rax, qword [rbp - 40]
-    mov  qword [rbp - 8], rax
+    mov  rax, r13
+    sub  rax, rdx
+    mov  rbx, rax
+    mov  rax, rbx
+    mov  r13, rax
     call nova_f0
-    mov  qword [rbp - 16], rax
-    mov  rax, qword [rbp - 16]
-    mov  qword [rbp - 48], rax
-    mov  rax, qword [rbp - 8]
-    sub  rax, qword [rbp - 56]
-    mov  qword [rbp - 64], rax
-    mov  rax, qword [rbp - 64]
-    mov  qword [rbp - 8], rax
+    mov  rbx, rax
+    mov  rax, rbx
+    mov  r12, rax
+    mov  rax, r13
+    sub  rax, rsi
+    mov  rbx, rax
+    mov  rax, rbx
+    mov  r13, rax
     call nova_f0
-    mov  qword [rbp - 16], rax
-    mov  rax, qword [rbp - 16]
-    mov  qword [rbp - 72], rax
-    mov  rax, qword [rbp - 48]
-    add  rax, qword [rbp - 72]
-    mov  qword [rbp - 80], rax
-    mov  rax, qword [rbp - 80]
-    mov  qword [rbp - 16], rax
-    mov  rax, qword [rbp - 16]
+    mov  rbx, rax
+    mov  rax, rbx
+    mov  rbx, rax
+    mov  rax, r12
+    add  rax, rbx
+    mov  rbx, rax
+    mov  rax, rbx
+    mov  rbx, rax
+    mov  rax, rbx
+    pop  r15
+    pop  r14
+    pop  r13
+    pop  r12
+    pop  rbx
     leave
     ret
 
