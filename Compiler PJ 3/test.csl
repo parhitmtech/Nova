@@ -1,6 +1,0 @@
-{
-    x = input("Enter x: ") ;
-    multiplier = 2 * 3 * 4 ;
-    result = x * multiplier + 10 * 5 - 100 / 4 ;
-    print(result) ;
-}
