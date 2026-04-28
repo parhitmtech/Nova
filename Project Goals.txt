@@ -1,0 +1,239 @@
+Short Term (remaining)
+
+Medium Term
+
+⬜ Constant folding — at parse time, replace 3 + 4 with 7 directly, classic compiler optimization
+⬜ Dead code elimination — remove IR nodes after a RETURN that can never be reached
+⬜ Temp variable reduction — reuse temp mem[] slots that are no longer live
+⬜ CLI support — ./compiler myprogram.csl instead of only reading from stdin
+⬜ Debug IR dump — --dump-ir flag that prints the entire linked list before execution
+⬜ REPL mode — interactive shell where you type statements one at a time and see results immediately
+
+Correct order for medium term goals
+CLI support — quick win, makes the compiler usable standalone
+IR dump (--dump-ir) — useful for debugging and demos
+Constant folding + timing comparison UI — your idea, this is the showstopper feature
+Dead code elimination — pairs naturally with constant folding
+REPL mode — nice to have
+
+Long Term
+
+⬜ x86 assembly codegen — emit real x86-64 assembly instead of interpreting IR, transforms it from interpreter to true compiler
+⬜ Embedded DSL — add PIN, DELAY, ANALOG_READ keywords targeting Arduino/STM32, market it as a microcontroller scripting language
+⬜ Strongly typed language — add static types (INT, BOOL, STRING), single equality operator, no implicit conversions, no null — solving JavaScript's type coercion problem
+⬜ Python-like performance language — static types + native code compilation giving Python syntax with C-like speed, similar to what Mojo is doing
+
+
+Additional features not yet discussed
+
+⬜ Multiple return values — RETURN a, b ; and x, y = func() ;
+⬜ Standard library — built-in math functions like ABS, MAX, MIN, MOD
+⬜ Proper CLI error display — colored output, caret pointing to the exact column of the error like modern compilers
+⬜ Import/include system — split programs across multiple files with INCLUDE "file.csl"
+⬜ Structs — group related variables together like STRUCT Point { x, y }
+⬜ Online IDE improvements — syntax highlighting, auto-indent, bracket matching in the web UI
+
+
+## Updated Roadmap
+```
+✅ DONE
+   Recursion, boolean expressions, strings
+   CLI, IR dump, constant folding
+   Python-like syntax overhaul
+   REPL mode (terminal + web IDE)
+
+⬜ MEDIUM TERM 2 — Type System + Dynamic Memory
+   Static types: int, bool, string
+   Type checker pass after parsing
+   Replace mem[1000] with heap allocator
+   String operations (concatenation, length, comparison)
+
+⬜ MEDIUM TERM 3 — Compile-time Optimizations
+   Loop Invariant Code Motion (LICM)
+   Algebraic simplification (x+0→x, x*1→x)
+   Function inlining
+   Copy propagation
+
+   (v5.0)
+   Float/double support
+   Structs
+   Classes
+   Import classes feature
+   Convert the website into IDE-style with proper file system
+
+   (v6.0)
+   Add a coding terminal like in VS code (Merge code output and powershell terminal into one)
+   Add a local automated testing script to test multiple test cases efficiently
+   add array data structure to class implementation
+   Implement auto-indentation like Python (or understand how it works)
+
+Mention the current state: "We are in the middle of Phase 2.4 — XOR demo. The last fix was broadcast support in ten_add/ten_sub and tensor_sum_rows. Need to recompile and test examples/xor.nova"
+
+   NovaTorch v7.0 — Complete Roadmap
+   Phase 1 — Tensor Engine (C++ core) ✅ DONE
+   Tensor heap (tensor_heap[]) alongside existing mem[]
+   alloc_tensor, Tensor struct with row-major flat storage
+   All tensor built-ins implemented in C++: tensor_zeros, tensor_ones, tensor_randn, tensor_xavier, tensor_get, tensor_set, tensor_rows, tensor_cols, tensor_print, matmul, tensor_add, tensor_sub, tensor_mul, tensor_scale, tensor_T, tensor_sum, tensor_mean, tensor_max, tensor_clip, tensor_sum_rows
+   Activation functions: relu, sigmoid, tanh_t, softmax, relu_grad, sigmoid_grad
+   Loss functions: mse_loss, mse_grad, cross_entropy_loss, cross_entropy_grad
+   TENSOR_CALL IR instruction with arg_types[] for float/double scalar dispatch
+   Broadcast support in ten_add and ten_sub (1×N over M×N)
+   Parser: TENSOR_OP_MAP, TENSOR_VOID_OPS, parse_tensor_call
+   Type system: TYPE_TENSOR allowed on RHS of int declarations
+   Phase 2 — NovaTorch Standard Library 🔄 IN PROGRESS
+   2.1 stdlib/novatorch.nova ✅
+   tensor_fill_val utility
+   2.2 stdlib/novatorch.nn.nova ✅ (written, testing in progress)
+   Linear — init, forward, backward, get_dW
+   ReLU — init, forward, backward
+   Sigmoid — init, forward, backward
+   Tanh — init, forward, backward
+   2.3 stdlib/novatorch.optim.nova ✅ (written, not yet tested)
+   SGD — init, step_linear
+   2.4 XOR demo — examples/xor.nova 🔄 IN PROGRESS
+   2-layer network: Linear(2→4) → Sigmoid → Linear(4→1) → Sigmoid
+   Manual backward pass (Option A autograd)
+   10000 epochs, lr=0.5
+   Expected output: [[~0], [~1], [~1], [~0]]
+   2.5 stdlib/novatorch.data.nova ⬜ NOT STARTED
+   DataLoader class — batches dataset, shuffles
+   normalize(t) — min-max normalize
+   one_hot(label, n_classes) — encode labels
+   train_test_split(data, ratio)
+   Phase 3 — Training Progress (tqdm-like) ⬜ NOT STARTED
+   progress_bar(n_epochs) built-in → returns a handle
+   progress_update(bar, epoch, loss) → overwrites same terminal line using \r
+   progress_done(bar) → prints newline
+   Implemented as new built-ins in C++ (similar to tensor built-ins)
+   Terminal output format:
+
+   Epoch [  42 / 100] ████████████░░░░░░░░ 42%  loss: 0.3241
+   Renders in the xterm.js terminal in the IDE
+   Phase 4 — Autograd Engine ⬜ NOT STARTED
+   4A — Manual backward (current approach, Option A)
+   Already used in XOR demo
+   Each layer has explicit forward and backward methods
+   User writes training loop manually calling backward in reverse
+   No magic — like early PyTorch 0.1
+   4B — Tape-based autograd (Option B, future v7.1)
+   Every tensor op records itself in a global tape
+   backward() called on scalar loss traverses tape in reverse
+   Accumulates gradients via chain rule automatically
+   Tape structure:
+
+   struct TapeEntry { TensorOp op; int output; int inputs[4]; };
+   std::vector<TapeEntry> tape;
+   zero_grad() clears all accumulated gradients
+   Enables syntax like: loss.backward() instead of manual chain
+   Phase 5 — CUDA FFI ⬜ NOT STARTED
+   5.1 CUDA kernel file (novakernel.cu)
+   matmul_kernel — tiled matrix multiply on GPU
+   relu_kernel, sigmoid_kernel — element-wise on GPU
+   softmax_kernel — row-wise softmax on GPU
+   5.2 CUDA bridge (cuda_bridge.cc / cuda_bridge.h)
+   cuda_available() → 1 or 0 at runtime
+   cuda_matmul(a, b) → dispatches matmul to GPU
+   cuda_to_device / cuda_to_host — memory transfer
+   5.3 Conditional dispatch in interpreter
+   Threshold: matrices larger than 64×64 go to GPU
+   CPU fallback if CUDA not available (transparent)
+   5.4 Build system (Makefile)
+   make cpu — standard g++ build
+   make gpu — links nvcc-compiled CUDA kernels
+   Phase 6 — Demo Programs ⬜ NOT STARTED
+   File	Network
+   examples/xor.nova	2-layer MLP, XOR gate 🔄
+   examples/linear_regression.nova	1-layer, MSE loss
+   examples/binary_classifier.nova	Sigmoid output, BCE loss
+   examples/mnist_mlp.nova	3-layer MLP on MNIST
+   Immediate Next Steps (resume here)
+   ✅ Recompile after broadcast + tensor_sum_rows fix
+   ✅ Run examples/xor.nova from PowerShell — verify output is [[~0],[~1],[~1],[~0]]
+   ⬜ Fix any remaining runtime issues in XOR
+   ⬜ Write examples/linear_regression.nova to validate loss functions
+   ⬜ Implement Phase 3 progress bar
+   ⬜ Write stdlib/novatorch.data.nova
+
+   Probably implement a new Instruction Node type for ml trianing so that too many nodes do not 
+   get created in the training loop. Conditionally, refactor the entire code. 
+
+   (v7.1)
+   Implement a Live Debugger with proper animation
+   - remaining: debugging progress for training loops
+   Implement main() keyword to execute the main body
+
+   (v8.0)
+   Graph Coloring Register allocation 
+   1) Liveness Analysis
+      - Compute Live-In and Live-Out sets for each instruction
+      - Requires:
+         - Control-Flow Graphs (CFG)
+         - Iterative dataflow Analysis
+
+   2) Interference Graph 
+      - Nodes = variables
+      - Edge = two variables live at the same time
+      - data structure: unordered_map<string, unordered_set<string>>
+
+   3) Graph Coloring
+      - Simplify -> Spill -> Select -> Coalescing (if possible)
+      - Based on Chaitin's algorithm and Briggs' improvements
+      
+   4) Spill Handling
+      - When registers are insufficient
+         - insert load/store instructions
+         - re-run allocation
+      - adds a loop in the compiler pipeline
+
+   x86 Codegen (v9.0)
+   1) IR → x86 assembly
+   2) Register allocation
+   3) Link and run native binary
+   4) Benchmark: NovaComp vs Python vs C
+
+   JIT (v10.0)
+   1) generate bytecode files 
+   2) reverse engineer to source code from bytecodes
+   3) Identify hot paths at runtime
+   4) Compile hot IR to x86 on the fly
+   5) Deoptimization fallback
+   
+   UI (v11.0)
+   1) Create a more industry level compelling UI that matches industry standards
+   2) Give information about Compilers and my core problem statement and the solution.
+   3) Create the complete user login system and file system on S3 storage.
+
+   Extra:
+   Integrate live AI interaction and assistance in suitable ways
+   Make source code more modular and systematic
+
+Small Remaining Tasks — NovaComp
+
+Debugger Bugs:
+
+Terminal doesn't resize properly after closing debugger (text wraps, cursor wrong position)
+Breakpoint Continue not pausing correctly at breakpoint line
+Debugger line offset needs verification with imported files (autograd.nova test)
+
+Cleanup / Polish:
+
+Remove NOVA_HOME= stderr print from compiler.cc (get_stdlib_path() function)
+Remove leftover console.log('RAW CHUNK:') from compiler_ui.html processStream()
+Remove console.log('stdout chunk:') from compiler_ui.html runCode()
+Remove SERVER STDOUT: log from server.js /run-stream handler
+
+AWS / Server:
+
+PM2 setup — server dies when SSH session closes (need pm2 start + pm2 startup + pm2 save)
+sed fix for compiler_ui.html dynamic URLs is already done
+
+tqdm:
+
+Works on Linux but model runs too fast to see — deferred until CUDA makes training slow enough
+
+REPL:
+
+import <novatorch.nn> in REPL still prints NOVA_HOME= debug line (same fix as above)
+
+That's it — everything else is a big version (v8, v9, v10, v11). Which of these small ones do you want to knock out first?
+   
