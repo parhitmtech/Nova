@@ -119,7 +119,9 @@ enum InstructionType
     ASSIGN_F,  // float-arithmetic/assignment 
     ASSIGN_D,  // double arithmetic/assignment
     CAST,    // explicit type cast
-    TENSOR_CALL  // tensor built-in operation
+    TENSOR_CALL,  // tensor built-in operation
+    SPILL_LOAD,  // load spilled slot from stack into temp slot
+    SPILL_STORE,  // store temp slot back to stack
 };
 
 struct InstructionNode
@@ -238,6 +240,11 @@ struct InstructionNode
             int arg_slots[8];       // slot index per arg (mem[], fmem[], or dmem[] depending on type)
             VarType arg_types[8];   // type tag so executor knows which array to read
         } tensor_call_inst;
+
+        struct {
+            int spill_slot;  // the spilled slot index (stack location)
+            int temp_slot; // temporary register slot
+        } spill_inst;
     };
 
     struct InstructionNode* next;

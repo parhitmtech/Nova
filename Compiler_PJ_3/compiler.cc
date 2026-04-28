@@ -19,6 +19,8 @@
 #include <sstream>
 #include <cmath>
 #include <random>
+#include <unordered_map>
+#include <unordered_set>
 #include "lexer.h"
 #include "compiler.h"
 #include "stdlib/novatorch.tqdm.h"
@@ -31,6 +33,7 @@ using namespace std;
 extern LexicalAnalyzer lexer;
 extern vector<string> errorList;
 struct InstructionNode* parse_repl_input(const string& input);
+extern map<string, InstructionNode*> functionTable;
 
 bool suppress_output = false;
 
@@ -44,7 +47,53 @@ extern map<string, int> symbolTable;
 extern map<string, int> floatSymbolTable;
 extern map<string, int> doubleSymbolTable;
 
-// ── Call stack ────────────────────────────────────────────────────────────────
+// Structs and data structures for Graph Coloring Register Allocation
+
+// Liveness Analysis
+struct LivenessResult {
+    std::unordered_map<InstructionNode*, std::unordered_set<int>> live_in;
+    std::unordered_map<InstructionNode*, std::unordered_set<int>> live_out;
+};
+
+// Control Flow Interference Graph
+struct InterferenceGraph {
+    unordered_map<int, unordered_set<int>> adj; // slot -> set of interfacing slots
+
+    void add_edge(int u, int v)
+    {
+        if (u == v) return; // no self-loops
+        adj[u].insert(v);
+        adj[v].insert(u);
+    }
+
+    void add_node(int u)
+    {
+        if (!adj.count(u)) adj[u] = {};
+    }
+
+    int degree(int u)
+    {
+        return adj.count(u) ? (int)adj[u].size() : 0;
+    }
+};
+
+// Graph Coloring (Chaintin-Briggs)
+// x86-64 caller-saved registers available for allocation
+// we exclude rax (used for return values and scratch), rsp, rbp
+static const vector<string> REGISTERS = {
+    "rbx", "r12", "r13", "r14", "r15",  // callee-saved - safe across calls
+    "rcx", "rdx", "rsi", "rdi",  // caller-saved - clobbered by calls
+    "r8", "r9", "r10", "r11"  // caller-saved
+};
+static const int K = (int)REGISTERS.size();  // number of available registers
+
+struct ColoringResult
+{
+    unordered_map<int, int> color;  // slot - register index (into REGISTERS)
+    unordered_set<int> spilled;  // slots that couldn't be colored
+};
+
+// struct for Call stack 
 struct CallFrame {
     struct InstructionNode* returnAddress;
     int dest_index;
@@ -2608,67 +2657,849 @@ static std::string slot(int idx)
     return "qword [rbp - " + std::to_string((idx + 1) * 8) + "]";
 }
 
-void generate_x86(struct InstructionNode* program, const std::string& outputFile)
+static const ColoringResult* g_coloring = nullptr;  // set before codegen
+
+static std::string reg_or_slot(int idx)
+{
+    if (g_coloring && g_coloring->color.count(idx))
+    {
+        return REGISTERS[g_coloring->color.at(idx)];
+    }
+    return "qword [rbp - " + std::to_string((idx + 1) * 8) + "]";
+}
+
+// ── Graph Coloring Register Allocation ─────────────────────────────────────────────────────────
+
+// ── Liveness Analysis ─────────────────────────────────────────────────────────
+
+// Get all slots DEFINED (written) by an instruction
+static void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
+{
+    switch (n->type)
+    {
+        case ASSIGN:
+        {
+            defs.insert(n->assign_inst.left_hand_side_index);
+            break;
+        }
+        case IN:
+        {
+            defs.insert(n->input_inst.var_index);
+            break;
+        }
+        case ARRAY_READ:
+        {
+            defs.insert(n->array_inst.target_index);
+            break;
+        }
+        case CALL:
+        {
+            defs.insert(n->call_inst.ret_val_index);
+            if (n->call_inst.all_ret_slots)
+            {
+                for (int i = 0;i < n->call_inst.num_ret_slots;i++)
+                {
+                    defs.insert(n->call_inst.all_ret_slots[i]);    
+                }
+            }
+            // param slots are written by CALL
+            for (int i = 0;i < n->call_inst.num_params;i++)
+            {
+                defs.insert(n->call_inst.param_slots[i]);
+            }
+            break;
+        }
+        case ALLOC:
+        {
+            defs.insert(n->alloc_inst.base_slot);
+            break;
+        }
+        case STRCAT:
+        {
+            defs.insert(n->strcat_inst.dest_slot);
+            break;
+        }
+        case TENSOR_CALL:
+        {
+            if (n->tensor_call_inst.result_slot >= 0)
+            {
+                defs.insert(n->tensor_call_inst.result_slot);
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
+// Get all slots USED (read) by an instruction
+static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
+{
+    switch (n->type)
+    {
+        case ASSIGN:
+        {
+            uses.insert(n->assign_inst.operand1_index);
+            if (n->assign_inst.op != OPERATOR_NONE)
+            {
+                uses.insert(n->assign_inst.operand2_index);
+            }
+            break;
+        }
+        case OUT:
+        {
+            uses.insert(n->output_inst.var_index);
+            break;
+        }
+        case CJMP:
+        {
+            uses.insert(n->cjmp_inst.operand1_index);
+            uses.insert(n->cjmp_inst.operand2_index);
+            break;
+        }
+        case SCMP:
+        {
+            uses.insert(n->scmp_inst.operand1_index);
+            uses.insert(n->scmp_inst.operand2_index);
+            break;
+        }
+        case ARRAY_READ:
+        {
+            uses.insert(n->array_inst.index_slot);
+            if (n->array_inst.dynamic_base)
+            {
+                uses.insert(n->array_inst.base_index);
+            }
+            break;
+        }
+        case ARRAY_WRITE:
+        {
+            uses.insert(n->array_inst.index_slot);
+            uses.insert(n->array_inst.target_index);
+            if (n->array_inst.dynamic_base)
+            {
+                uses.insert(n->array_inst.base_index);
+            }
+            break;
+        }
+        case CALL:
+        {
+            for (int i = 0;i < n->call_inst.num_params;i++)
+            {
+                uses.insert(n->call_inst.arg_val_slots[i]);
+            }
+            break;
+        }
+        case RET:
+        {
+            uses.insert(n->ret_inst.ret_val_index);
+            break;
+        }
+        case ALLOC:
+        {
+            uses.insert(n->alloc_inst.size_slot);
+            break;
+        }
+        case STRCAT:
+        {
+            uses.insert(n->strcat_inst.left_slot);
+            uses.insert(n->strcat_inst.right_slot);
+            break;
+        }
+        case TENSOR_CALL:
+        {
+            for (int i = 0;i < n->tensor_call_inst.num_args;i++)
+            {
+                uses.insert(n->tensor_call_inst.arg_slots[i]);
+            }
+            break;
+        }
+        default: break;
+    }
+}
+
+// Get successor nodes of n (for CFG edges)
+static void get_successors(struct InstructionNode* n, std::vector<struct InstructionNode*>& succs)
+{
+    if (n == nullptr) return;
+    switch (n->type)
+    {
+        case JMP:
+        {
+            if (n->jmp_inst.target) succs.push_back(n->jmp_inst.target);
+            break;
+        }
+        case CJMP:
+        {
+            if (n->next) succs.push_back(n->next);  // condition true
+            if (n->cjmp_inst.target) succs.push_back(n->cjmp_inst.target);  // condition false
+            break;
+        }
+        case RET:
+        {
+            break;  // no successors
+        }
+        default:
+        {
+            if (n->next) succs.push_back(n->next);
+            break;
+        }
+    }
+}
+
+LivenessResult compute_liveness(struct InstructionNode* program)
+{
+    // Collect all nodes into a list
+    std::vector<struct InstructionNode*> nodes;
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        nodes.push_back(pc);
+        pc = pc->next;
+    }
+
+    LivenessResult result;
+
+    // Initialize live_in and live_out as empty sets
+    for (auto n : nodes)
+    {
+        result.live_in[n] = {};
+        result.live_out[n] = {};
+    }
+
+    // Iterative backward dataflow until convergence
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        // Process nodes in reverse order (backward analysis)
+        for (int i = (int)nodes.size() - 1;i >= 0;i--)
+        {
+            struct InstructionNode* n = nodes[i];
+
+            // live_out[n] = union of live_in[successors]
+            std::unordered_set<int> new_out;
+            std::vector<struct InstructionNode*> succs;
+            get_successors(n, succs);
+            for (auto s : succs)
+            {
+                for (int slot : result.live_in[s])
+                {
+                    new_out.insert(slot);
+                }
+            }
+
+            // live_in[n] = use[n] union (live_out[n] - def[n])
+            std::unordered_set<int> defs, uses;
+            get_defs(n, defs);
+            get_uses(n, uses);
+
+            std::unordered_set<int>new_in = uses;
+            for (int slot : new_out)
+            {
+                if (!defs.count(slot))
+                {
+                    new_in.insert(slot);
+                }
+            }
+            // Check if anything changed
+            if (new_in != result.live_in[n] || new_out != result.live_out[n])
+            {
+                result.live_in[n] = new_in;
+                result.live_out[n] = new_out;
+                changed = true;
+            }
+        }
+    }
+    return result;
+}
+
+// debug dump function to verify liveness analysis
+void dump_liveness(struct InstructionNode* program, const LivenessResult& lr)
+{
+    struct InstructionNode* pc = program;
+    int idx = 0;
+    while (pc != nullptr)
+    {
+        printf("[%3d] live_in={", idx++);
+        for (int s : lr.live_in.at(pc)) printf("%d ", s);
+        printf("} live_out={");
+        for (int s : lr.live_out.at(pc)) printf("%d", s);
+        printf("}\n");
+        pc = pc->next;
+    }
+}
+
+// ── Interference Graph ────────────────────────────────────────────────────────
+
+InterferenceGraph build_interference_graph(
+    struct InstructionNode* program, 
+    const LivenessResult& lr)
+{
+    InterferenceGraph ig;
+
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        // Add all live slots as nodes
+        for (int s : lr.live_in.at(pc)) ig.add_node(s);
+        for (int s : lr.live_out.at(pc)) ig.add_node(s);
+
+        // Get defs for this instruction
+        unordered_set<int> defs;
+        get_defs(pc, defs);
+
+        // For each def, it interferes with everything in live_out
+        // Because def is written here, and live_out slots are needed after that
+        // so they cannot share a register
+        for (int d : defs)
+        {
+            ig.add_node(d);
+            for (int live : lr.live_out.at(pc))
+            {
+                ig.add_edge(d, live);
+            }
+        }
+
+        // Special case: ASSIGN (copy instructions) a = b
+        // In standard Briggs/Chaitin, copy-rellated slots are NOT added as
+        // interfering here (enables coalescing later)
+        // For now we add them anyway - coalescing is optional
+        
+        pc = pc->next;
+    }
+    return ig;
+}
+
+void dump_interference_graph(const InterferenceGraph& ig)
+{
+    printf("\n===================================================\n");
+    printf("  Interference Graph\n");
+    printf("===================================================\n");
+    for (auto& kv : ig.adj)
+    {
+        printf("  slot[%2d] interferes with: { ", kv.first);
+        for (int v : kv.second)
+        {
+            printf("%d ", v);
+        }
+        printf("} (degree=%d)\n", (int)kv.second.size());
+    }
+    printf("===================================================\n\n");
+}
+
+// ── Graph Coloring (Chaintin-Briggs) ────────────────────────────────────────────────────────
+
+// Find all slots that are live across a CALL instruction
+unordered_set<int> find_live_across_calls(
+    struct InstructionNode* program,
+    const LivenessResult& lr)
+{
+    unordered_set<int> result;
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        if (pc->type == CALL)
+        {
+            // Everything live after a call must survive the call
+            for (int slot: lr.live_out.at(pc))
+            {
+                result.insert(slot);
+            }
+        }
+        pc = pc->next;
+    }
+    return result;
+}
+
+ColoringResult color_graph(InterferenceGraph ig, 
+                           const unordered_set<int>& liveAcrossCallSlots = {},
+                           const unordered_set<int>& constantSlots = {})
+{
+    ColoringResult result;
+
+    // Add interference edges between ALL pairs of constants
+    // since they are all live simultaneously at function entry
+    for (int a : constantSlots)
+    {
+        for (int b : constantSlots)
+        {
+            if (a != b) ig.add_edge(a, b);
+        }
+    }
+
+    // Constants are live throughout the entire function
+    // so they interfere with ALL other slots in the graph
+    for (int a : constantSlots)
+    {
+        for (auto& kv : ig.adj)
+        {
+            if (!constantSlots.count(kv.first))
+            {
+                ig.add_edge(a, kv.first);
+            }
+        }
+    }
+
+    // Work on a copy of adjacency so we can remove nodes
+    unordered_map<int, unordered_set<int>> adj = ig.adj;
+
+    // Pre-color constants using sorted order for determinism
+    // Constants are re-initialized at function entry so they DON'T need callee-saved 
+    // Use caller-saved registers (indices 5+) for constants to free up callee-saved
+    vector<int> sortedConsts(constantSlots.begin(), constantSlots.end());
+    sort(sortedConsts.begin(), sortedConsts.end());
+
+    // Pre-color constant slots
+    for (int i = 0; i < (int)sortedConsts.size(); i++)
+    {
+        int s = sortedConsts[i];
+        ig.add_node(s);
+        unordered_set<int> usedColors;
+
+        // Colors used by neighbors in the graph
+        for (int nb : ig.adj[s])
+            if (result.color.count(nb)) usedColors.insert(result.color[nb]);
+
+        // Colors already used by previously colored constants (indices 0..i-1)
+        for (int j = 0; j < i; j++)
+            if (result.color.count(sortedConsts[j]))
+                usedColors.insert(result.color[sortedConsts[j]]);
+
+        // Start from index 5 (caller-saved) for constants
+        // since constants are re-initialized at entry, no need for callee-saved
+        for (int c = 5; c < K; c++)
+            if (!usedColors.count(c)) { result.color[s] = c; break; }
+    }
+
+    // Track which nodes are still active
+    vector<int> stack;
+    unordered_set<int> active;
+    for (auto& kv : adj) active.insert(kv.first);
+
+    // Phase 1: Simplify
+    // Repeatedly remove nodes with degree < K
+    // If no such node exists, spill the highest-degree node
+    while (!active.empty())
+    {
+        // Find a node with degree < K
+        int chosen = -1;
+        for (int node : active)
+        {
+            // Count active neighbors only
+            int activeDegree = 0;
+            for (int neighbor : adj[node])
+            {
+                if (active.count(neighbor)) activeDegree++;
+            }
+            if (activeDegree < K)
+            {
+                chosen = node;
+                break;
+            }
+        }
+
+        if (chosen == -1)
+        {
+            // No node with degree < K - must spill
+            int maxDegree = -1;
+            for (int node : active)
+            {
+                int activeDegree = 0;
+                for (int neighbor : adj[node])
+                {
+                    if (active.count(neighbor)) activeDegree++;
+                }
+                if (activeDegree > maxDegree)
+                {
+                    maxDegree = activeDegree;
+                    chosen = node;
+                }
+            }
+            result.spilled.insert(chosen);
+        }
+
+        // Remove chosen from active and push onto stack
+        active.erase(chosen);
+        stack.push_back(chosen);
+    }
+
+    // Phase 2: Select
+    // Pop nodes off stack and assign colors
+    while (!stack.empty())
+    {
+        int node = stack.back();
+        stack.pop_back();
+
+        if (result.spilled.count(node)) continue; // skip spilled nodes
+        if (result.color.count(node)) continue; // already pre-colored, skip
+
+        // Find colors used by neighbors
+        unordered_set<int> usedColors;
+        for (int neighbor : adj[node])
+        {
+            if (result.color.count(neighbor))
+            {
+                usedColors.insert(result.color[neighbor]);
+            }
+        }
+
+        // Check if this slot is live across any call
+        // If so, only use callee-saved registers (indices 0-4)
+        bool liveAcrossCall = liveAcrossCallSlots.count(node) > 0;
+
+        // Try callee-saved first (indices 0-4)
+        bool colored = false;
+        int limit = liveAcrossCall ? 5 : K;
+        for (int c = 0;c < limit;c++)
+        {
+            if (!usedColors.count(c))
+            {
+                result.color[node] = c;
+                colored = true;
+                break;
+            }
+        }
+        
+        // If couldn't fit in callee-saved, try caller-saved
+        if (!colored)
+        {
+            for (int c = limit; c < K;c++)
+            {
+                if (!usedColors.count(c))
+                {
+                    result.color[node] = c;
+                    colored = true;
+                    break;
+                }
+            }
+        }
+
+        if (!colored)
+        {
+            result.spilled.insert(node);
+        }
+    }
+    return result;
+}
+
+void dump_coloring(const ColoringResult& result)
+{
+    printf("\n===================================================\n");
+    printf("  Register Allocation Result\n");
+    printf("===================================================\n");
+
+    if (result.spilled.empty())
+    {
+        printf("  No spills needed!\n");
+    }
+    else
+    {
+        printf("  No spills needed!\n");
+        for (int s : result.spilled) printf("%d", s);
+        printf("}\n");
+    }
+
+    printf("\n  Slot -> Register mapping:\n");
+    for (auto& kv : result.color)
+    {
+        printf("  slot[%2d] -> %s\n", kv.first, REGISTERS[kv.second].c_str());
+    }
+    printf("===================================================\n\n");
+}
+
+// x86 Assembly generation
+
+// Helper to find slots that are constants (written at parse time, never by IR)
+static unordered_set<int> find_constant_slots(struct InstructionNode* program)
+{
+    unordered_set<int> written_by_ir;
+    unordered_set<int> used_by_ir;
+
+    struct InstructionNode* pc = program;
+    while (pc != nullptr)
+    {
+        // Collect defs
+        unordered_set<int> defs;
+        get_defs(pc, defs);
+        for (int d : defs) written_by_ir.insert(d);
+
+        // Collect uses
+        unordered_set<int> uses;
+        get_uses(pc, uses);
+        for (int u : uses) used_by_ir.insert(u);
+
+        pc = pc->next;
+    }
+
+    // Constant slots: non-zero mem[] value, never written by IR, BUT used by IR
+    unordered_set<int> constants;
+    for (int i = 0; i < next_available; i++)
+    {
+        if (mem[i] != 0 && !written_by_ir.count(i) && used_by_ir.count(i))
+        {
+            constants.insert(i);
+        }
+    }
+    return constants;
+}
+
+// Insert spill loads and stores around instructions that use spilled slots
+struct InstructionNode* insert_spill_code(struct InstructionNode* program, const ColoringResult& cr)
+{
+    if (cr.spilled.empty()) return program;  // nothing to do, no spill handling
+
+    // For each spilled slot, allocate a fresh temp slot for it
+    unordered_map<int, int> spillTemp;  // spilled slot -> temp slot
+    for (int s : cr.spilled)
+    {
+        int temp = alloc_slot();
+        spillTemp[s] = temp;
+    }
+
+    // Helper to create a SPILL_LOAD node
+    auto makeLoad = {&}(int spillSlot, int tempSlot) -> InstructionNode*
+    {
+        InstructionNode* n = new InstructionNode();
+        n->type = SPILL_LOAD;
+        n->line_no = 0;
+        n->next = nullptr;
+        n->spill_inst.spill_slot = spillSlot;
+        n->spill_inst.temp_slot = tempSlot;
+        return n;
+    };
+
+    // Helper to create a SPILL_STORE node
+    auto makeStore = [&](int spillSlot, int tempSlot) -> InstructionNode*
+    {
+        InstructionNode* n = new InstructionNode();
+        n->type = SPILL_STORE;
+        n->line_no = 0;
+        n->next = nullptr;
+        n->spill_inst.spill_slot = spillSlot;
+        n->spill_inst.temp_slot = tempSlot;
+        return n;
+    };
+
+    // Helper to rewrite a slot index - if spilled, replace with temp slot
+    auto rewrite = [&](int slot) -> int
+    {
+        if (spillTemp.count(slot)) return spillTemp[slot];
+        return slot;
+    };
+
+    // Walk the IR and insert loads/stores
+    struct InstructionNode* pc = program;
+    struct InstructionNode* prev = nullptr;
+
+    while (pc != nullptr)
+    {
+        struct InstructionNode* next = pc->next;
+
+        // Find uses of spilled slots - insert SPILL_LOAD before this node
+        unordered_set<int> uses, defs;
+        get_uses(pc, uses);
+        get_defs(pc, defs);
+
+        // Insert loads for spilled slots that are used by this instruction
+        struct InstructionNode* insertBefore = nullptr;  // chain of loads to insert
+        struct InstructionNode* insertBeforeTail = nullptr; 
+
+        for (int u : uses)
+        {
+            if (!cr.spilled.count(u)) continue;
+            int temp = spillTemp[u];
+            InstructionNode* load = makeLoad(u, tmp);
+            if (!insertBefore) insertBefore = insertBeforeTail = load;
+            else { insertBeforeTail->next = load; insertBeforeTail = load; }
+        }   
+
+        // Rewrite the instruction itself to use temp slots instead of spilled slots
+        switch (pc->type)
+        {
+            case ASSIGN:
+            {
+                pc->assign_inst.operand1_index = rewrite(pc->assign_inst.operand1_index);
+                if (pc->assign_inst.op != OPERATOR_NONE)
+                {
+                    pc->assign_inst.operand2_index = rewrite(pc->assign_inst.operand2_index);
+                }
+                pc->assign_inst.left_hand_side_index = rewrite(pc->assign_inst.left_hand_side_index);
+                break;
+            }
+            case OUT:
+            {
+                pc->output_inst.var_index = rewrite(pc->output_inst.var_index);
+                break;
+            }
+            case CJMP:
+            {
+                pc->cjmp_inst.operand1_index = rewrite(pc->cjmp_inst.operand1_index);
+                pc->cjmp_inst.operand2_index = rewrite(pc->cjmp_inst.operand2_index);
+                break;
+            }
+            case IN:
+            {
+                pc->input_inst.var_index = rewrite(pc->input_inst.var_index);
+                break;
+            }
+            case CALL:
+            {
+                for (int i = 0;i < pc->call_inst.num_params;i++)
+                {
+                    pc->call_inst.arg_val_slots[i] = rewrite(pc->call_inst.arg_val_slots[i]);
+                }
+                pc->call_inst.ret_val_index;
+                break;
+            }
+            case RET:
+            {
+                pc->ret_inst.ret_val_index = rewrite(pc->ret_inst.ret_val_index);
+                break;                
+            }
+            case ARRAY_READ:
+            {
+                pc->array_inst.index_slot = rewrite(pc->array_inst.index_slot);
+                pc->array_inst.target_index = rewrite(pc->array_inst.target_index);
+                if (pc->array_inst.dynamic_base)
+                {
+                    pc->array_inst.base_index = rewrite(pc->array_inst.base_index);
+                }
+                break;
+            }
+            case ARRAY_WRITE:
+            {
+                pc->array_inst.index_slot = rewrite(pc->array_inst.index_slot);
+                pc->array_inst.target_index = rewrite(pc->array_inst.target_index);
+                if (pc->array_inst.dynamic_base)
+                {
+                    pc->array_inst.base_index = rewrite(pc->array_inst.base_index);
+                }
+                break;
+            }
+            default: break;
+        }
+
+        // Insert SPILL_STORE after this node for any spilled slots that are DEFINED
+        struct InstructionNode* insertAfter = nullptr;
+        struct InstructionNode* insertAfterTail = nullptr;
+
+        for (int d : defs)
+        {
+            if (!cr.spilled.count(d)) continue;
+            int temp = spillTemp[d];
+            InstructionNode* store = makeStore(d, temp);
+            if (!insertAfter) insertAfter = insertAfterTail = store;
+            else { insertAfterTail->next = store; insertAfterTail = store; }
+        }
+
+        // Wire everything together;
+        // prev -> [loads] -> pc -> [stores] -> next
+        if (insertBefore)
+        {
+            insertBeforeTail->next = pc;
+            if (prev) prev->next = insertBefore;
+            else program = insertBefore;
+        }
+
+        if (insertAfter)
+        {
+            insertAfterTail->next = next;
+            pc->next = insertAfter;
+            prev = insertAfterTail;
+        }
+        else
+        {
+            prev = pc;
+        }
+
+        pc = pc->next;
+    }
+    return program;
+}
+
+void generate_x86(struct InstructionNode* program, const std::string& outputFile,
+                  const ColoringResult* coloring = nullptr)
 {
     FILE* out = fopen(outputFile.c_str(), "w");
+    g_coloring = coloring;
     if (!out)
     {
         fprintf(stderr, "Error: could not open output file '%s'\n", outputFile.c_str());
         exit(1);
     }
 
-    // Pass 1: collect all jump targets and function heads 
+    // ── Pass 1: collect jump targets and function heads ───────────────────────
     map<struct InstructionNode*, int> labelMap;
     map<struct InstructionNode*, int> funcLabelMap;
-    set<struct InstructionNode*> funcHeads; // nodes that are function entry points
+    set<struct InstructionNode*> funcHeads;
     int labelCounter = 0;
 
     struct InstructionNode* pc = program;
     while (pc != nullptr)
     {
         if (pc->type == CJMP && pc->cjmp_inst.target != nullptr)
-        {
             if (!labelMap.count(pc->cjmp_inst.target))
                 labelMap[pc->cjmp_inst.target] = labelCounter++;
-        }
-        if (pc->type == JMP && pc->jmp_inst.target != nullptr)  // ← fixed: was cjmp_inst
-        {
+
+        if (pc->type == JMP && pc->jmp_inst.target != nullptr)
             if (!labelMap.count(pc->jmp_inst.target))
                 labelMap[pc->jmp_inst.target] = labelCounter++;
-        }
+
         if (pc->type == CALL && pc->call_inst.function_head != nullptr)
         {
             if (!funcLabelMap.count(pc->call_inst.function_head))
-            {
                 funcLabelMap[pc->call_inst.function_head] = labelCounter++;
-            }
             funcHeads.insert(pc->call_inst.function_head);
         }
         pc = pc->next;
     }
 
-    // find where main body ends (first function head)
-    // COllect function bodies: map from funchead -> list of nodes until RET
-    map<struct InstructionNode*, vector<struct InstructionNode*>> funcBodies;
-    for (auto& kv : funcLabelMap)
-    {
-        struct InstructionNode* head = kv.first;
-        vector<struct InstructionNode*> body;
-        struct InstructionNode* n = head;
-        while (n != nullptr)
-        {
-            body.push_back(n);
-            if (n->type == RET) break;
-            n = n->next;
-        }
-        funcBodies[head] = body;
-    }
-
-    // Stack frame size 
+    // ── Stack frame size (for main / spilled slots) ───────────────────────────
     int frameSize = (next_available + 1) * 8;
     if (frameSize % 16 != 0) frameSize += 16 - (frameSize % 16);
 
-    // Data section
+    // ── Compute per-function colorings ────────────────────────────────────────
+    map<struct InstructionNode*, ColoringResult> funcColorings;
+    for (auto& kv : funcLabelMap)
+    {
+        struct InstructionNode* fhead = kv.first;
+        int fLabel = kv.second;  // ← get label here
+        LivenessResult flr = compute_liveness(fhead);
+        InterferenceGraph fig = build_interference_graph(fhead, flr);
+        unordered_set<int> lacSlots = find_live_across_calls(fhead, flr);
+        unordered_set<int> constSlots = find_constant_slots(fhead);
+        funcColorings[fhead] = color_graph(fig, lacSlots, constSlots);
+
+        // DEBUG — print after coloring so we can see results
+        fprintf(stderr, "lacSlots for nova_f%d: ", fLabel);
+        for (int s : lacSlots) fprintf(stderr, "%d ", s);
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Final coloring:\n");
+        for (auto& kv2 : funcColorings[fhead].color)
+            fprintf(stderr, "  slot[%d] -> %s (liveAcrossCall=%d)\n",
+                kv2.first, REGISTERS[kv2.second].c_str(),
+                (int)lacSlots.count(kv2.first));
+    }
+
+    // Insert spill code for functions that have spilled slots
+    for (auto& kv : funcLabelMap)
+    {
+        struct InstructionNode* fhead = kv.first;
+        if (funcColorings.count(head) && !funcColorings[fhead].spilled.empty())
+        {
+            // Re-run liveness after spill insertion
+            fhead = insert_spill_code(fhead, funcColorings[fhead]);
+            LivenessResult flr2 = compute_liveness(fhead);
+            InterferenceGraph fig2 = build_interference_graph(fhead, flr2);
+            unoredered_set<int> lac2 = find_live_across_calls(fhead, flr2);
+            unordered_set<int> const2 = find_constant_slots(fhead);
+            funcColorings[fhead] = color_graph(fig2, lac2, const2);
+            // Update funcLabelMap to point to new head
+            funcLabelMap[fhead] = kv.second;
+        }
+    }
+
+    // ── Data section ──────────────────────────────────────────────────────────
     fprintf(out, "section .data\n");
     fprintf(out, "    fmt_out_int  db \"%%d\", 10, 0\n");
     fprintf(out, "    fmt_out_str  db \"%%s\", 0\n");
@@ -2679,16 +3510,16 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
         fprintf(out, "    strlit_%d db ", i);
         for (unsigned char ch : strMem[i])
             fprintf(out, "%d, ", (int)ch);
-        fprintf(out, "10, 0\n");  // newline + null terminator
+        fprintf(out, "10, 0\n");
     }
 
-    // Text section 
+    // ── Text section ──────────────────────────────────────────────────────────
     fprintf(out, "\nsection .text\n");
     fprintf(out, "    extern printf\n");
     fprintf(out, "    extern scanf\n");
     fprintf(out, "    global main\n\n");
 
-    // Helper methods
+    // ── emitNode lambda ───────────────────────────────────────────────────────
     auto emitNode = [&](struct InstructionNode* pc)
     {
         switch(pc->type)
@@ -2699,57 +3530,51 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
             {
                 if (pc->assign_inst.op == OPERATOR_NONE)
                 {
-                    fprintf(out, "    mov  rax, %s\n", slot(pc->assign_inst.operand1_index).c_str());
-                    fprintf(out, "    mov  %s, rax\n", slot(pc->assign_inst.left_hand_side_index).c_str());
+                    fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->assign_inst.operand1_index).c_str());
+                    fprintf(out, "    mov  %s, rax\n", reg_or_slot(pc->assign_inst.left_hand_side_index).c_str());
                 }
                 else
                 {
-                    fprintf(out, "    mov  rax, %s\n", slot(pc->assign_inst.operand1_index).c_str());
+                    fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->assign_inst.operand1_index).c_str());
                     switch(pc->assign_inst.op)
                     {
-                        case OPERATOR_PLUS:     
-                        {
-                            fprintf(out, "    add  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                        case OPERATOR_PLUS:
+                            fprintf(out, "    add  rax, %s\n", reg_or_slot(pc->assign_inst.operand2_index).c_str());
                             break;
-                        }
                         case OPERATOR_MINUS:
-                        {
-                            fprintf(out, "    sub  rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            fprintf(out, "    sub  rax, %s\n", reg_or_slot(pc->assign_inst.operand2_index).c_str());
                             break;
-                        }
                         case OPERATOR_MULT:
-                        {
-                            fprintf(out, "    imul rax, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            fprintf(out, "    imul rax, %s\n", reg_or_slot(pc->assign_inst.operand2_index).c_str());
                             break;
-                        }
                         case OPERATOR_DIV:
-                        {
                             fprintf(out, "    xor  rdx, rdx\n");
                             fprintf(out, "    cqo\n");
-                            fprintf(out, "    mov  rcx, %s\n", slot(pc->assign_inst.operand2_index).c_str());
+                            fprintf(out, "    mov  rcx, %s\n", reg_or_slot(pc->assign_inst.operand2_index).c_str());
                             fprintf(out, "    idiv rcx\n");
                             break;
-                        }
                         default: break;
                     }
-                    fprintf(out, "    mov  %s, rax\n", slot(pc->assign_inst.left_hand_side_index).c_str());
+                    fprintf(out, "    mov  %s, rax\n", reg_or_slot(pc->assign_inst.left_hand_side_index).c_str());
                 }
                 break;
             }
+
             case IN:
             {
                 fprintf(out, "    lea  rdi, [rel fmt_in_int]\n");
-                fprintf(out, "    lea  rsi, %s\n", slot(pc->input_inst.var_index).c_str());
+                fprintf(out, "    lea  rsi, %s\n", reg_or_slot(pc->input_inst.var_index).c_str());
                 fprintf(out, "    xor  eax, eax\n");
                 fprintf(out, "    call scanf\n");
                 break;
             }
+
             case OUT:
             {
                 if (!pc->output_inst.is_string)
                 {
                     fprintf(out, "    lea  rdi, [rel fmt_out_int]\n");
-                    fprintf(out, "    mov  rsi, %s\n", slot(pc->output_inst.var_index).c_str());
+                    fprintf(out, "    mov  rsi, %s\n", reg_or_slot(pc->output_inst.var_index).c_str());
                     fprintf(out, "    xor  eax, eax\n");
                     fprintf(out, "    call printf\n");
                 }
@@ -2764,10 +3589,11 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 }
                 break;
             }
+
             case CJMP:
             {
-                fprintf(out, "    mov  rax, %s\n", slot(pc->cjmp_inst.operand1_index).c_str());
-                fprintf(out, "    cmp  rax, %s\n", slot(pc->cjmp_inst.operand2_index).c_str());
+                fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->cjmp_inst.operand1_index).c_str());
+                fprintf(out, "    cmp  rax, %s\n", reg_or_slot(pc->cjmp_inst.operand2_index).c_str());
                 int targetLabel = labelMap[pc->cjmp_inst.target];
                 switch (pc->cjmp_inst.condition_op)
                 {
@@ -2783,53 +3609,81 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 }
                 break;
             }
+
             case JMP:
             {
                 int targetLabel = labelMap[pc->jmp_inst.target];
-                fprintf(out, "   jmp  .L%d\n", targetLabel);
+                fprintf(out, "    jmp  .L%d\n", targetLabel);
                 break;
             }
+
             case CALL:
             {
-                // Copy args into param slots before call
+                // Get callee's coloring if available
+                const ColoringResult* callee_cr = nullptr;
+                if (funcColorings.count(pc->call_inst.function_head))
+                {
+                    callee_cr = &funcColorings[pc->call_inst.function_head];
+                }
                 for (int i = 0; i < pc->call_inst.num_params; i++)
                 {
-                    fprintf(out, "    mov  rax, %s\n", slot(pc->call_inst.arg_val_slots[i]).c_str());
-                    fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.param_slots[i]).c_str());
+                    string argLoc   = reg_or_slot(pc->call_inst.arg_val_slots[i]);
+
+                    string paramLoc;
+                    int pSlot = pc->call_inst.param_slots[i];
+                    if (callee_cr && callee_cr->color.count(pSlot))
+                    {
+                        paramLoc = REGISTERS[callee_cr->color.at(pSlot)];
+                    }
+                    else
+                    {
+                        paramLoc = slot(pSlot);
+                    }
+                    if (argLoc != paramLoc)
+                    {
+                        fprintf(out, "    mov  rax, %s\n", argLoc.c_str());
+                        fprintf(out, "    mov  %s, rax\n", paramLoc.c_str());
+                    }
                 }
                 int funcLabel = funcLabelMap[pc->call_inst.function_head];
                 fprintf(out, "    call nova_f%d\n", funcLabel);
-                // Store return value from rax
-                fprintf(out, "    mov  %s, rax\n", slot(pc->call_inst.ret_val_index).c_str());
+                fprintf(out, "    mov  %s, rax\n", reg_or_slot(pc->call_inst.ret_val_index).c_str());
                 break;
             }
+
             case RET:
             {
-                // Move return value into rax (System V ABI)
-                fprintf(out, "    mov  rax, %s\n", slot(pc->ret_inst.ret_val_index).c_str());
+                fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->ret_inst.ret_val_index).c_str());
+                // Restore callee-saved registers in reverse order
+                if (g_coloring)
+                {
+                    static const vector<string> CALLEE_SAVED = {
+                        "rbx", "r12", "r13", "r14", "r15"
+                    };
+                    for (int i = (int)CALLEE_SAVED.size() - 1; i >= 0; i--)
+                        fprintf(out, "    pop  %s\n", CALLEE_SAVED[i].c_str());
+                }
                 fprintf(out, "    leave\n");
                 fprintf(out, "    ret\n");
                 break;
             }
+
             case ALLOC:
-            {
                 fprintf(out, "    ; ALLOC base=slot[%d] size=slot[%d]\n",
                     pc->alloc_inst.base_slot, pc->alloc_inst.size_slot);
                 break;
-            }
+
             case ARRAY_READ:
             {
-                if (pc->array_inst.dynamic_base) 
+                if (pc->array_inst.dynamic_base)
                 {
-                    // base_index slot contains the base index value at runtime
-                    fprintf(out, "    mov  rax, %s\n", slot(pc->array_inst.base_index).c_str()); // rax = base slot index
-                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str()); // rcx = idx
+                    fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->array_inst.base_index).c_str());
+                    fprintf(out, "    mov  rcx, %s\n", reg_or_slot(pc->array_inst.index_slot).c_str());
                     fprintf(out, "    add  rax, rcx\n");
                 }
                 else
                 {
-                    // base_index IS the base index directly
-                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    mov  rcx, %s\n", reg_or_slot(pc->array_inst.index_slot).c_str());
                     fprintf(out, "    mov  rax, %d\n", pc->array_inst.base_index);
                     fprintf(out, "    add  rax, rcx\n");
                 }
@@ -2837,21 +3691,22 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 fprintf(out, "    imul rax, 8\n");
                 fprintf(out, "    neg  rax\n");
                 fprintf(out, "    mov  rdx, [rbp + rax]\n");
-                fprintf(out, "    mov  %s, rdx\n", slot(pc->array_inst.target_index).c_str());
+                fprintf(out, "    mov  %s, rdx\n", reg_or_slot(pc->array_inst.target_index).c_str());
                 break;
             }
+
             case ARRAY_WRITE:
             {
-                fprintf(out, "    mov  rdx, %s\n", slot(pc->array_inst.target_index).c_str());
-                if (pc->array_inst.dynamic_base) 
+                fprintf(out, "    mov  rdx, %s\n", reg_or_slot(pc->array_inst.target_index).c_str());
+                if (pc->array_inst.dynamic_base)
                 {
-                    fprintf(out, "    mov  rax, %s\n", slot(pc->array_inst.base_index).c_str());
-                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    mov  rax, %s\n", reg_or_slot(pc->array_inst.base_index).c_str());
+                    fprintf(out, "    mov  rcx, %s\n", reg_or_slot(pc->array_inst.index_slot).c_str());
                     fprintf(out, "    add  rax, rcx\n");
                 }
-                else 
+                else
                 {
-                    fprintf(out, "    mov  rcx, %s\n", slot(pc->array_inst.index_slot).c_str());
+                    fprintf(out, "    mov  rcx, %s\n", reg_or_slot(pc->array_inst.index_slot).c_str());
                     fprintf(out, "    mov  rax, %d\n", pc->array_inst.base_index);
                     fprintf(out, "    add  rax, rcx\n");
                 }
@@ -2861,45 +3716,55 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 fprintf(out, "    mov  [rbp + rax], rdx\n");
                 break;
             }
-            default: 
+
+            case SPILL_LOAD:
             {
-                fprintf(out, "    ; unhandled IR type %d\n", pc->type);
+                // Load from stack into temp register
+                fprintf(out, "    mov  rax, %s\n",
+                    slot(pc->call_inst.spill_slot).c_str());
+                fprintf(out, "    mov  %s, rax\n",
+                    reg_or_slot(pc->spill_inst.temp_slot).c_str());
                 break;
             }
+            case SPILL_STORE:
+            {
+                // Store from temp register back to stack
+                fprintf(out, "    mov  rax, %s\n",
+                    reg_or_slot(pc->call_inst.temp_slot).c_str());
+                fprintf(out, "    mov %s, rax\n",
+                    slot(pc->spill_inst.spill_slot).c_str());
+                break;
+            }
+
+            default:
+                fprintf(out, "    ; unhandled IR type %d\n", pc->type);
+                break;
         }
     };
 
-    // main entry 
+    // ── main entry ────────────────────────────────────────────────────────────
     fprintf(out, "main:\n");
     fprintf(out, "    push rbp\n");
     fprintf(out, "    mov  rbp, rsp\n");
     fprintf(out, "    sub  rsp, %d\n\n", frameSize);
 
-    // Initialize constant slots
     fprintf(out, "    ; initialize constant slots\n");
     for (int i = 0; i < next_available; i++)
-    {
         if (mem[i] != 0)
-        {
-            fprintf(out, "    mov  %s, %d\n", slot(i).c_str(), mem[i]);
-        }
-    }
+            fprintf(out, "    mov  %s, %d\n", reg_or_slot(i).c_str(), mem[i]);
     fprintf(out, "\n");
 
-    // EMIT main body - stop when we hit the first function head
+    // ── Emit main body ────────────────────────────────────────────────────────
     set<int> emittedLabels;
     pc = program;
     while (pc != nullptr)
     {
-        // skip nodes that belong to function bodies
         if (funcHeads.count(pc))
-        {  
-            // skip entire function body
+        {
             while (pc != nullptr && pc->type != RET) pc = pc->next;
-            if (pc != nullptr) pc = pc->next;  // skip RET
+            if (pc != nullptr) pc = pc->next;
             continue;
         }
-        // EMIT label if jump target
         if (labelMap.count(pc))
         {
             int lbl = labelMap[pc];
@@ -2909,38 +3774,87 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 emittedLabels.insert(lbl);
             }
         }
-
         emitNode(pc);
         pc = pc->next;
     }
 
-
-    // ── Main exit ──────────────────────────────────────────────────────────
     fprintf(out, "\n    ; exit\n");
     fprintf(out, "    xor  eax, eax\n");
     fprintf(out, "    leave\n");
     fprintf(out, "    ret\n");
 
-    // EMIT each function as a seperate labeled block
+    // ── Emit each function ────────────────────────────────────────────────────
+    static const vector<string> CALLEE_SAVED = {
+        "rbx", "r12", "r13", "r14", "r15"
+    };
+
     for (auto& kv : funcLabelMap)
     {
         struct InstructionNode* head = kv.first;
         int funcLabel = kv.second;
 
+        // Switch to this function's coloring
+        g_coloring = funcColorings.count(head) ? &funcColorings[head] : coloring;
+
         fprintf(out, "\n; ── function nova_f%d ─────────────────────────────────\n", funcLabel);
         fprintf(out, "nova_f%d:\n", funcLabel);
         fprintf(out, "    push rbp\n");
         fprintf(out, "    mov  rbp, rsp\n");
-        fprintf(out, "    sub  rsp, %d\n\n", frameSize);
 
-        // Emit function body nodes - stop at last RET or next function head
-        struct InstructionNode* fn = head;
-       
-        // Now emit up to and including RET
+        // Save callee-saved registers ONCE — only if this function has coloring
+        if (funcColorings.count(head))
+        {
+            for (auto& reg : CALLEE_SAVED)
+                fprintf(out, "    push %s\n", reg.c_str());
+        }
+
+        // Compute frame size — only spilled slots need stack space
+        int funcFrameSize = 0;
+        if (funcColorings.count(head))
+        {
+            for (int s : funcColorings[head].spilled)
+                funcFrameSize = max(funcFrameSize, (s + 1) * 8);
+        }
+        else
+        {
+            funcFrameSize = frameSize;
+        }
+        if (funcFrameSize % 16 != 0) funcFrameSize += 16 - (funcFrameSize % 16);
+        if (funcFrameSize > 0)
+            fprintf(out, "    sub  rsp, %d\n", funcFrameSize);
+
+        // Initialize constant slots into registers
+        unordered_set<int> constSlots = find_constant_slots(head);
+
+        // Debug
+        fprintf(stderr, "Function nova_f%d constant slots: ", funcLabel);
+        for (int s : constSlots)
+        {
+            fprintf(stderr, "slot[%d]=%d", s, mem[s]);
+        }
+        fprintf(stderr, "\n");
+        fprintf(stderr, "Their colors: ");
+        for (int s : constSlots)
+        {
+            if (funcColorings[head].color.count(s))
+            {
+                fprintf(stderr, "slot[%d]->%s ", s, REGISTERS[funcColorings[head].color.at(s)].c_str());
+            }
+        }
+        fprintf(stderr, "\n");
+
+        fprintf(out, "    ; initialize constants\n");
+        for (int s : constSlots)
+            if (funcColorings.count(head) && funcColorings[head].color.count(s))
+                fprintf(out, "    mov  %s, %d\n", reg_or_slot(s).c_str(), mem[s]);
+        fprintf(out, "\n");
+
+        // Emit function body
         bool afterRet = false;
+        struct InstructionNode* fn = head;
         while (fn != nullptr)
         {
-            if (fn != head && funcHeads.count(fn)) break; // hit next function
+            if (fn != head && funcHeads.count(fn)) break;
 
             if (labelMap.count(fn))
             {
@@ -2953,14 +3867,15 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                 afterRet = false;
             }
 
-            // Only emit instruction if not in dead code after ret
             if (!afterRet) emitNode(fn);
-            if (fn->type == RET) afterRet = true;
-
+            if (fn->type == RET) afterRet = true; 
             fn = fn->next;
         }
         fprintf(out, "\n");
     }
+
+    // Restore main coloring
+    g_coloring = coloring;
 
     fclose(out);
     printf("assembly written to: %s\n", outputFile.c_str());
@@ -3188,6 +4103,33 @@ int main(int argc, char* argv[])
     // parse 
     struct InstructionNode* program = parse_generate_intermediate_representation();
 
+    if (flag_dump_ir)
+    {
+        LivenessResult lr = compute_liveness(program);
+        dump_liveness(program, lr);
+        InterferenceGraph ig = build_interference_graph(program, lr);
+        dump_interference_graph(ig);
+        ColoringResult cr = color_graph(ig);
+        dump_coloring(cr);
+
+        // Also test on fib function body if it exists
+        // Liveness + interference for FIB function
+        if (functionTable.count("fib"))
+        {
+            fprintf(stderr, "\n-- fib function liveness --\n");
+            LivenessResult lr2 = compute_liveness(functionTable["fib"]);
+            dump_liveness(functionTable["fib"], lr2);
+            InterferenceGraph ig2 = build_interference_graph(functionTable["fib"], lr2);
+            dump_interference_graph(ig2);
+            ColoringResult cr2 = color_graph(ig2);
+            dump_coloring(cr2);
+
+            // Dump fib IR
+            printf("\n-- fib IR \n");
+            dump_ir(functionTable["fib"]);
+        }
+    }
+
     // // Temporary debug — check if symbolTable has anything
     // fprintf(stderr, "DEBUG symbolTable size: %d\n", (int)symbolTable.size());
     // for (auto& kv : symbolTable)
@@ -3241,7 +4183,13 @@ int main(int argc, char* argv[])
         if (dot != string::npos) asmFile = asmFile.substr(0, dot);
         asmFile += ".asm";
 
-        generate_x86(program, asmFile);
+        // Running register allocation for main and all functions
+        LivenessResult lr_main = compute_liveness(program);
+        InterferenceGraph ig_main = build_interference_graph(program, lr_main);
+        ColoringResult cr_main = color_graph(ig_main);
+
+        // use only main coloring
+        generate_x86(program, asmFile, &cr_main);
 
         if (flag_build)
         {
