@@ -3,12 +3,15 @@
  *
  * Setup:
  *   1. Build binary:   g++ -o compiler compiler.cc lexer.cc inputbuf.cc parser2.cc
- *   2. Install deps:   npm install express cors express-rate-limit ws
+ *   2. Install deps:   npm install express cors express-rate-limit ws dotenv bcryptjs jsonwebtoken @aws-sdk/client-dynamodb @aws-sdk/lib-dynamodb @aws-sdk/client-s3
  *   3. Start:          node server.js
  */
 
+require("dotenv").config();
+
 const express    = require("express");
 const cors       = require("cors");
+const crypto     = require("crypto");
 const { execFile, spawn } = require("child_process");
 const fs         = require("fs");
 const path       = require("path");
@@ -16,8 +19,14 @@ const os         = require("os");
 const rateLimit  = require("express-rate-limit");
 const http       = require("http");
 const WebSocket  = require("ws");
-const { types } = require("util");
-const { debug } = require("console");
+const { types }  = require("util");
+const { debug }  = require("console");
+const bcrypt     = require("bcryptjs");
+const jwt        = require("jsonwebtoken");
+
+const { DynamoDBClient, CreateTableCommand, DescribeTableCommand } = require("@aws-sdk/client-dynamodb");
+const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 
 // node-pty is optional — install with: npm install node-pty
 // Required for the Terminal tab in the web IDE.
@@ -25,7 +34,71 @@ let pty = null;
 try { pty = require('node-pty'); } catch (_) {}
 
 const app    = express();
-const PORT   = 3001;
+const PORT   = parseInt(process.env.PORT || "3001", 10);
+
+// ── AWS Clients ───────────────────────────────────────────────────────────────
+
+const AWS_REGION  = process.env.AWS_REGION        || "us-east-1";
+const S3_BUCKET   = process.env.S3_BUCKET         || "novacomp-files";
+const USERS_TABLE = process.env.DYNAMODB_TABLE_USERS || "novacomp-users";
+const FILES_TABLE = "novacomp-files-meta";
+const JWT_SECRET  = process.env.JWT_SECRET         || "novacomp-secret-key";
+
+const dynamoRaw = new DynamoDBClient({ region: AWS_REGION });
+const dynamo    = DynamoDBDocumentClient.from(dynamoRaw);
+const s3        = new S3Client({ region: AWS_REGION });
+
+// ── DynamoDB Table Bootstrap ──────────────────────────────────────────────────
+
+async function ensureTables() {
+  const tables = [
+    {
+      TableName: USERS_TABLE,
+      KeySchema: [{ AttributeName: "email", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "email", AttributeType: "S" }],
+      BillingMode: "PAY_PER_REQUEST",
+    },
+    {
+      TableName: FILES_TABLE,
+      KeySchema: [
+        { AttributeName: "userId",   KeyType: "HASH" },
+        { AttributeName: "filePath", KeyType: "RANGE" },
+      ],
+      AttributeDefinitions: [
+        { AttributeName: "userId",   AttributeType: "S" },
+        { AttributeName: "filePath", AttributeType: "S" },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    },
+  ];
+
+  for (const params of tables) {
+    try {
+      await dynamoRaw.send(new DescribeTableCommand({ TableName: params.TableName }));
+      log("info", "DynamoDB table already exists", { table: params.TableName });
+    } catch (e) {
+      if (e.name === "ResourceNotFoundException") {
+        await dynamoRaw.send(new CreateTableCommand(params));
+        log("info", "DynamoDB table created", { table: params.TableName });
+      } else {
+        log("error", "DynamoDB DescribeTable failed", { table: params.TableName, error: e.message });
+      }
+    }
+  }
+}
+
+// ── JWT Auth Middleware ───────────────────────────────────────────────────────
+
+function requireAuth(req, res, next) {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ error: "Unauthorized" });
+  try {
+    req.user = jwt.verify(token, JWT_SECRET);
+    next();
+  } catch {
+    res.status(401).json({ error: "Invalid token" });
+  }
+}
 
 const BINARY = path.resolve(
   __dirname,
@@ -74,14 +147,12 @@ function log(level, message, meta = {}) {
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
 
-app.use(express.static(__dirname));
-
 app.get("/", (req, res) => {
-  res.sendFile(path.join(__dirname, "compiler_ui.html"));
-});
-app.get("/landing", (req, res) => {
   res.sendFile(path.join(__dirname, "landing.html"));
 });
+
+app.use(express.static(path.join(__dirname, 'dist')));
+app.use(express.static(__dirname));
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 
 const limiter = rateLimit({
@@ -114,6 +185,62 @@ app.use((req, _res, next) => {
     });
   }
   next();
+});
+
+// ── Auth Endpoints ────────────────────────────────────────────────────────────
+
+// POST /auth/signup  { email, password }
+app.post("/auth/signup", async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error: "email and password required" });
+
+  try {
+    const existing = await dynamo.send(new GetCommand({ TableName: USERS_TABLE, Key: { email } }));
+    if (existing.Item) return res.status(409).json({ error: "Email already registered" });
+
+    const userId       = crypto.randomUUID();
+    const passwordHash = await bcrypt.hash(password, 10);
+    const createdAt    = new Date().toISOString();
+
+    await dynamo.send(new PutCommand({
+      TableName: USERS_TABLE,
+      Item: { email, userId, passwordHash, createdAt },
+    }));
+
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { userId, email, createdAt } });
+  } catch (e) {
+    log("error", "Signup failed", { error: e.message });
+    res.status(500).json({ error: "Signup failed" });
+  }
+});
+
+// POST /auth/login  { email, password }
+app.post("/auth/login", async (req, res) => {
+  const { email, password } = req.body || {};
+  if (!email || !password)
+    return res.status(400).json({ error: "email and password required" });
+
+  try {
+    const result = await dynamo.send(new GetCommand({ TableName: USERS_TABLE, Key: { email } }));
+    if (!result.Item) return res.status(401).json({ error: "Invalid credentials" });
+
+    const valid = await bcrypt.compare(password, result.Item.passwordHash);
+    if (!valid) return res.status(401).json({ error: "Invalid credentials" });
+
+    const { userId, createdAt } = result.Item;
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+    res.json({ token, user: { userId, email, createdAt } });
+  } catch (e) {
+    log("error", "Login failed", { error: e.message });
+    res.status(500).json({ error: "Login failed" });
+  }
+});
+
+// GET /auth/me  (requires Bearer token)
+app.get("/auth/me", requireAuth, (req, res) => {
+  res.json({ user: req.user });
 });
 
 // ── Stderr Filter ─────────────────────────────────────────────────────────────
@@ -725,6 +852,94 @@ app.get("/health", (_req, res) => {
   });
 });
 
+// ── S3 File Endpoints (auth-protected) ───────────────────────────────────────
+
+// GET /files — list user's files (S3 userId/ prefix)
+app.get("/files", requireAuth, async (req, res) => {
+  try {
+    const { Contents = [] } = await s3.send(new ListObjectsV2Command({
+      Bucket: S3_BUCKET,
+      Prefix: `${req.user.userId}/`,
+    }));
+    const files = Contents.map(obj => ({
+      fileName:  obj.Key.replace(`${req.user.userId}/`, ""),
+      updatedAt: obj.LastModified,
+    }));
+    res.json({ files });
+  } catch (e) {
+    log("error", "Failed to list files", { error: e.message });
+    res.status(500).json({ error: "Failed to list files" });
+  }
+});
+
+// POST /files/save  { fileName, content }
+app.post("/files/save", requireAuth, async (req, res) => {
+  const { fileName, content } = req.body || {};
+  if (!fileName || content === undefined)
+    return res.status(400).json({ error: "fileName and content required" });
+
+  const safeName  = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key       = `${req.user.userId}/${safeName}`;
+  const updatedAt = new Date().toISOString();
+
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket:      S3_BUCKET,
+      Key:         key,
+      Body:        content,
+      ContentType: "text/plain",
+    }));
+    await dynamo.send(new PutCommand({
+      TableName: FILES_TABLE,
+      Item: { userId: req.user.userId, filePath: safeName, fileName: safeName, updatedAt },
+    }));
+    res.json({ ok: true, fileName: safeName, updatedAt });
+  } catch (e) {
+    log("error", "Failed to save file", { error: e.message });
+    res.status(500).json({ error: "Failed to save file" });
+  }
+});
+
+// GET /files/load?fileName=x
+app.get("/files/load", requireAuth, async (req, res) => {
+  const fileName = req.query.fileName;
+  if (!fileName) return res.status(400).json({ error: "fileName required" });
+
+  const safeName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key      = `${req.user.userId}/${safeName}`;
+
+  try {
+    const { Body } = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }));
+    const content  = await Body.transformToString();
+    res.json({ content, fileName: safeName });
+  } catch (e) {
+    if (e.name === "NoSuchKey") return res.status(404).json({ error: "File not found" });
+    log("error", "Failed to load file", { error: e.message });
+    res.status(500).json({ error: "Failed to load file" });
+  }
+});
+
+// DELETE /files/delete?fileName=x
+app.delete("/files/delete", requireAuth, async (req, res) => {
+  const fileName = req.query.fileName;
+  if (!fileName) return res.status(400).json({ error: "fileName required" });
+
+  const safeName = path.basename(fileName).replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key      = `${req.user.userId}/${safeName}`;
+
+  try {
+    await s3.send(new DeleteObjectCommand({ Bucket: S3_BUCKET, Key: key }));
+    await dynamo.send(new DeleteCommand({
+      TableName: FILES_TABLE,
+      Key: { userId: req.user.userId, filePath: safeName },
+    }));
+    res.json({ ok: true });
+  } catch (e) {
+    log("error", "Failed to delete file", { error: e.message });
+    res.status(500).json({ error: "Failed to delete file" });
+  }
+});
+
 // ── Error Boundaries ──────────────────────────────────────────────────────────
 
 app.use((err, req, res, _next) => {
@@ -852,10 +1067,15 @@ const wss     = new WebSocket.Server({ noServer: true });  // REPL
 const termWss = new WebSocket.Server({ noServer: true });  // Terminal
 
 server.on('upgrade', (req, socket, head) => {
-  const pathname = req.url.split('?')[0];
+  const url      = new URL(req.url, 'http://localhost');
+  const pathname = url.pathname;
   if (pathname === '/repl') {
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
   } else if (pathname === '/terminal') {
+    try {
+      const payload = jwt.verify(url.searchParams.get('token') || '', JWT_SECRET);
+      req._userId = payload.userId;
+    } catch { req._userId = null; }
     termWss.handleUpgrade(req, socket, head, ws => termWss.emit('connection', ws, req));
   } else {
     socket.destroy();
@@ -916,10 +1136,15 @@ wss.on("connection", (ws, req) => {
 // It cannot access anything outside that folder — no real shell is spawned.
 // Supports: ls, cd, pwd, cat, mkdir, rm, cp, mv, touch, echo, novacomp, clear, help
 
-function createShellSession(ws) {
-  log('info', 'Shell session started');
+async function createShellSession(ws, userId) {
+  const userWorkspace = userId
+    ? path.join(WORKSPACE, userId.replace(/[^a-zA-Z0-9-]/g, ''))
+    : WORKSPACE;
+  fs.mkdirSync(userWorkspace, { recursive: true });
 
-  let cwd        = WORKSPACE;   // current directory (absolute)
+  log('info', 'Shell session started', { userId: userId || 'anonymous' });
+
+  let cwd        = userWorkspace;   // current directory (absolute)
   let inputBuf   = '';           // typed-but-not-submitted characters
   let history    = [];           // command history
   let histIdx    = -1;           // -1 = not navigating
@@ -937,10 +1162,10 @@ function createShellSession(ws) {
     if (ws.readyState === WebSocket.OPEN)
       ws.send(JSON.stringify({ __nc: 'fs', op, paths }));
   }
-  function rel(p) { return path.relative(WORKSPACE, p).replace(/\\/g, '/'); }
+  function rel(p) { return path.relative(userWorkspace, p).replace(/\\/g, '/'); }
 
   function prompt() {
-    const rel = path.relative(WORKSPACE, cwd).replace(/\\/g, '/');
+    const rel = path.relative(userWorkspace, cwd).replace(/\\/g, '/');
     return `\x1b[32mnovacomp\x1b[0m:\x1b[34m${rel ? '~/' + rel : '~'}\x1b[0m$ `;
   }
 
@@ -957,10 +1182,10 @@ function createShellSession(ws) {
   function safe(p) {
     if (!p || p === '~') return WORKSPACE;
     const abs = path.isAbsolute(p)
-      ? path.join(WORKSPACE, p)          // treat /foo as ~/foo
+      ? path.join(userWorkspace, p)      // treat /foo as ~/foo
       : path.resolve(cwd, p);
     const norm = path.resolve(abs);
-    if (norm !== WORKSPACE && !norm.startsWith(WORKSPACE + path.sep)) return null;
+    if (norm !== userWorkspace && !norm.startsWith(userWorkspace + path.sep)) return null;
     return norm;
   }
 
@@ -1124,7 +1349,7 @@ function createShellSession(ws) {
     // When JIT lands (v10), this becomes a bytecode (.nbc) file.
     const exePath = path.join(cwd, outName);
     const meta = {
-      source:    path.relative(WORKSPACE, p).replace(/\\/g, '/'),
+      source:    path.relative(userWorkspace, p).replace(/\\/g, '/'),
       extraArgs,
       novacomp:  '1.0',
       compiled:  new Date().toISOString(),
@@ -1303,7 +1528,31 @@ function createShellSession(ws) {
     }
   }
 
-  // ── welcome + initial prompt ──────────────────────────────────────────────
+  // ── sync user's S3 files into their workspace, then show prompt ──────────
+
+  if (userId) {
+    send('\x1b[2mLoading your workspace…\x1b[0m');
+    try {
+      const { Contents = [] } = await s3.send(new ListObjectsV2Command({
+        Bucket: S3_BUCKET, Prefix: `${userId}/`,
+      }));
+      for (const obj of Contents) {
+        const fileName = path.basename(obj.Key.replace(`${userId}/`, ''));
+        if (!fileName) continue;
+        const localPath = path.join(userWorkspace, fileName);
+        try {
+          if (!fs.existsSync(localPath) ||
+              new Date(obj.LastModified) > fs.statSync(localPath).mtime) {
+            const { Body } = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: obj.Key }));
+            fs.writeFileSync(localPath, await Body.transformToString(), 'utf8');
+          }
+        } catch (_) {}
+      }
+    } catch (e) {
+      log('error', 'Terminal S3 sync failed', { error: e.message });
+    }
+    send('\r\x1b[K'); // erase the "Loading" line
+  }
 
   send('\x1b[32mNovaComp IDE\x1b[0m\r\n');
   showPrompt();
@@ -1311,7 +1560,12 @@ function createShellSession(ws) {
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
-    if (msg.type === 'input') processInput(msg.data).catch(() => {});
+    if (msg.type === 'input') {
+      processInput(msg.data).catch(() => {});
+    } else if (msg.type === 'write' && msg.fileName) {
+      const p = safe(path.basename(String(msg.fileName)));
+      if (p) try { fs.writeFileSync(p, String(msg.content ?? ''), 'utf8'); } catch (_) {}
+    }
   });
 
   ws.on('close', () => log('info', 'Shell session closed'));
@@ -1321,13 +1575,59 @@ function createShellSession(ws) {
 // ── Terminal connection handler ───────────────────────────────────────────────
 
 termWss.on('connection', (ws, req) => {
-  log('info', 'Terminal connection', { ip: req.socket.remoteAddress });
-  createShellSession(ws);
+  const userId = req._userId || null;
+  log('info', 'Terminal connection', { ip: req.socket.remoteAddress, userId });
+  createShellSession(ws, userId);
+});
+
+// ── Share endpoints ───────────────────────────────────────────────────────────
+
+// POST /api/share  { code }
+app.post('/api/share', async (req, res) => {
+  const { code } = req.body || {};
+  if (!code || typeof code !== 'string')
+    return res.status(400).json({ error: 'code required' });
+  if (code.length > MAX_SOURCE_LENGTH)
+    return res.status(400).json({ error: `Code too long (max ${MAX_SOURCE_LENGTH} chars)` });
+
+  const id  = crypto.randomUUID();
+  const key = `shares/${id}`;
+  try {
+    await s3.send(new PutObjectCommand({
+      Bucket: S3_BUCKET, Key: key, Body: code, ContentType: 'text/plain',
+    }));
+    res.json({ id });
+  } catch (e) {
+    log('error', 'Share save failed', { error: e.message });
+    res.status(500).json({ error: 'Failed to create share' });
+  }
+});
+
+// GET /api/share/:id  (no auth required)
+app.get('/api/share/:id', async (req, res) => {
+  const { id } = req.params;
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id))
+    return res.status(400).json({ error: 'invalid id' });
+  try {
+    const { Body } = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: `shares/${id}` }));
+    const code = await Body.transformToString();
+    res.json({ code, id });
+  } catch (e) {
+    if (e.name === 'NoSuchKey') return res.status(404).json({ error: 'Share not found' });
+    res.status(500).json({ error: 'Failed to load share' });
+  }
+});
+
+// ── SPA fallback — serve React app for all non-API routes ────────────────────
+app.use((req, res) => {
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 // ── Start (use server.listen instead of app.listen for WebSocket support) ────
 
 server.listen(PORT, () => {
+  ensureTables().catch(e => log("error", "DynamoDB table init failed", { error: e.message }));
+
   log("info", "NovaComp server started", {
     port:            PORT,
     binary:          BINARY,
