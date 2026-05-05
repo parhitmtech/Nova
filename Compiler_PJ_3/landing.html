@@ -149,7 +149,7 @@ footer{position:relative;z-index:10;border-top:1px solid var(--border);padding:4
   <p class="hero-subtitle">ML-First Compiled Language</p>
   <p class="hero-desc">A complete compiler and runtime for Nova — a statically-typed language built for machine learning. Tensor ops, tape-based autograd, CUDA FFI, and a full NovaTorch stdlib. Write ML code that compiles to optimized IR in under 50ms.</p>
   <div class="hero-actions">
-    <a href="http://localhost:3001" class="btn-primary">
+    <a href="/ide" class="btn-primary">
       <svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><polygon points="0,0 12,7 0,14"/></svg>
       Try Now &mdash; Free
     </a>
@@ -240,7 +240,7 @@ footer{position:relative;z-index:10;border-top:1px solid var(--border);padding:4
   <h2 class="cta-title fade-up">Start building <em>now.</em></h2>
   <p class="cta-text fade-up" style="transition-delay:.1s">No installation. No configuration. Open the IDE, write Nova, and run ML training directly in your browser.</p>
   <div style="display:flex;gap:16px;justify-content:center;flex-wrap:wrap;" class="fade-up">
-    <a href="http://localhost:3001" class="btn-primary"><svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><polygon points="0,0 12,7 0,14"/></svg>Open the IDE</a>
+    <a href="/ide" class="btn-primary"><svg width="12" height="14" viewBox="0 0 12 14" fill="currentColor"><polygon points="0,0 12,7 0,14"/></svg>Open the IDE</a>
     <button class="btn-secondary" onclick="openModal('signup')">Create Account</button>
   </div>
 </div>
@@ -263,17 +263,13 @@ footer{position:relative;z-index:10;border-top:1px solid var(--border);padding:4
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="login-email" placeholder="you@example.com"></div>
       <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="login-password" placeholder="&bull;&bull;&bull;&bull;&bull;&bull;&bull;&bull;"></div>
       <div class="form-error" id="login-error">Invalid email or password.</div>
-      <button class="form-submit" onclick="handleLogin()">SIGN IN &rarr; OPEN IDE</button>
-      <div class="form-divider">&mdash; or continue as guest &mdash;</div>
-      <a href="http://localhost:3001" class="btn-secondary" style="justify-content:center;font-size:12px;padding:12px;">Continue without account</a>
+      <button class="form-submit" id="login-btn" onclick="handleLogin()">SIGN IN &rarr; OPEN IDE</button>
     </div>
     <div id="form-signup" class="modal-form" style="display:none">
-      <div class="form-group"><label class="form-label">Username</label><input class="form-input" type="text" id="signup-username" placeholder="nova_engineer"></div>
       <div class="form-group"><label class="form-label">Email</label><input class="form-input" type="email" id="signup-email" placeholder="you@example.com"></div>
       <div class="form-group"><label class="form-label">Password</label><input class="form-input" type="password" id="signup-password" placeholder="Min 8 characters"></div>
       <div class="form-error" id="signup-error">Please fill in all fields.</div>
-      <button class="form-submit" onclick="handleSignup()">CREATE ACCOUNT</button>
-      <div class="form-divider">Each account gets a dedicated workspace + Linux environment.</div>
+      <button class="form-submit" id="signup-btn" onclick="handleSignup()">CREATE ACCOUNT</button>
     </div>
   </div>
 </div>
@@ -353,15 +349,50 @@ function animCount(el,target,suffix){let v=0;const inc=target/(2000/16);const t=
 const statsObs=new IntersectionObserver(es=>{if(es[0].isIntersecting){animCount(document.getElementById('s1'),500,'M');animCount(document.getElementById('s2'),40,'+');animCount(document.getElementById('s3'),16,'ms');animCount(document.getElementById('s4'),6,'');statsObs.disconnect();}},{threshold:.5});
 statsObs.observe(document.querySelector('.stats-bar'));
 
+// Redirect if already logged in
+(function(){
+  try{const t=localStorage.getItem('novacomp_token');if(t){const p=JSON.parse(atob(t.split('.')[1]));if(p.exp*1000>Date.now())window.location.href='/ide';}}catch{}
+})();
+
 // Auth
 let curTab='login';
 function openModal(tab){document.getElementById('auth-modal').classList.add('active');switchTab(tab);}
 function closeModal(){document.getElementById('auth-modal').classList.remove('active');}
 function switchTab(tab){curTab=tab;document.getElementById('form-login').style.display=tab==='login'?'flex':'none';document.getElementById('form-signup').style.display=tab==='signup'?'flex':'none';document.getElementById('tab-login').classList.toggle('active',tab==='login');document.getElementById('tab-signup').classList.toggle('active',tab==='signup');document.getElementById('modal-title').textContent=tab==='login'?'Welcome back':'Create account';document.getElementById('modal-subtitle').textContent=tab==='login'?'Sign in to your NovaComp account':'Get your dedicated workspace + Linux environment';}
-function getUsers(){try{return JSON.parse(localStorage.getItem('nc_users')||'{}');}catch{return{};}}
-function saveUsers(u){localStorage.setItem('nc_users',JSON.stringify(u));}
-function handleLogin(){const e=document.getElementById('login-email').value.trim(),p=document.getElementById('login-password').value,err=document.getElementById('login-error');err.classList.remove('show');if(!e||!p){err.textContent='Please fill in all fields.';err.classList.add('show');return;}const u=getUsers();if(u[e]&&u[e].password===btoa(p)){localStorage.setItem('nc_user',JSON.stringify({email:e,username:u[e].username}));closeModal();window.location.href='http://localhost:3001';}else{err.textContent='Invalid email or password.';err.classList.add('show');}}
-function handleSignup(){const n=document.getElementById('signup-username').value.trim(),e=document.getElementById('signup-email').value.trim(),p=document.getElementById('signup-password').value,err=document.getElementById('signup-error');err.classList.remove('show');if(!n||!e||!p){err.textContent='Please fill in all fields.';err.classList.add('show');return;}if(p.length<8){err.textContent='Password must be at least 8 characters.';err.classList.add('show');return;}const u=getUsers();if(u[e]){err.textContent='Account already exists.';err.classList.add('show');return;}u[e]={username:n,password:btoa(p),created:Date.now()};saveUsers(u);localStorage.setItem('nc_user',JSON.stringify({email:e,username:n}));closeModal();window.location.href='http://localhost:3001';}
+
+async function handleLogin(){
+  const email=document.getElementById('login-email').value.trim(),password=document.getElementById('login-password').value;
+  const err=document.getElementById('login-error'),btn=document.getElementById('login-btn');
+  err.classList.remove('show');
+  if(!email||!password){err.textContent='Please fill in all fields.';err.classList.add('show');return;}
+  btn.disabled=true;btn.textContent='SIGNING IN…';
+  try{
+    const res=await fetch('/auth/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const data=await res.json();
+    if(!res.ok){err.textContent=data.error||'Login failed.';err.classList.add('show');return;}
+    localStorage.setItem('novacomp_token',data.token);
+    window.location.href='/ide';
+  }catch{err.textContent='Network error. Please try again.';err.classList.add('show');}
+  finally{btn.disabled=false;btn.textContent='SIGN IN → OPEN IDE';}
+}
+
+async function handleSignup(){
+  const email=document.getElementById('signup-email').value.trim(),password=document.getElementById('signup-password').value;
+  const err=document.getElementById('signup-error'),btn=document.getElementById('signup-btn');
+  err.classList.remove('show');
+  if(!email||!password){err.textContent='Please fill in all fields.';err.classList.add('show');return;}
+  if(password.length<8){err.textContent='Password must be at least 8 characters.';err.classList.add('show');return;}
+  btn.disabled=true;btn.textContent='CREATING…';
+  try{
+    const res=await fetch('/auth/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,password})});
+    const data=await res.json();
+    if(!res.ok){err.textContent=data.error||'Signup failed.';err.classList.add('show');return;}
+    localStorage.setItem('novacomp_token',data.token);
+    window.location.href='/ide';
+  }catch{err.textContent='Network error. Please try again.';err.classList.add('show');}
+  finally{btn.disabled=false;btn.textContent='CREATE ACCOUNT';}
+}
+
 document.getElementById('auth-modal').addEventListener('click',function(e){if(e.target===this)closeModal();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape')closeModal();if(e.key==='Enter'&&document.getElementById('auth-modal').classList.contains('active')){curTab==='login'?handleLogin():handleSignup();}});
 </script>
