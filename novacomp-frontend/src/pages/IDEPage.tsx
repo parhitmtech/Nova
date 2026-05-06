@@ -2,10 +2,10 @@ import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Save, Play, BarChart2, LogOut, Plus, Trash2, FileCode,
-  Loader2, Share2, TerminalSquare, Check,
+  Loader2, Share2, TerminalSquare, Check, Zap,
 } from 'lucide-react'
 import { listFiles, saveFile, loadFile, deleteFile } from '../api/files'
-import { runCode, compareCode } from '../api/compiler'
+import { runCode, compareCode, submitGpuJob, getGpuStatus, getGpuResults } from '../api/compiler'
 import { shareCode } from '../api/share'
 import { useAuth } from '../contexts/AuthContext'
 import { registerNovaLanguage } from '../lib/novaLanguage'
@@ -45,9 +45,13 @@ export default function IDEPage() {
   const [saving,      setSaving]      = useState(false)
   const [termOpen,    setTermOpen]    = useState(false)
   const [shareMsg,    setShareMsg]    = useState('')
+  const [gpuStatus,  setGpuStatus]  = useState<'idle' | 'submitting' | 'pending' | 'running' | 'completed' | 'failed' | 'unavailable'>('idle')
+  const [gpuOutput,  setGpuOutput]  = useState('')
+  const [gpuError,   setGpuError]   = useState('')
   const outputRef     = useRef<HTMLDivElement>(null)
   const handleSaveRef = useRef<() => Promise<void>>(async () => {})
   const termWsRef     = useRef<WebSocket | null>(null)
+  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Pre-load forked code from SharePage
   useEffect(() => {
@@ -98,6 +102,8 @@ export default function IDEPage() {
       setCode(res.data.content ?? '')
       setCurrentFile(fileName)
       setOutput({ mode: 'idle', content: '' })
+      setGpuStatus('idle'); setGpuOutput(''); setGpuError('')
+      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? (err instanceof Error ? err.message : 'Load failed')
@@ -170,6 +176,46 @@ export default function IDEPage() {
       setTimeout(() => setShareMsg(''), 2500)
     }
   }
+
+  const handleRunOnGpu = async () => {
+    if (!token) return
+    setGpuStatus('submitting')
+    setGpuOutput('')
+    setGpuError('')
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+    try {
+      const res = await submitGpuJob(token, code)
+      const jobId: string = res.data.jobId
+      setGpuStatus('pending')
+      pollRef.current = setInterval(async () => {
+        try {
+          const statusRes = await getGpuStatus(token, jobId)
+          const st: string = statusRes.data.status
+          setGpuStatus(st as typeof gpuStatus)
+          if (st === 'completed' || st === 'failed') {
+            clearInterval(pollRef.current!); pollRef.current = null
+            if (st === 'completed') {
+              const resultRes = await getGpuResults(token, jobId)
+              setGpuOutput(resultRes.data.output ?? '')
+            } else {
+              setGpuError(statusRes.data.error ?? 'Job failed on cluster')
+            }
+          }
+        } catch {
+          clearInterval(pollRef.current!); pollRef.current = null
+          setGpuStatus('failed')
+          setGpuError('Failed to poll job status')
+        }
+      }, 5000)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? (err instanceof Error ? err.message : 'GPU submission failed')
+      setGpuStatus(msg.toLowerCase().includes('unavailable') || msg.toLowerCase().includes('ssh') ? 'unavailable' : 'failed')
+      setGpuError(msg)
+    }
+  }
+
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const handleLogout = () => { logout(); navigate('/login') }
 
@@ -283,6 +329,15 @@ export default function IDEPage() {
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
             style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}>
             <BarChart2 size={12} /> Compare
+          </button>
+          <button onClick={handleRunOnGpu}
+            disabled={gpuStatus === 'submitting' || gpuStatus === 'pending' || gpuStatus === 'running'}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
+            style={{ background: '#1a0a2e', color: '#a855f7', border: '1px solid #7c3aed' }}>
+            {gpuStatus === 'submitting' || gpuStatus === 'pending' || gpuStatus === 'running'
+              ? <Loader2 size={12} className="animate-spin" />
+              : <Zap size={12} />}
+            Run on GPU
           </button>
 
           {/* Share */}
@@ -403,6 +458,59 @@ export default function IDEPage() {
             <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b949e' }}>Output</span>
           </div>
           <div ref={outputRef} className="flex-1 overflow-y-auto">{renderOutput()}</div>
+
+          {/* GPU status section */}
+          {gpuStatus !== 'idle' && (
+            <div className="shrink-0" style={{ borderTop: '1px solid #30363d' }}>
+              <div className="flex items-center gap-1.5 px-3 py-2" style={{ borderBottom: '1px solid #30363d' }}>
+                <Zap size={11} style={{ color: '#a855f7' }} />
+                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#a855f7' }}>GPU</span>
+              </div>
+              <div className="p-3">
+                {gpuStatus === 'submitting' && (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
+                    <span className="text-xs" style={{ color: '#8b949e' }}>Submitting job…</span>
+                  </div>
+                )}
+                {gpuStatus === 'pending' && (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
+                    <span className="text-xs" style={{ color: '#8b949e' }}>Queued on SOL cluster…</span>
+                  </div>
+                )}
+                {gpuStatus === 'running' && (
+                  <div className="flex items-center gap-2">
+                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
+                    <span className="text-xs" style={{ color: '#a855f7' }}>Running on GPU…</span>
+                  </div>
+                )}
+                {gpuStatus === 'completed' && (
+                  <div>
+                    <div className="flex items-center gap-1.5 mb-2">
+                      <Check size={12} style={{ color: '#39ff8f' }} />
+                      <span className="text-xs font-medium" style={{ color: '#39ff8f' }}>Completed</span>
+                    </div>
+                    <pre className="text-xs font-mono whitespace-pre-wrap" style={{ color: '#c9d1d9' }}>
+                      {gpuOutput || '(no output)'}
+                    </pre>
+                  </div>
+                )}
+                {gpuStatus === 'failed' && (
+                  <div>
+                    <div className="text-xs font-medium mb-1" style={{ color: '#f85149' }}>Job failed</div>
+                    <pre className="text-xs font-mono whitespace-pre-wrap" style={{ color: '#f85149' }}>{gpuError}</pre>
+                  </div>
+                )}
+                {gpuStatus === 'unavailable' && (
+                  <div>
+                    <div className="text-xs font-medium mb-1" style={{ color: '#e3b341' }}>GPU unavailable</div>
+                    <p className="text-xs" style={{ color: '#8b949e' }}>SOL cluster is unreachable. Check the SSH tunnel.</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
