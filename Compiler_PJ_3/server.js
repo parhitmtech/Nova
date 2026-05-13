@@ -27,11 +27,21 @@ const jwt        = require("jsonwebtoken");
 const { DynamoDBClient, CreateTableCommand, DescribeTableCommand } = require("@aws-sdk/client-dynamodb");
 const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 
 // node-pty is optional — install with: npm install node-pty
 // Required for the Terminal tab in the web IDE.
 let pty = null;
 try { pty = require('node-pty'); } catch (_) {}
+
+// ssh2 / ssh2-sftp-client are optional — install with: npm install ssh2 ssh2-sftp-client
+// Required for GPU job submission via the SOL reverse tunnel.
+let SshClient = null;
+let SftpClient = null;
+try {
+  SshClient  = require('ssh2').Client;
+  SftpClient = require('ssh2-sftp-client');
+} catch (_) {}
 
 const app    = express();
 const PORT   = parseInt(process.env.PORT || "3001", 10);
@@ -114,7 +124,7 @@ if (!fs.existsSync(WORKSPACE)) fs.mkdirSync(WORKSPACE, { recursive: true });
 
 const MAX_SOURCE_LENGTH  = 10_000;
 const MAX_EXECUTION_MS   = 30_000;          // default: 30s (infinite loops caught by compiler)
-const ML_EXECUTION_MS    = 10 * 60 * 1000; // @ml annotation: 10 minutes
+const ML_EXECUTION_MS    = 45 * 60 * 1000; // @ml annotation: 45 minutes (SOL finetune + predict + save)
 const MAX_OUTPUT_BYTES   = 256_000;
 const MAX_CONCURRENT     = 5;
 const BENCH_ITERS        = 10000;
@@ -177,7 +187,8 @@ app.use("/compare", limiter);
 const SILENT_PATHS = new Set(["/health", "/fs/write", "/fs/mkdir", "/fs/read", "/git/status"]);
 
 app.use((req, _res, next) => {
-  if (!SILENT_PATHS.has(req.path)) {
+  const silent = SILENT_PATHS.has(req.path) || req.path.startsWith('/gpu/status/');
+  if (!silent) {
     log("info", "Incoming request", {
       method: req.method,
       path:   req.path,
@@ -251,6 +262,7 @@ const DEBUG_PREFIXES = [
   "BENCH_NODES:", "BENCH_ITERS:",
   "NOVA_HOME=",
   "ASSIGN_D",
+  "HF_CMD:", "HF_RESP:",
 ];
 
 function filterStderr(raw) {
@@ -435,10 +447,75 @@ app.post("/run", async (req, res) => {
   }
 });
 
-app.post("/run-stream", (req, res) => {
+// POST /compile-bytecode  { source: string } → binary .nbc download
+app.post("/compile-bytecode", async (req, res) => {
+  const validationError = validateSource(req.body?.source);
+  if (validationError)
+    return res.status(400).json({ error: validationError });
+
+  const source = sanitizeSource(req.body.source);
+  let tmpFile, tmpDir;
+  try {
+    ({ tmpFile, tmpDir } = writeTempFile(source));
+  } catch (err) {
+    return res.status(500).json({ error: "Internal server error." });
+  }
+
+  const nbcFile = tmpFile.replace(/\.csl$/, '.nbc');
+
+  try {
+    const { stderr, exitCode } = await runCompiler(
+      tmpFile,
+      ["--emit-bytecode", "-o", nbcFile],
+      "",
+      30000
+    );
+    if (exitCode !== 0 || !fs.existsSync(nbcFile)) {
+      const msg = filterStderr(stderr) || "Compilation failed.";
+      return res.status(400).json({ error: msg });
+    }
+    const nbcData = fs.readFileSync(nbcFile);
+    res.setHeader("Content-Type", "application/octet-stream");
+    res.setHeader("Content-Disposition", 'attachment; filename="program.nbc"');
+    res.send(nbcData);
+  } catch (e) {
+    if (e.type === "timeout")
+      return res.status(408).json({ error: "Compilation timed out." });
+    return res.status(500).json({ error: "Unknown error during bytecode compilation." });
+  } finally {
+    try { if (fs.existsSync(nbcFile)) fs.unlinkSync(nbcFile); } catch (_) {}
+    cleanupTempFile(tmpFile, tmpDir);
+  }
+});
+
+app.post("/run-stream", async (req, res) => {
     const validationError = validateSource(req.body?.source);
     if (validationError) return res.status(400).json({ error: validationError });
     if (activeExecutions >= MAX_CONCURRENT) return res.status(503).json({ error: "Server busy." });
+
+    // Optional auth — needed to upload model results to user's S3 storage
+    let streamUser = null;
+    try {
+        const tok = req.headers.authorization?.split(' ')[1];
+        if (tok) streamUser = jwt.verify(tok, JWT_SECRET);
+    } catch (_) {}
+
+    // Generate a pre-signed S3 PUT URL so the SLURM compute node can upload
+    // the trained model directly without going through the server.
+    let modelUploadUrl = '';
+    let modelS3Key = '';
+    if (streamUser) {
+        try {
+            modelS3Key = `${streamUser.userId}/model_${Date.now()}.tar.gz`;
+            modelUploadUrl = await getSignedUrl(s3, new PutObjectCommand({
+                Bucket: S3_BUCKET,
+                Key: modelS3Key,
+                ContentType: 'application/gzip',
+            }), { expiresIn: 86400 }); // valid for 24 hours
+        } catch (e) {
+            log('warn', 'Failed to generate pre-signed model upload URL', { error: e.message });
+        }
+    }
 
     const source = sanitizeSource(req.body.source);
     const inputs = req.body.inputs || "";
@@ -459,51 +536,69 @@ app.post("/run-stream", (req, res) => {
     let timedOut = false;
     let stdout = '';
     let stderr = '';
+    const pendingSaveFiles = []; // local paths printed via NOVA_SAVE_FILE:
+    const pendingS3Files   = []; // S3 keys printed via NOVA_S3_FILE: (already uploaded by SLURM)
 
     const child = spawn(BINARY, [tmpFile], {
         stdio: ['pipe', 'pipe', 'pipe'],
         cwd: WORKSPACE,
         shell: false,
         windowsHide: true,
-        env: { ...process.env, NOVA_HOME: __dirname }
+        env: {
+            ...process.env,
+            NOVA_HOME: __dirname,
+            ...(modelUploadUrl ? {
+                NOVA_MODEL_UPLOAD_URL: modelUploadUrl,
+                NOVA_MODEL_S3_KEY:     modelS3Key,
+            } : {}),
+        },
     });
 
     let stdoutBuf = '';
     let flushTimer = null;
 
-    // Stream stdout in real-time
     child.stdout.on('data', d => {
         stdoutBuf += d.toString();
-        if (stdoutBuf.includes('\n')) {
+        stdout   += d.toString();
+
+        // Process complete lines, intercepting internal marker lines
+        const lines = stdoutBuf.split('\n');
+        stdoutBuf = lines.pop(); // keep partial last line
+        const visible = [];
+        for (const line of lines) {
+            if (line.startsWith('NOVA_SAVE_FILE:')) {
+                pendingSaveFiles.push(line.slice('NOVA_SAVE_FILE:'.length).trim());
+            } else if (line.startsWith('NOVA_S3_FILE:')) {
+                pendingS3Files.push(line.slice('NOVA_S3_FILE:'.length).trim());
+            } else {
+                visible.push(line);
+            }
+        }
+        if (visible.length > 0) {
             clearTimeout(flushTimer);
-            send('stdout', stdoutBuf);
-            stdoutBuf = '';
+            send('stdout', visible.join('\n') + '\n');
         } else {
             clearTimeout(flushTimer);
             flushTimer = setTimeout(() => {
-                if (stdoutBuf) { send('stdout', stdoutBuf); stdoutBuf = ''; }
+                const isMarker = stdoutBuf.startsWith('NOVA_SAVE_FILE:') ||
+                                 stdoutBuf.startsWith('NOVA_S3_FILE:');
+                if (stdoutBuf && !isMarker) { send('stdout', stdoutBuf); stdoutBuf = ''; }
             }, 50);
         }
     });
 
-    child.stderr.on('data', d => {
-        const text = d.toString();
-        stderr += text;
-    });
+    child.stderr.on('data', d => { stderr += d.toString(); });
 
-    // Write inputs to stdin
     if (inputs.trim()) child.stdin.write(inputs.trim() + '\n');
     child.stdin.end();
 
-    // Manual timeout
-    const timer = setTimeout(() => {
-        timedOut = true;
-        child.kill();
-    }, execTimeout);
+    const timer = setTimeout(() => { timedOut = true; child.kill(); }, execTimeout);
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
         clearTimeout(timer);
-        if (stdoutBuf) { send('stdout', stdoutBuf); stdoutBuf = ''; }
+        const isMarker = stdoutBuf.startsWith('NOVA_SAVE_FILE:') ||
+                         stdoutBuf.startsWith('NOVA_S3_FILE:');
+        if (stdoutBuf && !isMarker) { send('stdout', stdoutBuf); stdoutBuf = ''; }
         const f = filterStderr(stderr);
         if (f) send('stderr', f);
         if (timedOut) {
@@ -512,6 +607,57 @@ app.post("/run-stream", (req, res) => {
         } else if (code !== 0 && !stdout) {
             send('error', `Runtime error (exit code ${code})`);
         }
+
+        // Upload any local files the compiler saved (NOVA_SAVE_FILE:) to user's S3 storage
+        if (streamUser && pendingSaveFiles.length > 0) {
+            for (const filePath of pendingSaveFiles) {
+                try {
+                    const absPath = path.isAbsolute(filePath)
+                        ? filePath
+                        : path.join(WORKSPACE, filePath);
+                    if (!fs.existsSync(absPath)) continue;
+                    const fileName = path.basename(filePath);
+                    const content  = fs.readFileSync(absPath);
+                    await s3.send(new PutObjectCommand({
+                        Bucket: S3_BUCKET,
+                        Key: `${streamUser.userId}/${fileName}`,
+                        Body: content,
+                    }));
+                    await dynamo.send(new PutCommand({
+                        TableName: FILES_TABLE,
+                        Item: {
+                            userId:    streamUser.userId,
+                            filePath:  fileName,
+                            updatedAt: new Date().toISOString(),
+                        },
+                    }));
+                    send('stdout', `Nova: ${fileName} uploaded to your files.\n`);
+                } catch (e) {
+                    log('warn', 'NOVA_SAVE_FILE upload failed', { error: e.message });
+                }
+            }
+        }
+
+        // Register models uploaded directly to S3 by SLURM (NOVA_S3_FILE:)
+        if (streamUser && pendingS3Files.length > 0) {
+            for (const s3Key of pendingS3Files) {
+                try {
+                    const fileName = path.basename(s3Key);
+                    await dynamo.send(new PutCommand({
+                        TableName: FILES_TABLE,
+                        Item: {
+                            userId:    streamUser.userId,
+                            filePath:  fileName,
+                            updatedAt: new Date().toISOString(),
+                        },
+                    }));
+                    send('stdout', `Nova: ${fileName} saved to your file storage.\n`);
+                } catch (e) {
+                    log('warn', 'NOVA_S3_FILE DynamoDB registration failed', { error: e.message });
+                }
+            }
+        }
+
         send('done', String(Date.now() - start));
         res.end();
         activeExecutions--;
@@ -937,6 +1083,341 @@ app.delete("/files/delete", requireAuth, async (req, res) => {
   } catch (e) {
     log("error", "Failed to delete file", { error: e.message });
     res.status(500).json({ error: "Failed to delete file" });
+  }
+});
+
+// ── GPU / SLURM helpers ───────────────────────────────────────────────────────
+
+const SSH_TIMEOUT_MS = 30_000;
+
+function isTunnelError(err) {
+  const msg = err?.message || '';
+  return msg.includes('connect') || msg.includes('refused') || msg.includes('ECONNREFUSED')
+      || msg.includes('ETIMEDOUT') || msg.includes('Timed out');
+}
+
+// Detect what kind of GPU workload the source contains.
+// Returns: 'cuda' | 'hf_sol' | 'hf' | 'sol' | 'none'
+function detectGpuScenario(source) {
+  const hasTensors = /\btensor\b/.test(source);
+  const hasHF      = /\bimport\s+hf\b/.test(source);
+  const hasSOL     = /\bimport\s+sol\b/.test(source);
+  if (hasTensors)       return 'cuda';
+  if (hasHF && hasSOL)  return 'hf_sol';
+  if (hasHF)            return 'hf';
+  if (hasSOL)           return 'sol';
+  return 'none';
+}
+
+const GPU_BENEFIT_MSG = {
+  cuda:   'CUDA parallelism dramatically accelerates tensor operations over CPU.',
+  hf:     'HuggingFace inference API uses GPU-accelerated servers for model inference.',
+  sol:    'SOL HPC cluster runs your job on dedicated GPU nodes via SLURM.',
+  hf_sol: 'SOL provides GPU nodes to fine-tune HuggingFace models at scale.',
+};
+
+// Execute a command on SOL via SSH and return { stdout, stderr }.
+// Rejects after SSH_TIMEOUT_MS if the connection cannot be established.
+function sshExec(command) {
+  return new Promise((resolve, reject) => {
+    if (!SshClient) return reject(new Error('ssh2 module not installed'));
+
+    const conn = new SshClient();
+    const keyPath = process.env.SOL_PRIVATE_KEY_PATH;
+
+    let settled = false;
+    const fail = (err) => { if (!settled) { settled = true; conn.end(); reject(err); } };
+
+    const timer = setTimeout(() => fail(new Error('Timed out waiting for SSH connection')), SSH_TIMEOUT_MS);
+
+    conn.on('ready', () => {
+      clearTimeout(timer);
+      conn.exec(command, (err, stream) => {
+        if (err) return fail(err);
+        let stdout = '', stderr = '';
+        stream.on('data', d => { stdout += d.toString(); });
+        stream.stderr.on('data', d => { stderr += d.toString(); });
+        stream.on('close', () => {
+          settled = true;
+          conn.end();
+          resolve({ stdout, stderr });
+        });
+      });
+    });
+
+    conn.on('error', fail);
+
+    conn.connect({
+      host:         process.env.SOL_HOST     || 'localhost',
+      port:         parseInt(process.env.SOL_PORT || '2222', 10),
+      username:     process.env.SOL_USERNAME,
+      privateKey:   fs.readFileSync(keyPath),
+      readyTimeout: SSH_TIMEOUT_MS,
+    });
+  });
+}
+
+// Upload a local file to SOL via SFTP.
+async function sftpUpload(localPath, remotePath) {
+  if (!SftpClient) throw new Error('ssh2-sftp-client module not installed');
+  const sftp = new SftpClient();
+  try {
+    await sftp.connect({
+      host:         process.env.SOL_HOST     || 'localhost',
+      port:         parseInt(process.env.SOL_PORT || '2222', 10),
+      username:     process.env.SOL_USERNAME,
+      privateKey:   fs.readFileSync(process.env.SOL_PRIVATE_KEY_PATH),
+      readyTimeout: SSH_TIMEOUT_MS,
+    });
+    await sftp.put(localPath, remotePath);
+  } finally {
+    await sftp.end().catch(() => {});
+  }
+}
+
+// Download a remote file from SOL via SFTP to a local path.
+async function sftpDownload(remotePath, localPath) {
+  if (!SftpClient) throw new Error('ssh2-sftp-client module not installed');
+  const sftp = new SftpClient();
+  try {
+    await sftp.connect({
+      host:         process.env.SOL_HOST     || 'localhost',
+      port:         parseInt(process.env.SOL_PORT || '2222', 10),
+      username:     process.env.SOL_USERNAME,
+      privateKey:   fs.readFileSync(process.env.SOL_PRIVATE_KEY_PATH),
+      readyTimeout: SSH_TIMEOUT_MS,
+    });
+    await sftp.get(remotePath, localPath);
+  } finally {
+    await sftp.end().catch(() => {});
+  }
+}
+
+// ── POST /gpu/submit ──────────────────────────────────────────────────────────
+
+app.post('/gpu/submit', async (req, res) => {
+  const validationError = validateSource(req.body?.source);
+  if (validationError) return res.status(400).json({ error: validationError });
+
+  const source   = sanitizeSource(req.body.source);
+  const scenario = detectGpuScenario(source);
+
+  if (scenario === 'none') {
+    return res.status(400).json({
+      error: [
+        'No GPU-compatible operations detected. Run on GPU supports:',
+        '  • tensor T[N]  — CUDA codegen compiled and run on SOL GPU nodes',
+        '  • import hf    — HuggingFace inference (GPU-accelerated remote API)',
+        '  • import sol   — SOL HPC cluster (dedicated GPU nodes via SLURM)',
+      ].join('\n'),
+    });
+  }
+
+  const jobId = Date.now() + '_' + Math.random().toString(36).slice(2);
+  const metaPath = path.join(LOCAL_TEMP, `gpu_job_${jobId}.json`);
+
+  let tmpFile, tmpDir;
+  try {
+    ({ tmpFile, tmpDir } = writeTempFile(source));
+  } catch (err) {
+    return res.status(500).json({ error: 'Internal server error.' });
+  }
+
+  // ── CUDA scenario: compile Nova → .cu → upload to SOL → sbatch ───────────
+  if (scenario === 'cuda') {
+    try {
+      const cuFile = tmpFile.replace('.csl', '.cu');
+      await runCompiler(tmpFile, ['--emit-cuda'], '', MAX_EXECUTION_MS);
+
+      if (!fs.existsSync(cuFile)) {
+        return res.status(400).json({
+          error: 'CUDA codegen failed. Verify that tensor declarations and operations are correct.',
+        });
+      }
+
+      const jobDir = `${process.env.SOL_WORK_DIR}/${jobId}`;
+      await sshExec(`mkdir -p ${jobDir}`);
+      await sftpUpload(cuFile, `${jobDir}/program.cu`);
+
+      const slurmScript = `#!/bin/bash
+#SBATCH --job-name=novacomp_${jobId}
+#SBATCH --output=${jobDir}/output.txt
+#SBATCH --error=${jobDir}/error.txt
+#SBATCH --time=00:10:00
+#SBATCH --partition=general
+#SBATCH --gres=gpu:1
+#SBATCH --mem=4G
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+
+cd ${jobDir}
+module load cuda/12.9
+nvcc -O2 -o program program.cu
+./program
+echo "EXIT_CODE:$?"
+`;
+      const slurmFile = path.join(tmpDir, 'job.slurm');
+      fs.writeFileSync(slurmFile, slurmScript, 'utf8');
+      await sftpUpload(slurmFile, `${jobDir}/job.slurm`);
+
+      const { stdout: sbatchOut, stderr: sbatchErr } = await sshExec(`sbatch ${jobDir}/job.slurm`);
+      const slurmJobId = sbatchOut.trim().split(/\s+/).pop();
+      if (!slurmJobId || isNaN(parseInt(slurmJobId, 10))) {
+        log('error', 'sbatch returned unexpected output', { sbatchOut, sbatchErr });
+        return res.status(500).json({ error: 'SLURM submission failed: ' + (sbatchErr || sbatchOut) });
+      }
+
+      const jobMeta = {
+        jobId, slurmJobId, type: 'slurm', scenario,
+        clientIp: req.ip, submittedAt: new Date().toISOString(),
+        status: 'pending', jobDir,
+      };
+      fs.writeFileSync(metaPath, JSON.stringify(jobMeta), 'utf8');
+
+      log('info', 'GPU CUDA job submitted', { jobId, slurmJobId, ip: req.ip });
+      return res.json({ jobId, slurmJobId, status: 'pending', scenario, gpuBenefit: GPU_BENEFIT_MSG.cuda });
+
+    } catch (err) {
+      log('error', 'GPU CUDA submission failed', { error: err.message });
+      if (isTunnelError(err))
+        return res.status(503).json({ error: 'GPU service unavailable. The SOL tunnel may be offline.' });
+      return res.status(500).json({ error: 'Job submission failed: ' + err.message });
+    } finally {
+      cleanupTempFile(tmpFile, tmpDir);
+    }
+  }
+
+  // ── HF / SOL scenarios: run compiler locally, output stored in job file ───
+  // The compiler makes HuggingFace API calls and/or SSHes into SOL internally.
+  // We fire it off in the background so the response returns immediately.
+  const jobMeta = {
+    jobId, type: 'local', scenario,
+    clientIp: req.ip, submittedAt: new Date().toISOString(),
+    status: 'running', output: null, errorOutput: null,
+  };
+  fs.writeFileSync(metaPath, JSON.stringify(jobMeta), 'utf8');
+
+  log('info', 'GPU local job started', { jobId, scenario, ip: req.ip });
+  res.json({ jobId, status: 'running', scenario, gpuBenefit: GPU_BENEFIT_MSG[scenario] });
+
+  // Run compiler in background — fire and forget
+  const execTimeout = /\/\/\s*@ml\b/.test(source) ? ML_EXECUTION_MS : MAX_EXECUTION_MS;
+  runCompiler(tmpFile, [], '', execTimeout)
+    .then(({ stdout, stderr, exitCode }) => {
+      jobMeta.status      = (exitCode === 0 || stdout.trim().length > 0) ? 'completed' : 'failed';
+      jobMeta.output      = stdout;
+      jobMeta.errorOutput = filterStderr(stderr);
+      fs.writeFileSync(metaPath, JSON.stringify(jobMeta), 'utf8');
+      log('info', 'GPU local job finished', { jobId, scenario, exitCode });
+    })
+    .catch(err => {
+      jobMeta.status      = 'failed';
+      jobMeta.errorOutput = err.message || 'Execution failed';
+      fs.writeFileSync(metaPath, JSON.stringify(jobMeta), 'utf8');
+      log('error', 'GPU local job error', { jobId, scenario, error: err.message });
+    })
+    .finally(() => { cleanupTempFile(tmpFile, tmpDir); });
+});
+
+// ── GET /gpu/status/:jobId ────────────────────────────────────────────────────
+
+app.get('/gpu/status/:jobId', async (req, res) => {
+  const { jobId } = req.params;
+  const metaPath  = path.join(LOCAL_TEMP, `gpu_job_${jobId}.json`);
+
+  if (!fs.existsSync(metaPath))
+    return res.status(404).json({ error: 'Job not found' });
+
+  let jobMeta;
+  try { jobMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); }
+  catch { return res.status(500).json({ error: 'Failed to read job metadata' }); }
+
+  // If already in a terminal state, return immediately without re-querying SLURM
+  if (jobMeta.status === 'completed' || jobMeta.status === 'failed') {
+    return res.json({ jobId, slurmJobId: jobMeta.slurmJobId, status: jobMeta.status, scenario: jobMeta.scenario });
+  }
+
+  // Local jobs (HF / SOL) update their own status file — no SLURM polling needed
+  if (jobMeta.type === 'local') {
+    return res.json({ jobId, status: jobMeta.status, scenario: jobMeta.scenario });
+  }
+
+  try {
+    // squeue exits non-zero and prints nothing when job is no longer queued
+    const { stdout } = await sshExec(
+      `squeue -j ${jobMeta.slurmJobId} -h -o "%T" 2>/dev/null || echo "GONE"`
+    );
+    const slurmStatus = stdout.trim();
+
+    let status;
+    if (slurmStatus === 'RUNNING')            status = 'running';
+    else if (slurmStatus === 'PENDING')       status = 'pending';
+    else if (slurmStatus === 'FAILED' || slurmStatus === 'CANCELLED') status = 'failed';
+    else {
+      // GONE or COMPLETED — check whether output file landed
+      const { stdout: probe } = await sshExec(
+        `test -f ${jobMeta.jobDir}/output.txt && echo EXISTS || echo MISSING`
+      );
+      status = probe.includes('EXISTS') ? 'completed' : 'failed';
+    }
+
+    jobMeta.status = status;
+    fs.writeFileSync(metaPath, JSON.stringify(jobMeta), 'utf8');
+
+    res.json({ jobId, slurmJobId: jobMeta.slurmJobId, status });
+
+  } catch (err) {
+    if (isTunnelError(err))
+      return res.status(503).json({ error: 'GPU service unavailable.' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── GET /gpu/results/:jobId ───────────────────────────────────────────────────
+
+app.get('/gpu/results/:jobId', async (req, res) => {
+  const { jobId } = req.params;
+  const metaPath  = path.join(LOCAL_TEMP, `gpu_job_${jobId}.json`);
+
+  if (!fs.existsSync(metaPath))
+    return res.status(404).json({ error: 'Job not found' });
+
+  let jobMeta;
+  try { jobMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); }
+  catch { return res.status(500).json({ error: 'Failed to read job metadata' }); }
+
+  // Local jobs (HF / SOL) store output directly in the meta file
+  if (jobMeta.type === 'local') {
+    return res.json({
+      jobId,
+      output:      jobMeta.output      ?? '',
+      error:       jobMeta.errorOutput ?? '',
+      completedAt: new Date().toISOString(),
+      scenario:    jobMeta.scenario,
+    });
+  }
+
+  try {
+    const localOutput = path.join(LOCAL_TEMP, `gpu_output_${jobId}.txt`);
+    await sftpDownload(`${jobMeta.jobDir}/output.txt`, localOutput);
+    const output = fs.readFileSync(localOutput, 'utf8');
+    try { fs.unlinkSync(localOutput); } catch (_) {}
+
+    let errorOutput = '';
+    try {
+      const localError = path.join(LOCAL_TEMP, `gpu_error_${jobId}.txt`);
+      await sftpDownload(`${jobMeta.jobDir}/error.txt`, localError);
+      errorOutput = fs.readFileSync(localError, 'utf8');
+      try { fs.unlinkSync(localError); } catch (_) {}
+    } catch (_) {}
+
+    log('info', 'GPU results fetched', { jobId, ip: req.ip });
+    res.json({ jobId, output, error: errorOutput, completedAt: new Date().toISOString() });
+
+  } catch (err) {
+    if (isTunnelError(err))
+      return res.status(503).json({ error: 'GPU service unavailable.' });
+    res.status(500).json({ error: 'Failed to fetch results: ' + err.message });
   }
 });
 

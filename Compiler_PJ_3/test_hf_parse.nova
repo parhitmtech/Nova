@@ -1,0 +1,7 @@
+import hf
+
+main() {
+    hf.set_token("hf_test_token") ;
+    string response = hf.generate("gpt2", "The future of AI is", max_tokens=50) ;
+    print(response) ;
+}

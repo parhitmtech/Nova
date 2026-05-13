@@ -1,0 +1,25 @@
+import hf
+import sol
+
+main() {
+    hf.set_token("hf_xxxxx") ;
+    sol.set_key("/home/ubuntu/.ssh/sol_key") ;
+
+    string data = hf.dataset("imdb", "train[:500]") ;
+
+    string job = sol.finetune(
+        model = "distilbert-base-uncased",
+        task = "text-classification",
+        dataset = data,
+        epochs = 1,
+        lr = 0.00002,
+        batch_size = 16
+    ) ;
+
+    sol.wait(job) ;
+
+    string result = sol.predict(job, "This film was absolutely brilliant!") ;
+    print(result) ;
+
+    sol.save(job, "sentiment.nbc") ;
+}
