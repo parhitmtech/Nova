@@ -2,10 +2,10 @@ import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Save, Play, BarChart2, LogOut, Plus, Trash2, FileCode,
-  Loader2, Share2, TerminalSquare, Check, Zap,
+  Loader2, Share2, TerminalSquare, Check, Zap, Download,
 } from 'lucide-react'
 import { listFiles, saveFile, loadFile, deleteFile } from '../api/files'
-import { runCode, compareCode, submitGpuJob, getGpuStatus, getGpuResults } from '../api/compiler'
+import { runCodeStream, compareCode, submitGpuJob, getGpuStatus, getGpuResults, compileBytecode } from '../api/compiler'
 import { shareCode } from '../api/share'
 import { useAuth } from '../contexts/AuthContext'
 import { registerNovaLanguage } from '../lib/novaLanguage'
@@ -45,13 +45,17 @@ export default function IDEPage() {
   const [saving,      setSaving]      = useState(false)
   const [termOpen,    setTermOpen]    = useState(false)
   const [shareMsg,    setShareMsg]    = useState('')
-  const [gpuStatus,  setGpuStatus]  = useState<'idle' | 'submitting' | 'pending' | 'running' | 'completed' | 'failed' | 'unavailable'>('idle')
-  const [gpuOutput,  setGpuOutput]  = useState('')
-  const [gpuError,   setGpuError]   = useState('')
-  const outputRef     = useRef<HTMLDivElement>(null)
-  const handleSaveRef = useRef<() => Promise<void>>(async () => {})
-  const termWsRef     = useRef<WebSocket | null>(null)
-  const pollRef       = useRef<ReturnType<typeof setInterval> | null>(null)
+  const [gpuStatus,   setGpuStatus]   = useState<'idle' | 'submitting' | 'pending' | 'running' | 'completed' | 'failed' | 'unavailable'>('idle')
+  const [gpuOutput,   setGpuOutput]   = useState('')
+  const [gpuError,    setGpuError]    = useState('')
+  const [gpuScenario, setGpuScenario] = useState('')
+  const [gpuBenefit,  setGpuBenefit]  = useState('')
+  const outputRef        = useRef<HTMLDivElement>(null)
+  const handleSaveRef    = useRef<() => Promise<void>>(async () => {})
+  const termWsRef        = useRef<WebSocket | null>(null)
+  const pollRef          = useRef<ReturnType<typeof setInterval> | null>(null)
+  const restoredFileRef  = useRef(false)
+  const runAbortRef      = useRef<AbortController | null>(null)
 
   // Pre-load forked code from SharePage
   useEffect(() => {
@@ -61,11 +65,32 @@ export default function IDEPage() {
 
   const fetchFiles = useCallback(async () => {
     if (!token) return
-    try { const res = await listFiles(token); setFiles(res.data.files ?? []) }
-    catch { /* ignore */ }
+    try {
+      const res = await listFiles(token)
+      const fileList: FileEntry[] = res.data.files ?? []
+      setFiles(fileList)
+
+      // On first load, auto-restore the last-open file from localStorage
+      if (!restoredFileRef.current && fileList.length > 0) {
+        restoredFileRef.current = true
+        const lastFile = localStorage.getItem('novacomp_last_file')
+        if (lastFile && fileList.some(f => f.fileName === lastFile)) {
+          try {
+            const r = await loadFile(token, lastFile)
+            setCode(r.data.content ?? '')
+            setCurrentFile(lastFile)
+          } catch { /* ignore — user can pick manually */ }
+        }
+      }
+    } catch { /* ignore */ }
   }, [token])
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
+
+  // Persist the current file name so we can restore it on next page load
+  useEffect(() => {
+    if (currentFile) localStorage.setItem('novacomp_last_file', currentFile)
+  }, [currentFile])
 
   useEffect(() => {
     if (outputRef.current)
@@ -102,7 +127,7 @@ export default function IDEPage() {
       setCode(res.data.content ?? '')
       setCurrentFile(fileName)
       setOutput({ mode: 'idle', content: '' })
-      setGpuStatus('idle'); setGpuOutput(''); setGpuError('')
+      setGpuStatus('idle'); setGpuOutput(''); setGpuError(''); setGpuScenario(''); setGpuBenefit('')
       if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
@@ -137,17 +162,37 @@ export default function IDEPage() {
   }
 
   const handleRun = async () => {
-    setLoading(true); setOutput({ mode: 'idle', content: '' })
+    if (runAbortRef.current) runAbortRef.current.abort()
+    runAbortRef.current = new AbortController()
+    setLoading(true)
+    setOutput({ mode: 'run', content: '' })
+    const acc = { text: '' }
     try {
-      const res = await runCode(code)
-      setOutput(res.data.error
-        ? { mode: 'error', content: res.data.error, ms: res.data.ms }
-        : { mode: 'run',   content: res.data.output ?? '', ms: res.data.ms })
+      await runCodeStream(code, '', (type, text) => {
+        if (type === 'stdout') {
+          acc.text += text
+          setOutput({ mode: 'run', content: acc.text })
+        } else if (type === 'stderr') {
+          if (text.trim()) {
+            acc.text += (acc.text ? '\n' : '') + text
+            setOutput({ mode: 'run', content: acc.text })
+          }
+        } else if (type === 'error') {
+          setOutput({ mode: 'error', content: text })
+        } else if (type === 'done') {
+          const ms = parseInt(text, 10)
+          setOutput(prev => ({ ...prev, ms }))
+          fetchFiles() // refresh file list in case sol.save uploaded new files
+        }
+      }, runAbortRef.current.signal, token ?? undefined)
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
-        ?? (err instanceof Error ? err.message : 'Run failed')
+      if ((err as { name?: string }).name === 'AbortError') return
+      const msg = (err as { message?: string }).message ?? 'Run failed'
       setOutput({ mode: 'error', content: msg })
-    } finally { setLoading(false) }
+    } finally {
+      setLoading(false)
+      runAbortRef.current = null
+    }
   }
 
   const handleCompare = async () => {
@@ -182,11 +227,16 @@ export default function IDEPage() {
     setGpuStatus('submitting')
     setGpuOutput('')
     setGpuError('')
+    setGpuScenario('')
+    setGpuBenefit('')
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     try {
       const res = await submitGpuJob(token, code)
       const jobId: string = res.data.jobId
-      setGpuStatus('pending')
+      setGpuScenario(res.data.scenario || '')
+      setGpuBenefit(res.data.gpuBenefit || '')
+      // Local jobs (HF/SOL) start as 'running'; CUDA jobs start as 'pending'
+      setGpuStatus((res.data.status as typeof gpuStatus) ?? 'pending')
       pollRef.current = setInterval(async () => {
         try {
           const statusRes = await getGpuStatus(token, jobId)
@@ -217,6 +267,22 @@ export default function IDEPage() {
 
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
+  const handleExportBytecode = async () => {
+    try {
+      const res = await compileBytecode(code)
+      const url = URL.createObjectURL(new Blob([res.data], { type: 'application/octet-stream' }))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = (currentFile ? currentFile.replace(/\.[^.]+$/, '') : 'program') + '.nbc'
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? (err instanceof Error ? err.message : 'Bytecode export failed')
+      setOutput({ mode: 'error', content: `Export failed: ${msg}` })
+    }
+  }
+
   const handleLogout = () => { logout(); navigate('/login') }
 
   const handleEditorMount = useCallback((editor: unknown, monaco: unknown) => {
@@ -229,7 +295,8 @@ export default function IDEPage() {
     us != null ? `${(us / 1000).toFixed(2)} ms` : '—'
 
   const renderOutput = () => {
-    if (loading) return (
+    // Show spinner only when nothing has been output yet (compare or initial run)
+    if (loading && output.mode === 'idle') return (
       <div className="flex items-center justify-center h-full gap-2">
         <Loader2 size={18} className="animate-spin" style={{ color: '#00d4ff' }} />
         <span className="text-sm" style={{ color: '#8b949e' }}>Running…</span>
@@ -249,7 +316,15 @@ export default function IDEPage() {
     if (output.mode === 'run') return (
       <div className="p-4">
         {output.ms != null && <div className="text-xs mb-2" style={{ color: '#8b949e' }}>{output.ms} ms</div>}
-        <pre className="text-sm font-mono whitespace-pre-wrap" style={{ color: '#c9d1d9' }}>{output.content || '(no output)'}</pre>
+        <pre className="text-sm font-mono whitespace-pre-wrap" style={{ color: '#c9d1d9' }}>
+          {output.content || (loading ? '' : '(no output)')}
+        </pre>
+        {loading && (
+          <div className="flex items-center gap-1.5 mt-3">
+            <Loader2 size={11} className="animate-spin" style={{ color: '#8b949e' }} />
+            <span className="text-xs" style={{ color: '#8b949e' }}>Running…</span>
+          </div>
+        )}
       </div>
     )
     if (output.mode === 'compare' && output.compareData) {
@@ -338,6 +413,11 @@ export default function IDEPage() {
               ? <Loader2 size={12} className="animate-spin" />
               : <Zap size={12} />}
             Run on GPU
+          </button>
+          <button onClick={handleExportBytecode} title="Compile and download .nbc bytecode"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+            style={{ background: '#0d2a1a', color: '#3fb950', border: '1px solid #238636' }}>
+            <Download size={12} /> Export .nbc
           </button>
 
           {/* Share */}
@@ -465,6 +545,11 @@ export default function IDEPage() {
               <div className="flex items-center gap-1.5 px-3 py-2" style={{ borderBottom: '1px solid #30363d' }}>
                 <Zap size={11} style={{ color: '#a855f7' }} />
                 <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#a855f7' }}>GPU</span>
+                {gpuScenario && (
+                  <span className="ml-auto text-xs px-1.5 py-0.5 rounded" style={{ background: '#2d1b4e', color: '#c084fc', fontSize: '10px' }}>
+                    {gpuScenario === 'cuda' ? 'CUDA' : gpuScenario === 'hf' ? 'HuggingFace' : gpuScenario === 'sol' ? 'SOL HPC' : 'HF+SOL'}
+                  </span>
+                )}
               </div>
               <div className="p-3">
                 {gpuStatus === 'submitting' && (
@@ -480,9 +565,19 @@ export default function IDEPage() {
                   </div>
                 )}
                 {gpuStatus === 'running' && (
-                  <div className="flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
-                    <span className="text-xs" style={{ color: '#a855f7' }}>Running on GPU…</span>
+                  <div>
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
+                      <span className="text-xs" style={{ color: '#a855f7' }}>
+                        {gpuScenario === 'hf'     ? 'Calling HuggingFace GPU inference…'
+                         : gpuScenario === 'sol'    ? 'Running on SOL HPC cluster…'
+                         : gpuScenario === 'hf_sol' ? 'Fine-tuning via SOL + HuggingFace…'
+                         : 'Running on GPU…'}
+                      </span>
+                    </div>
+                    {gpuBenefit && (
+                      <p className="text-xs leading-relaxed" style={{ color: '#8b949e' }}>{gpuBenefit}</p>
+                    )}
                   </div>
                 )}
                 {gpuStatus === 'completed' && (

@@ -42,6 +42,13 @@ export default function LoginPage() {
       className="min-h-screen flex items-center justify-center"
       style={{ background: '#0d1117' }}
     >
+      <button
+        onClick={() => { window.location.href = '/' }}
+        className="absolute top-4 left-4 flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
+        style={{ background: '#21262d', color: '#8b949e', border: '1px solid #30363d' }}
+      >
+        ← Home
+      </button>
       <div
         className="w-full max-w-md p-8 rounded-xl"
         style={{ background: '#161b22', border: '1px solid #30363d' }}
