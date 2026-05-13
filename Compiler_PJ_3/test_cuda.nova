@@ -1,0 +1,7 @@
+main() {
+    int A = tensor_randn(32, 32) ;
+    int B = tensor_randn(32, 32) ;
+    int C = matmul(A, B) ;
+    int D = relu(C) ;
+    print(tensor_get(D, 0, 0)) ;
+}

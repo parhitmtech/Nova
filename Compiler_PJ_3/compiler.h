@@ -120,8 +120,26 @@ enum InstructionType
     ASSIGN_D,  // double arithmetic/assignment
     CAST,    // explicit type cast
     TENSOR_CALL,  // tensor built-in operation
-    SPILL_LOAD,  // load spilled slot from stack into temp slot
+    SPILL_LOAD,   // load spilled slot from stack into temp slot
     SPILL_STORE,  // store temp slot back to stack
+    HF_INFER,     // HuggingFace Inference API call
+    SOL_CALL,     // SOL HPC cluster operation
+};
+
+enum HFOp {
+    HF_OP_INFER = 0,   // hf.infer(model, input)
+    HF_OP_GENERATE,    // hf.generate(model, prompt, max_tokens)
+    HF_OP_CLASSIFY,    // hf.classify(model, text)
+    HF_OP_SET_TOKEN,   // hf.set_token(token_str)
+    HF_OP_DATASET,     // hf.dataset(name, split) → string handle "name:split"
+};
+
+enum SolOp {
+    SOL_OP_FINETUNE = 0,  // sol.finetune(model, task, dataset, epochs, lr, batch_size)
+    SOL_OP_WAIT,          // sol.wait(job)
+    SOL_OP_PREDICT,       // sol.predict(job, input)
+    SOL_OP_SAVE,          // sol.save(job, path)
+    SOL_OP_SET_KEY,       // sol.set_key(path)
 };
 
 struct InstructionNode
@@ -243,8 +261,30 @@ struct InstructionNode
 
         struct {
             int spill_slot;  // the spilled slot index (stack location)
-            int temp_slot; // temporary register slot
+            int temp_slot;   // temporary register slot
         } spill_inst;
+
+        struct {
+            HFOp op;
+            int model_slot;   // mem slot holding strMem index for model/token string
+            int input_slot;   // mem slot holding strMem index for input (-1 if none)
+            int result_slot;  // mem slot to receive strMem index result (-1 if void)
+            int max_tokens;   // for generate: max new tokens (default 100)
+        } hf_inst;
+
+        struct {
+            SolOp op;
+            int job_slot;      // mem slot for job handle (output for finetune, input for others)
+            int model_slot;    // mem slot → strMem for model name (-1 if n/a)
+            int task_slot;     // mem slot → strMem for task type (-1 if n/a)
+            int dataset_slot;  // mem slot → strMem for "name:split" (-1 if n/a)
+            int epochs;        // training epochs
+            int batch_size;    // batch size
+            float lr;          // learning rate
+            int input_slot;    // mem slot → strMem for predict input (-1 if n/a)
+            int result_slot;   // mem slot for predict/dataset result (-1 if void)
+            int path_slot;     // mem slot → strMem for save path (-1 if n/a)
+        } sol_inst;
     };
 
     struct InstructionNode* next;
@@ -289,7 +329,10 @@ extern std::map<std::string, std::map<std::string, std::map<std::string, VarType
 extern std::vector<Tensor> tensor_heap;
 int alloc_tensor(int rows, int cols);  // allocates and returns handle index
 
+extern std::map<std::string, InstructionNode*> functionTable;
+
 struct InstructionNode* parse_generate_intermediate_representation();
+void execute_program(struct InstructionNode* head);
 void generate_x86(struct InstructionNode* program, const std::string& outputFile);
 
 #endif /* _COMPILER_H_ */

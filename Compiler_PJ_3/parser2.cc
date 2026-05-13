@@ -1268,6 +1268,219 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     return isVoid ? alloc_slot() : resultSlot;
 }
 
+// ── HuggingFace built-in calls: hf.infer / hf.generate / hf.classify / hf.set_token ──
+static int parse_hf_call(const string& method,
+                          struct InstructionNode*& head,
+                          struct InstructionNode*& tracker)
+{
+    // token is '(' on entry; leaves token on the character after ')'
+    token = lexer.GetToken(); // consume '('
+
+    HFOp op;
+    if      (method == "infer")     op = HF_OP_INFER;
+    else if (method == "generate")  op = HF_OP_GENERATE;
+    else if (method == "classify")  op = HF_OP_CLASSIFY;
+    else if (method == "set_token") op = HF_OP_SET_TOKEN;
+    else if (method == "dataset")   op = HF_OP_DATASET;
+    else {
+        report_error(token.line_no, "unknown hf method: hf." + method + "()");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            token = lexer.GetToken();
+        lastExprType = TYPE_UNKNOWN;
+        return alloc_slot();
+    }
+
+    // First arg: model name or API token string
+    int model_slot = -1;
+    if (token.token_type != RPAREN)
+        model_slot = parse_expression(head, tracker);
+
+    int input_slot = -1;
+    int max_tokens = 100;
+
+    if (op != HF_OP_SET_TOKEN) {
+        if (token.token_type == COMMA) {
+            token = lexer.GetToken(); // consume ','
+            // Could be keyword arg: max_tokens=N  or a positional input expression
+            if (token.token_type == ID && token.lexeme == "max_tokens"
+                && lexer.peek(1).token_type == EQUAL) {
+                token = lexer.GetToken(); // consume 'max_tokens'
+                token = lexer.GetToken(); // consume '='
+                if (token.token_type == NUM) {
+                    max_tokens = stoi(token.lexeme);
+                    token = lexer.GetToken(); // consume number
+                }
+            } else {
+                input_slot = parse_expression(head, tracker);
+            }
+        }
+
+        // Third arg (optional): max_tokens=N or positional number
+        if (token.token_type == COMMA) {
+            token = lexer.GetToken(); // consume ','
+            if (token.token_type == ID && token.lexeme == "max_tokens"
+                && lexer.peek(1).token_type == EQUAL) {
+                token = lexer.GetToken(); // consume 'max_tokens'
+                token = lexer.GetToken(); // consume '='
+                if (token.token_type == NUM) {
+                    max_tokens = stoi(token.lexeme);
+                    token = lexer.GetToken(); // consume number
+                }
+            } else if (token.token_type == NUM) {
+                max_tokens = stoi(token.lexeme);
+                token = lexer.GetToken(); // consume number
+            }
+        }
+    }
+
+    if (token.token_type == RPAREN) token = lexer.GetToken(); // consume ')'
+
+    bool isVoid    = (op == HF_OP_SET_TOKEN);
+    int result_slot = isVoid ? -1 : alloc_slot();
+
+    auto* node = new InstructionNode();
+    node->line_no           = token.line_no;
+    node->type              = HF_INFER;
+    node->hf_inst.op         = op;
+    node->hf_inst.model_slot = model_slot;
+    node->hf_inst.input_slot = input_slot;
+    node->hf_inst.result_slot= result_slot;
+    node->hf_inst.max_tokens = max_tokens;
+    node->next = nullptr;
+    append(head, tracker, node);
+
+    lastExprType = isVoid ? TYPE_UNKNOWN : TYPE_STRING;
+    return isVoid ? alloc_slot() : result_slot;
+}
+
+// ── SOL cluster built-in calls ───────────────────────────────────────────────
+static int parse_sol_call(const string& method,
+                          struct InstructionNode*& head,
+                          struct InstructionNode*& tracker)
+{
+    // token is '(' on entry; leaves token on the character after ')'
+    token = lexer.GetToken(); // consume '('
+
+    SolOp op;
+    if      (method == "finetune") op = SOL_OP_FINETUNE;
+    else if (method == "wait")     op = SOL_OP_WAIT;
+    else if (method == "predict")  op = SOL_OP_PREDICT;
+    else if (method == "save")     op = SOL_OP_SAVE;
+    else if (method == "set_key")  op = SOL_OP_SET_KEY;
+    else {
+        report_error(token.line_no, "unknown sol method: sol." + method + "()");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            token = lexer.GetToken();
+        lastExprType = TYPE_UNKNOWN;
+        return alloc_slot();
+    }
+
+    // Shared fields with defaults
+    int model_slot = -1, task_slot = -1, dataset_slot = -1;
+    int job_slot_in = -1; // job handle input (for wait/predict/save)
+    int input_slot  = -1; // for predict
+    int path_slot   = -1; // for set_key / save
+    int epochs = 3, batch_size = 16;
+    float lr = 2e-5f;
+
+    if (op == SOL_OP_FINETUNE)
+    {
+        // Keyword argument list: model=..., task=..., dataset=..., epochs=..., lr=..., batch_size=...
+        while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
+        {
+            if (token.token_type == ID && lexer.peek(1).token_type == EQUAL)
+            {
+                string kw = token.lexeme;
+                token = lexer.GetToken(); // consume keyword name
+                token = lexer.GetToken(); // consume '='
+                if (kw == "model")
+                    model_slot = parse_expression(head, tracker);
+                else if (kw == "task")
+                    task_slot = parse_expression(head, tracker);
+                else if (kw == "dataset")
+                    dataset_slot = parse_expression(head, tracker);
+                else if (kw == "epochs" && token.token_type == NUM)
+                    { epochs = stoi(token.lexeme); token = lexer.GetToken(); }
+                else if (kw == "batch_size" && token.token_type == NUM)
+                    { batch_size = stoi(token.lexeme); token = lexer.GetToken(); }
+                else if (kw == "lr")
+                    {
+                        if (token.token_type == FLOAT_LITERAL || token.token_type == NUM)
+                            { lr = stof(token.lexeme); token = lexer.GetToken(); }
+                    }
+                else
+                    parse_expression(head, tracker); // consume unknown kwarg value
+            }
+            if (token.token_type == COMMA) token = lexer.GetToken();
+        }
+    }
+    else if (op == SOL_OP_WAIT)
+    {
+        // sol.wait(job)
+        if (token.token_type != RPAREN)
+            job_slot_in = parse_expression(head, tracker);
+    }
+    else if (op == SOL_OP_PREDICT)
+    {
+        // sol.predict(job, input_text)
+        if (token.token_type != RPAREN)
+            job_slot_in = parse_expression(head, tracker);
+        if (token.token_type == COMMA) {
+            token = lexer.GetToken();
+            input_slot = parse_expression(head, tracker);
+        }
+    }
+    else if (op == SOL_OP_SAVE)
+    {
+        // sol.save(job, path)
+        if (token.token_type != RPAREN)
+            job_slot_in = parse_expression(head, tracker);
+        if (token.token_type == COMMA) {
+            token = lexer.GetToken();
+            path_slot = parse_expression(head, tracker);
+        }
+    }
+    else if (op == SOL_OP_SET_KEY)
+    {
+        // sol.set_key(path)
+        if (token.token_type != RPAREN)
+            path_slot = parse_expression(head, tracker);
+    }
+
+    if (token.token_type == RPAREN) token = lexer.GetToken(); // consume ')'
+
+    // For finetune the job handle is an output slot; for others it's an input slot
+    bool returnsJob    = (op == SOL_OP_FINETUNE);
+    bool returnsString = (op == SOL_OP_PREDICT);
+    bool isVoid        = (op == SOL_OP_WAIT || op == SOL_OP_SAVE || op == SOL_OP_SET_KEY);
+
+    int job_out_slot   = returnsJob    ? alloc_slot() : -1;
+    int result_slot    = returnsString ? alloc_slot() : -1;
+    int effective_job  = returnsJob ? job_out_slot : job_slot_in;
+
+    auto* node = new InstructionNode();
+    node->line_no              = token.line_no;
+    node->type                 = SOL_CALL;
+    node->sol_inst.op          = op;
+    node->sol_inst.job_slot    = effective_job;
+    node->sol_inst.model_slot  = model_slot;
+    node->sol_inst.task_slot   = task_slot;
+    node->sol_inst.dataset_slot= dataset_slot;
+    node->sol_inst.epochs      = epochs;
+    node->sol_inst.batch_size  = batch_size;
+    node->sol_inst.lr          = lr;
+    node->sol_inst.input_slot  = input_slot;
+    node->sol_inst.result_slot = result_slot;
+    node->sol_inst.path_slot   = path_slot;
+    node->next = nullptr;
+    append(head, tracker, node);
+
+    if (returnsJob)    { lastExprType = TYPE_STRING; return job_out_slot; }
+    if (returnsString) { lastExprType = TYPE_STRING; return result_slot; }
+    lastExprType = TYPE_UNKNOWN;
+    return alloc_slot();
+}
+
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     VarType declType = TYPE_UNKNOWN;
@@ -1773,7 +1986,23 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
     else if (token.token_type == ID)
     {
         string name = token.lexeme;
-        if (classTable.count(name) && lexer.peek(1).token_type == ID)
+        if (name == "hf" && lexer.peek(1).token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume "hf" → '.'
+            token = lexer.GetToken();  // consume '.' → method name
+            string method = token.lexeme;
+            token = lexer.GetToken();  // consume method name → '('
+            parse_hf_call(method, head, tracker);
+        }
+        else if (name == "sol" && lexer.peek(1).token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume "sol" → '.'
+            token = lexer.GetToken();  // consume '.' → method name
+            string method = token.lexeme;
+            token = lexer.GetToken();  // consume method name → '('
+            parse_sol_call(method, head, tracker);
+        }
+        else if (classTable.count(name) && lexer.peek(1).token_type == ID)
         {
             // class instantiation: MyClass obj ; or MyClass obj = { ... } ;
             parse_class_instantiation(name, head, tracker);
@@ -2032,8 +2261,26 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         lastExprType = TYPE_INT;
         return slot;
     } 
-    else if (token.token_type == ID) 
+    else if (token.token_type == ID)
     {
+        if (token.lexeme == "hf" && lexer.peek(1).token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume "hf" → '.'
+            token = lexer.GetToken();  // consume '.' → method name
+            string method = token.lexeme;
+            token = lexer.GetToken();  // consume method name → '('
+            return parse_hf_call(method, head, tracker);
+        }
+
+        if (token.lexeme == "sol" && lexer.peek(1).token_type == DOT)
+        {
+            token = lexer.GetToken();  // consume "sol" → '.'
+            token = lexer.GetToken();  // consume '.' → method name
+            string method = token.lexeme;
+            token = lexer.GetToken();  // consume method name → '('
+            return parse_sol_call(method, head, tracker);
+        }
+
         if (functionTable.find(token.lexeme) != functionTable.end()) return parse_function_call(head, tracker);
 
         if (TENSOR_OP_MAP.count(token.lexeme))
@@ -2600,6 +2847,9 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
     int resultIdx = parse_expression(head, tracker);
     VarType rhsType = lastExprType;
     VarType lhsType = typeTable.count(lhs) ? typeTable[lhs] : TYPE_UNKNOWN;
+    // Infer type from RHS for auto-declared variables (no explicit type annotation)
+    if (lhsType == TYPE_UNKNOWN && rhsType != TYPE_UNKNOWN)
+        typeTable[lhs] = lhsType = rhsType;
     bool tensorToInt = (rhsType == TYPE_TENSOR && lhsType == TYPE_INT);
     if (lhsType != TYPE_UNKNOWN && rhsType != TYPE_UNKNOWN && lhsType != rhsType && !tensorToInt)
         report_error(lhs_line, "cannot assign " + typeToString(rhsType) + " to " + typeToString(lhsType) + " variable '" + lhs + "'");

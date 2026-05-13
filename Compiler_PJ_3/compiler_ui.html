@@ -163,6 +163,26 @@ html, body { height: 100%; background: var(--bg); color: var(--text); font-famil
 .debug-ctrl-btn.danger { border-color: #5c1e1e; color: var(--red); }
 .debug-ctrl-btn.danger:hover { background: rgba(229,83,75,0.12); }
 
+.gpu-btn {
+  font-family: var(--font-ui); font-size: 12px; font-weight: 700;
+  letter-spacing: 0.05em; padding: 6px 14px; border-radius: 6px; border: none;
+  background: #7c3aed; color: #fff; cursor: pointer;
+  display: flex; align-items: center; gap: 6px; transition: background 0.12s, transform 0.08s;
+}
+.gpu-btn:hover   { background: #6d28d9; }
+.gpu-btn:active  { transform: scale(0.97); }
+.gpu-btn:disabled { background: #3b1f6e; color: rgba(255,255,255,0.4); cursor: not-allowed; transform: none; }
+.gpu-panel { flex-shrink: 0; padding: 10px 14px; border-top: 1px solid var(--border); max-height: 300px; overflow-y: auto; }
+.gpu-panel-hdr  { font-family: var(--font-ui); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #a78bfa; display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.gpu-job-id     { font-family: var(--font-mono); font-size: 10px; color: var(--muted); font-weight: 400; text-transform: none; letter-spacing: 0; }
+.gpu-status-row { display: flex; align-items: center; gap: 6px; font-family: var(--font-mono); font-size: 12px; margin-bottom: 8px; }
+.gpu-status-row.submitting,.gpu-status-row.pending,.gpu-status-row.running { color: #60a5fa; }
+.gpu-status-row.completed   { color: var(--green); }
+.gpu-status-row.failed      { color: var(--red); }
+.gpu-status-row.unavailable { color: var(--yellow); }
+.gpu-out { font-family: var(--font-mono); font-size: 11px; color: var(--green); background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; overflow-y: auto; max-height: 140px; white-space: pre-wrap; margin-bottom: 6px; }
+.gpu-err { font-family: var(--font-mono); font-size: 11px; color: var(--red);   background: rgba(0,0,0,0.3); padding: 8px; border-radius: 4px; overflow-y: auto; max-height: 80px;  white-space: pre-wrap; }
+
 .dbg-var-row {
   display: flex; align-items: center; gap: 8px; padding: 5px 8px;
   background: var(--bg3); border-radius: 4px; font-family: var(--font-mono); font-size: 11px;
@@ -441,6 +461,9 @@ kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-ra
       <svg width="10" height="12" viewBox="0 0 10 12" fill="currentColor"><polygon points="0,0 10,6 0,12"/></svg>
       RUN
     </button>
+    <button class="gpu-btn" id="gpu-btn" onclick="handleRunOnGpu()" title="Compile to CUDA and run on SOL GPU cluster">
+      ⚡ GPU
+    </button>
   </div>
 </div>
 
@@ -507,6 +530,20 @@ kbd { font-family: var(--font-mono); font-size: 9px; padding: 1px 4px; border-ra
             <span class="output-idle">// Run in Compare mode to see optimization analysis.</span>
           </div>
         </div>
+        <!-- GPU job panel — shown when a GPU job is in flight or done -->
+        <div id="gpu-panel" class="gpu-panel" style="display:none;">
+          <div class="gpu-panel-hdr">
+            <span>GPU Job</span>
+            <span class="gpu-job-id" id="gpu-job-id-label"></span>
+          </div>
+          <div class="gpu-status-row" id="gpu-status-row">
+            <div class="spinner" id="gpu-spinner" style="display:none;width:10px;height:10px;border-width:1.5px;border-top-color:#60a5fa;border-color:rgba(96,165,250,0.3);"></div>
+            <span id="gpu-status-text"></span>
+          </div>
+          <div class="gpu-out" id="gpu-out" style="display:none;"></div>
+          <div class="gpu-err" id="gpu-err" style="display:none;"></div>
+        </div>
+
         <!-- Debug panel -->
         <div id="debug-panel" style="display:none;flex-direction:column;flex:1;overflow:hidden;border-top:1px solid var(--border);">
           <div class="panel-header" style="background:var(--bg2);">
@@ -676,6 +713,7 @@ async function fsOpen(filePath) {
   if (needsTab) fs.tabs.push(filePath);
 
   fs.active = filePath;
+  if (prevFile && prevFile !== filePath) gpuReset();  // clear GPU panel on file switch
   renderExplorer();  // immediately show active highlight — don't wait for fetch
   renderTabs();
 
@@ -1379,6 +1417,147 @@ function renderCompare(data) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+//  GPU JOB SUBMISSION
+// ═══════════════════════════════════════════════════════════════════════════
+
+let _gpuJobId     = null;
+let _gpuStatus    = 'idle'; // idle|submitting|pending|running|completed|failed|unavailable
+let _gpuPollTimer = null;
+
+const GPU_STATUS_MSG = {
+  submitting:  'Submitting job to SOL cluster...',
+  pending:     'Job queued — waiting for GPU node...',
+  running:     'Running on NVIDIA GPU...',
+  completed:   '✓ Job completed',
+  failed:      '✗ Job failed',
+  unavailable: '⚠ GPU service offline — start the SOL tunnel to enable GPU jobs',
+};
+
+function gpuReset() {
+  if (_gpuPollTimer) { clearInterval(_gpuPollTimer); _gpuPollTimer = null; }
+  _gpuJobId  = null;
+  _gpuStatus = 'idle';
+  const panel = document.getElementById('gpu-panel');
+  if (panel) panel.style.display = 'none';
+  const btn = document.getElementById('gpu-btn');
+  if (btn) { btn.disabled = false; btn.innerHTML = '⚡ GPU'; }
+}
+
+function gpuRender() {
+  const panel     = document.getElementById('gpu-panel');
+  const statusRow = document.getElementById('gpu-status-row');
+  const statusTxt = document.getElementById('gpu-status-text');
+  const spinner   = document.getElementById('gpu-spinner');
+  const outEl     = document.getElementById('gpu-out');
+  const errEl     = document.getElementById('gpu-err');
+  const jobLabel  = document.getElementById('gpu-job-id-label');
+  const btn       = document.getElementById('gpu-btn');
+  if (!panel) return;
+
+  if (_gpuStatus === 'idle') { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+
+  const busy = _gpuStatus === 'submitting' || _gpuStatus === 'pending' || _gpuStatus === 'running';
+  btn.disabled = busy;
+  if (busy) {
+    const label = _gpuStatus === 'submitting' ? 'Submitting...' : _gpuStatus === 'pending' ? 'Queued...' : 'Running...';
+    btn.innerHTML = `<div class="spinner" style="width:10px;height:10px;border-width:1.5px"></div> ${label}`;
+  } else {
+    btn.innerHTML = '⚡ GPU';
+  }
+
+  jobLabel.textContent = _gpuJobId ? '#' + _gpuJobId.slice(-8) : '';
+  statusRow.className  = 'gpu-status-row ' + _gpuStatus;
+  spinner.style.display = busy ? 'block' : 'none';
+  statusTxt.textContent = GPU_STATUS_MSG[_gpuStatus] || _gpuStatus;
+}
+
+async function handleRunOnGpu() {
+  const source = _monaco ? _monaco.getValue() : '';
+  if (!source.trim()) return;
+
+  // Clear previous output
+  const outEl = document.getElementById('gpu-out');
+  const errEl = document.getElementById('gpu-err');
+  outEl.textContent = ''; outEl.style.display = 'none';
+  errEl.textContent = ''; errEl.style.display = 'none';
+
+  _gpuJobId  = null;
+  _gpuStatus = 'submitting';
+  gpuRender();
+
+  try {
+    const res  = await fetch(`${API}/gpu/submit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ source }),
+      signal: AbortSignal.timeout(35000),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      _gpuStatus = res.status === 503 ? 'unavailable' : 'failed';
+      errEl.textContent  = data.error || 'Submission failed.';
+      errEl.style.display = 'block';
+      gpuRender();
+      return;
+    }
+
+    _gpuJobId  = data.jobId;
+    _gpuStatus = 'pending';
+    gpuRender();
+
+    // Poll every 5 seconds until terminal state
+    _gpuPollTimer = setInterval(async () => {
+      try {
+        const sr = await fetch(`${API}/gpu/status/${_gpuJobId}`, {
+          signal: AbortSignal.timeout(10000),
+        });
+        const sd = await sr.json();
+
+        if (!sr.ok) {
+          const isTunnel = sr.status === 503;
+          throw Object.assign(new Error(sd.error || 'Status check failed'), { isTunnel });
+        }
+
+        _gpuStatus = sd.status;
+        gpuRender();
+
+        if (sd.status === 'completed') {
+          clearInterval(_gpuPollTimer); _gpuPollTimer = null;
+          const rr = await fetch(`${API}/gpu/results/${_gpuJobId}`, {
+            signal: AbortSignal.timeout(15000),
+          });
+          const rd = await rr.json();
+          if (rd.output && rd.output.trim()) { outEl.textContent = rd.output; outEl.style.display = 'block'; }
+          if (rd.error  && rd.error.trim())  { errEl.textContent = rd.error;  errEl.style.display = 'block'; }
+          gpuRender();
+        } else if (sd.status === 'failed') {
+          clearInterval(_gpuPollTimer); _gpuPollTimer = null;
+          errEl.textContent  = 'Job failed on SOL cluster. Check GPU error output.';
+          errEl.style.display = 'block';
+          gpuRender();
+        }
+      } catch (err) {
+        clearInterval(_gpuPollTimer); _gpuPollTimer = null;
+        _gpuStatus = err.isTunnel ? 'unavailable' : 'failed';
+        if (!err.isTunnel) {
+          errEl.textContent  = 'Failed to check job status.';
+          errEl.style.display = 'block';
+        }
+        gpuRender();
+      }
+    }, 5000);
+
+  } catch (err) {
+    _gpuStatus = 'failed';
+    errEl.textContent  = err.message || 'Job submission failed.';
+    errEl.style.display = 'block';
+    gpuRender();
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 //  TERMINAL (xterm.js + WebSocket /terminal)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1464,6 +1643,7 @@ function switchTab(tab) {
   document.getElementById('tab-editor').classList.toggle('active', tab==='editor');
   document.getElementById('tab-repl').classList.toggle('active', tab==='repl');
   document.getElementById('run-btn').style.display      = tab==='editor' ? '' : 'none';
+  document.getElementById('gpu-btn').style.display      = tab==='editor' ? '' : 'none';
   document.getElementById('examples-select').style.display = tab==='editor' ? '' : 'none';
   document.getElementById('mode-divider').style.display    = tab==='editor' ? '' : 'none';
   document.getElementById('mode-select').style.display     = tab==='editor' ? '' : 'none';

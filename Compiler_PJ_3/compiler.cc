@@ -23,6 +23,7 @@
 #include <unordered_set>
 #include "lexer.h"
 #include "compiler.h"
+#include "bytecode.h"
 #include "stdlib/novatorch.tqdm.h"
 #include "autograd.h"
 
@@ -51,6 +52,17 @@ static void jit_free_exec(void* mem, size_t)
 }
 #else
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+#ifdef __has_include
+#  if __has_include(<libssh2.h>)
+#    include <libssh2.h>
+#    include <libssh2_sftp.h>
+#    define NOVA_HAVE_LIBSSH2 1
+#  endif
+#endif
 static void* jit_alloc_exec(size_t size)
 {
     return mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC,
@@ -363,6 +375,14 @@ int next_available = 0;
 
 vector<std::string> strMem;
 int next_str_available = 0;
+
+string hf_api_token;
+
+static string sol_key_path = "";
+static string sol_host     = "localhost";
+static int    sol_port     = 2223;
+static string sol_username = "pmathu14";
+static string sol_work_dir = "/scratch/pmathu14/novacomp_jobs";
 
 vector<int> freeList;
 
@@ -1004,6 +1024,20 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
             }
         }
 
+        // match: import hf  (HuggingFace built-in — hf.xxx() always available)
+        if (trimmed.size() >= 9 && trimmed.substr(0, 9) == "import hf" &&
+            (trimmed.size() == 9 || trimmed[9] == ' ' || trimmed[9] == ';'))
+        {
+            continue;
+        }
+
+        // match: import sol  (SOL cluster built-in — sol.xxx() always available)
+        if (trimmed.size() >= 10 && trimmed.substr(0, 10) == "import sol" &&
+            (trimmed.size() == 10 || trimmed[10] == ' ' || trimmed[10] == ';'))
+        {
+            continue;
+        }
+
         // not an import line - keep it as it is
         result += line + "\n";
     }
@@ -1052,6 +1086,382 @@ void detect_memoizable_functions()
             }
         }
     }
+}
+
+// ── SOL cluster helpers ───────────────────────────────────────────────────────
+
+static string sol_trim(const string& s)
+{
+    size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == string::npos) return "";
+    size_t b = s.find_last_not_of(" \t\r\n");
+    return s.substr(a, b - a + 1);
+}
+
+static void sol_write_file(const string& path, const string& content)
+{
+    ofstream f(path);
+    f << content;
+}
+
+static string sol_extract_slurm_id(const string& sbatchOut)
+{
+    // "Submitted batch job 12345" → "12345"
+    string s = sol_trim(sbatchOut);
+    size_t pos = s.rfind(' ');
+    return (pos != string::npos) ? s.substr(pos + 1) : s;
+}
+
+#ifdef NOVA_HAVE_LIBSSH2
+
+static string sol_get_key()
+{
+    if (!sol_key_path.empty()) return sol_key_path;
+    const char* env = getenv("SOL_PRIVATE_KEY_PATH");
+    return env ? string(env) : "";
+}
+
+static int sol_open_socket()
+{
+    struct sockaddr_in sin;
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return -1;
+    sin.sin_family      = AF_INET;
+    sin.sin_port        = htons((uint16_t)sol_port);
+    sin.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (connect(sock, (struct sockaddr*)&sin, sizeof(sin)) != 0) {
+        close(sock); return -1;
+    }
+    return sock;
+}
+
+static LIBSSH2_SESSION* sol_open_session(int sock)
+{
+    static bool libssh2_ready = false;
+    if (!libssh2_ready) { libssh2_init(0); libssh2_ready = true; }
+
+    LIBSSH2_SESSION* s = libssh2_session_init();
+    if (!s) return nullptr;
+    if (libssh2_session_handshake(s, sock) != 0) {
+        libssh2_session_free(s); return nullptr;
+    }
+    string key = sol_get_key();
+    if (key.empty()) {
+        fprintf(stderr, "Nova: SOL private key not configured. Set SOL_PRIVATE_KEY_PATH on the server.\n");
+        libssh2_session_free(s); return nullptr;
+    }
+    if (libssh2_userauth_publickey_fromfile(
+            s, sol_username.c_str(), nullptr, key.c_str(), nullptr) != 0) {
+        fprintf(stderr, "Nova: SOL SSH auth failed — check key path: %s\n", key.c_str());
+        libssh2_session_free(s); return nullptr;
+    }
+    return s;
+}
+
+static void sol_close_session(LIBSSH2_SESSION* s, int sock)
+{
+    libssh2_session_disconnect(s, "Normal shutdown");
+    libssh2_session_free(s);
+    close(sock);
+}
+
+static string sshExecSOL(const string& command)
+{
+    int sock = sol_open_socket();
+    if (sock < 0) {
+        fprintf(stderr, "Nova: SOL tunnel not available (localhost:%d). "
+                "Start the tunnel with: autossh -M 0 -f -N -R 2222:localhost:22 ubuntu@<ec2-ip>\n",
+                sol_port);
+        return "";
+    }
+    LIBSSH2_SESSION* session = sol_open_session(sock);
+    if (!session) { close(sock); return ""; }
+
+    LIBSSH2_CHANNEL* ch = libssh2_channel_open_session(session);
+    if (!ch) { sol_close_session(session, sock); return ""; }
+
+    libssh2_channel_exec(ch, command.c_str());
+
+    string result;
+    char buf[4096];
+    int n;
+    while ((n = libssh2_channel_read(ch, buf, sizeof(buf))) > 0)
+        result.append(buf, n);
+
+    libssh2_channel_send_eof(ch);
+    libssh2_channel_free(ch);
+    sol_close_session(session, sock);
+    return result;
+}
+
+static void sftpUploadSOL(const string& localPath, const string& remotePath)
+{
+    int sock = sol_open_socket();
+    if (sock < 0) { fprintf(stderr, "Nova: SOL tunnel not available.\n"); return; }
+    LIBSSH2_SESSION* session = sol_open_session(sock);
+    if (!session) { close(sock); return; }
+
+    LIBSSH2_SFTP* sftp = libssh2_sftp_init(session);
+    if (!sftp) { sol_close_session(session, sock); return; }
+
+    LIBSSH2_SFTP_HANDLE* fh = libssh2_sftp_open(sftp, remotePath.c_str(),
+        LIBSSH2_FXF_WRITE | LIBSSH2_FXF_CREAT | LIBSSH2_FXF_TRUNC,
+        LIBSSH2_SFTP_S_IRUSR | LIBSSH2_SFTP_S_IWUSR |
+        LIBSSH2_SFTP_S_IRGRP | LIBSSH2_SFTP_S_IROTH);
+    if (fh) {
+        ifstream in(localPath, ios::binary);
+        char buf[16384];
+        while (in.read(buf, sizeof(buf)) || in.gcount() > 0)
+            libssh2_sftp_write(fh, buf, (size_t)in.gcount());
+        libssh2_sftp_close(fh);
+    }
+    libssh2_sftp_shutdown(sftp);
+    sol_close_session(session, sock);
+}
+
+static void sftpDownloadSOL(const string& remotePath, const string& localPath)
+{
+    int sock = sol_open_socket();
+    if (sock < 0) { fprintf(stderr, "Nova: SOL tunnel not available.\n"); return; }
+    LIBSSH2_SESSION* session = sol_open_session(sock);
+    if (!session) { close(sock); return; }
+
+    LIBSSH2_SFTP* sftp = libssh2_sftp_init(session);
+    if (!sftp) { sol_close_session(session, sock); return; }
+
+    LIBSSH2_SFTP_HANDLE* fh = libssh2_sftp_open(sftp, remotePath.c_str(),
+        LIBSSH2_FXF_READ, 0);
+    if (fh) {
+        ofstream out(localPath, ios::binary);
+        char buf[16384]; int n;
+        while ((n = (int)libssh2_sftp_read(fh, buf, sizeof(buf))) > 0)
+            out.write(buf, n);
+        libssh2_sftp_close(fh);
+    }
+    libssh2_sftp_shutdown(sftp);
+    sol_close_session(session, sock);
+}
+
+#else  // no libssh2 or Windows
+
+static string sshExecSOL(const string&)
+{
+    fprintf(stderr, "Nova: SOL cluster requires libssh2. "
+            "Install with: sudo apt install libssh2-1-dev\n");
+    return "";
+}
+static void sftpUploadSOL(const string&, const string&)
+{
+    fprintf(stderr, "Nova: SOL cluster requires libssh2.\n");
+}
+static void sftpDownloadSOL(const string&, const string&)
+{
+    fprintf(stderr, "Nova: SOL cluster requires libssh2.\n");
+}
+
+#endif  // NOVA_HAVE_LIBSSH2
+
+static string sol_replace_all(string tmpl, const string& from, const string& to)
+{
+    size_t pos = 0;
+    while ((pos = tmpl.find(from, pos)) != string::npos) {
+        tmpl.replace(pos, from.size(), to);
+        pos += to.size();
+    }
+    return tmpl;
+}
+
+static string generateTrainScript(const string& model, const string& task,
+                                   const string& dsName, const string& dsSplit,
+                                   int epochs, float lr, int batchSize,
+                                   const string& outputDir, const string& hfTok)
+{
+    string t = R"NOVA(#!/usr/bin/env python3
+# Generated by NovaComp sol.finetune()
+import os, json
+from datasets import load_dataset
+from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
+                          TrainingArguments, Trainer)
+
+MODEL_NAME   = "{{MODEL_NAME}}"
+TASK         = "{{TASK}}"
+DATASET_NAME = "{{DATASET_NAME}}"
+DATASET_SPLIT= "{{DATASET_SPLIT}}"
+EPOCHS       = {{EPOCHS}}
+LR           = {{LR}}
+BATCH_SIZE   = {{BATCH_SIZE}}
+OUTPUT_DIR   = "{{OUTPUT_DIR}}"
+HF_TOKEN     = "{{HF_TOKEN}}"
+
+print(f"Loading model: {MODEL_NAME}")
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, token=HF_TOKEN)
+model = AutoModelForSequenceClassification.from_pretrained(
+    MODEL_NAME, token=HF_TOKEN, num_labels=2)
+
+print(f"Loading dataset: {DATASET_NAME}/{DATASET_SPLIT}")
+dataset = load_dataset(DATASET_NAME, split=DATASET_SPLIT, token=HF_TOKEN)
+
+def tokenize(examples):
+    return tokenizer(examples["text"], truncation=True, padding=True, max_length=512)
+
+tokenized = dataset.map(tokenize, batched=True)
+
+training_args = TrainingArguments(
+    output_dir=OUTPUT_DIR,
+    num_train_epochs=EPOCHS,
+    per_device_train_batch_size=BATCH_SIZE,
+    learning_rate=LR,
+    save_strategy="epoch",
+    logging_dir=f"{OUTPUT_DIR}/logs",
+    report_to="none"
+)
+
+trainer = Trainer(model=model, args=training_args, train_dataset=tokenized)
+print("Starting training...")
+trainer.train()
+print("Saving model...")
+trainer.save_model(OUTPUT_DIR)
+tokenizer.save_pretrained(OUTPUT_DIR)
+
+# Ensure pytorch_model.bin exists — login node may have older transformers
+# that cannot load safetensors format.
+import os as _os
+_st = _os.path.join(OUTPUT_DIR, 'model.safetensors')
+_pt = _os.path.join(OUTPUT_DIR, 'pytorch_model.bin')
+if _os.path.exists(_st) and not _os.path.exists(_pt):
+    try:
+        from safetensors.torch import load_file as _lf
+        import torch as _torch
+        _torch.save(_lf(_st), _pt)
+        print("Converted model.safetensors -> pytorch_model.bin for compatibility")
+    except Exception as _e:
+        print(f"[Warning] safetensors->pytorch conversion failed: {_e}")
+
+
+# Upload trained model to user's file storage via pre-signed S3 URL
+_upload_url = "{{UPLOAD_URL}}"
+_s3_key     = "{{S3_KEY}}"
+if _upload_url:
+    print("Packaging model for user file storage...")
+    import subprocess as _sp
+    _tar = OUTPUT_DIR.rstrip('/') + '.tar.gz'
+    _sp.run(['tar', '-czf', _tar, '-C', _os.path.dirname(OUTPUT_DIR),
+             _os.path.basename(OUTPUT_DIR)], check=True)
+    _r = _sp.run(
+        ['curl', '-s', '-o', '/dev/null', '-w', '%{http_code}',
+         '-X', 'PUT', '-H', 'Content-Type: application/gzip',
+         '-T', _tar, _upload_url],
+        capture_output=True, text=True)
+    _code = _r.stdout.strip()
+    if _code == '200':
+        print(f"NOVA_MODEL_UPLOADED:{_s3_key}")
+        print("Model uploaded to your file storage successfully.")
+    else:
+        print(f"[Warning] Model upload to file storage failed (HTTP {_code})")
+    _sp.run(['rm', '-f', _tar])
+
+summary = {"model": MODEL_NAME, "task": TASK, "epochs": EPOCHS, "status": "completed"}
+with open(f"{OUTPUT_DIR}/summary.json", "w") as f:
+    json.dump(summary, f)
+print(f"Training complete! Model saved to {OUTPUT_DIR}")
+)NOVA";
+
+    char lrBuf[32];
+    snprintf(lrBuf, sizeof(lrBuf), "%.8f", (double)lr);
+
+    const char* uploadUrlEnv = getenv("NOVA_MODEL_UPLOAD_URL");
+    const char* s3KeyEnv     = getenv("NOVA_MODEL_S3_KEY");
+
+    t = sol_replace_all(t, "{{MODEL_NAME}}",    model);
+    t = sol_replace_all(t, "{{TASK}}",          task);
+    t = sol_replace_all(t, "{{DATASET_NAME}}",  dsName);
+    t = sol_replace_all(t, "{{DATASET_SPLIT}}", dsSplit);
+    t = sol_replace_all(t, "{{EPOCHS}}",        to_string(epochs));
+    t = sol_replace_all(t, "{{LR}}",            string(lrBuf));
+    t = sol_replace_all(t, "{{BATCH_SIZE}}",    to_string(batchSize));
+    t = sol_replace_all(t, "{{OUTPUT_DIR}}",    outputDir);
+    t = sol_replace_all(t, "{{HF_TOKEN}}",      hfTok);
+    t = sol_replace_all(t, "{{UPLOAD_URL}}",    uploadUrlEnv ? string(uploadUrlEnv) : "");
+    t = sol_replace_all(t, "{{S3_KEY}}",        s3KeyEnv     ? string(s3KeyEnv)     : "");
+    return t;
+}
+
+static string generateSlurmScript(const string& jobId, const string& jobDir)
+{
+    string t = R"(#!/bin/bash
+#SBATCH --job-name=nova_{{JOB_ID}}
+#SBATCH --output={{JOB_DIR}}/slurm_output.txt
+#SBATCH --error={{JOB_DIR}}/slurm_error.txt
+#SBATCH --time=02:00:00
+#SBATCH --partition=general
+#SBATCH --gres=gpu:1
+#SBATCH --mem=16G
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=4
+
+cd {{JOB_DIR}}
+module load cuda/12.9
+module load python/3.10
+# Only install if not already present (avoids ~60s overhead on every job)
+python -c "import torch, transformers, datasets, accelerate, safetensors" 2>/dev/null || \
+    pip install --quiet torch transformers datasets accelerate safetensors --user
+python train.py
+echo "NOVA_JOB_DONE:$?"
+)";
+    t = sol_replace_all(t, "{{JOB_ID}}",  jobId);
+    t = sol_replace_all(t, "{{JOB_DIR}}", jobDir);
+    return t;
+}
+
+// ── HF helpers ────────────────────────────────────────────────────────────────
+
+static string hf_escape_json(const string& s)
+{
+    string out;
+    for (char c : s) {
+        if      (c == '"')  out += "\\\"";
+        else if (c == '\\') out += "\\\\";
+        else if (c == '\n') out += "\\n";
+        else if (c == '\r') out += "\\r";
+        else if (c == '\t') out += "\\t";
+        else out += c;
+    }
+    return out;
+}
+
+static string hf_extract_text(const string& json)
+{
+    if (json.empty()) return "[HF Error: empty response — check token or network]";
+    // Detect HTML error page (proxy, firewall, or wrong endpoint)
+    if (json.find("<!DOCTYPE") != string::npos || json.find("<html") != string::npos)
+        return "[HF Error: received HTML instead of JSON — check EC2 outbound access to api-inference.huggingface.co]";
+
+    auto find_field = [&](const string& field) -> string {
+        string key = "\"" + field + "\"";
+        size_t pos = json.find(key);
+        if (pos == string::npos) return "";
+        pos = json.find(':', pos + key.size());
+        if (pos == string::npos) return "";
+        pos = json.find('"', pos + 1);
+        if (pos == string::npos) return "";
+        size_t end = pos + 1;
+        while (end < json.size() && json[end] != '"') {
+            if (json[end] == '\\') end++;
+            end++;
+        }
+        return json.substr(pos + 1, end - pos - 1);
+    };
+    // Check for JSON error field first
+    string err = find_field("error");
+    if (!err.empty()) return "[HF Error: " + err + "]";
+    string r = find_field("generated_text");
+    if (!r.empty()) return r;
+    r = find_field("label");
+    if (!r.empty()) return r;
+    r = find_field("answer");
+    if (!r.empty()) return r;
+    return "[HF Error: unexpected response: " + json.substr(0, 120) + "]";
 }
 
 void execute_program(struct InstructionNode* program)
@@ -1926,6 +2336,389 @@ void execute_program(struct InstructionNode* program)
                     }
                 }
                 if (tc.result_slot >= 0) mem[tc.result_slot] = res;
+                pc = pc->next;
+                break;
+            }
+
+            case HF_INFER:
+            {
+                auto& hf = pc->hf_inst;
+                string model = strMem[mem[hf.model_slot]];
+
+                if (hf.op == HF_OP_SET_TOKEN) {
+                    hf_api_token = model;
+                    pc = pc->next;
+                    break;
+                }
+
+                if (hf.op == HF_OP_DATASET) {
+                    // model_slot holds dataset name, input_slot holds split string
+                    string dsName  = model;
+                    string dsSplit = (hf.input_slot >= 0) ? strMem[mem[hf.input_slot]] : "train";
+                    string handle  = dsName + ":" + dsSplit;
+                    int strIdx = (int)strMem.size();
+                    strMem.push_back(handle);
+                    if (hf.result_slot >= 0) mem[hf.result_slot] = strIdx;
+                    pc = pc->next;
+                    break;
+                }
+
+                // Trim any whitespace/newlines the parser may have left in the model name
+                while (!model.empty() && (model.back() == ' ' || model.back() == '\n' ||
+                       model.back() == '\r' || model.back() == '\t')) model.pop_back();
+                while (!model.empty() && (model.front() == ' ' || model.front() == '\n' ||
+                       model.front() == '\r' || model.front() == '\t')) model = model.substr(1);
+
+                string tok = hf_api_token;
+                if (tok.empty()) {
+                    const char* env = getenv("HF_API_TOKEN");
+                    if (env) tok = env;
+                }
+                // Trim token too
+                while (!tok.empty() && (tok.back() == ' ' || tok.back() == '\n' ||
+                       tok.back() == '\r' || tok.back() == '\t')) tok.pop_back();
+
+                string input = (hf.input_slot >= 0) ? strMem[mem[hf.input_slot]] : "";
+
+                string payload;
+                if (hf.op == HF_OP_GENERATE) {
+                    payload = "{\"inputs\":\"" + hf_escape_json(input) +
+                              "\",\"parameters\":{\"max_new_tokens\":" +
+                              to_string(hf.max_tokens) + "}}";
+                } else {
+                    payload = "{\"inputs\":\"" + hf_escape_json(input) + "\"}";
+                }
+
+                string jobTag      = to_string((long long)(intptr_t)pc);
+                string payloadFile = "/tmp/hf_payload_" + jobTag + ".json";
+                string tmpOut      = "/tmp/hf_resp_"    + jobTag + ".json";
+                string pyFile      = "/tmp/hf_req_"     + jobTag + ".py";
+
+                // Write the JSON payload to a file — avoids all shell-quoting issues.
+                { ofstream pf(payloadFile); pf << payload; }
+
+                // Use Python urllib with:
+                //   ProxyHandler({})  — disables all env-based proxies
+                //   NoRedirect        — catches HTTP redirects before they reach HTML pages.
+                //                       HF redirects requests with invalid/missing tokens
+                //                       to huggingface.co (HTML) instead of returning JSON.
+                string pyScript =
+                    "import urllib.request, urllib.error, json, sys\n"
+                    "\n"
+                    "class NoRedirect(urllib.request.HTTPRedirectHandler):\n"
+                    "    def redirect_request(self, req, fp, code, msg, headers, newurl):\n"
+                    "        raise Exception('HF API redirected ' + str(code) + ' to: ' + newurl[:80]\n"
+                    "                        + ' — check your HF token is valid')\n"
+                    "\n"
+                    "with open('" + payloadFile + "', 'rb') as f: data = f.read()\n"
+                    "url = 'https://api-inference.huggingface.co/models/" + model + "'\n"
+                    "req = urllib.request.Request(url, data=data, method='POST')\n"
+                    "req.add_header('Authorization', 'Bearer " + tok + "')\n"
+                    "req.add_header('Content-Type', 'application/json')\n"
+                    "opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect)\n"
+                    "try:\n"
+                    "    with opener.open(req, timeout=30) as r:\n"
+                    "        sys.stdout.write(r.read().decode('utf-8'))\n"
+                    "except urllib.error.HTTPError as e:\n"
+                    "    try: sys.stdout.write(e.read().decode('utf-8'))\n"
+                    "    except: sys.stdout.write(json.dumps({'error': 'HTTP ' + str(e.code)}))\n"
+                    "except Exception as e:\n"
+                    "    sys.stdout.write(json.dumps({'error': str(e)}))\n";
+
+                { ofstream pf(pyFile); pf << pyScript; }
+
+                string pyCmd = "python3 " + pyFile + " > " + tmpOut + " 2>/dev/null";
+                fprintf(stderr, "HF_CMD: python3 %s\n", pyFile.c_str());
+                system(pyCmd.c_str());
+
+                string response;
+                {
+                    ifstream rf(tmpOut);
+                    response.assign(istreambuf_iterator<char>(rf),
+                                    istreambuf_iterator<char>());
+                }
+                fprintf(stderr, "HF_RESP: %s\n", response.substr(0, 200).c_str());
+                remove(payloadFile.c_str());
+                remove(pyFile.c_str());
+                remove(tmpOut.c_str());
+
+                if (hf.result_slot >= 0) {
+                    string text = hf_extract_text(response);
+                    int strIdx = (int)strMem.size();
+                    strMem.push_back(text);
+                    mem[hf.result_slot] = strIdx;
+                }
+
+                pc = pc->next;
+                break;
+            }
+
+            case SOL_CALL:
+            {
+                auto& si = pc->sol_inst;
+
+                switch (si.op)
+                {
+                    case SOL_OP_SET_KEY:
+                    {
+                        // sol.set_key() is disabled — SSH key is configured server-side
+                        // via SOL_PRIVATE_KEY_PATH to prevent users from accessing SOL directly.
+                        break;
+                    }
+
+                    case SOL_OP_FINETUNE:
+                    {
+                        string model   = strMem[mem[si.model_slot]];
+                        string task    = strMem[mem[si.task_slot]];
+                        string dataset = (si.dataset_slot >= 0) ? strMem[mem[si.dataset_slot]] : "imdb:train";
+
+                        // Parse "name:split" handle produced by hf.dataset()
+                        string dsName = dataset, dsSplit = "train";
+                        size_t sep = dataset.find(':');
+                        if (sep != string::npos) {
+                            dsName  = dataset.substr(0, sep);
+                            dsSplit = dataset.substr(sep + 1);
+                        }
+
+                        string jobId  = to_string((long long)time(nullptr)) + "_" +
+                                        to_string((unsigned)rand() % 10000);
+                        string jobDir = sol_work_dir + "/" + jobId;
+
+                        string trainPy = generateTrainScript(model, task, dsName, dsSplit,
+                                                             si.epochs, si.lr, si.batch_size,
+                                                             jobDir, hf_api_token);
+                        string slurmSh = generateSlurmScript(jobId, jobDir);
+
+                        string localPy    = "/tmp/train_" + jobId + ".py";
+                        string localSlurm = "/tmp/job_"   + jobId + ".slurm";
+                        sol_write_file(localPy,    trainPy);
+                        sol_write_file(localSlurm, slurmSh);
+
+                        sshExecSOL("mkdir -p " + jobDir);
+                        sftpUploadSOL(localPy,    jobDir + "/train.py");
+                        sftpUploadSOL(localSlurm, jobDir + "/job.slurm");
+
+                        string sbatchOut  = sshExecSOL("sbatch " + jobDir + "/job.slurm");
+                        string slurmJobId = sol_extract_slurm_id(sbatchOut);
+
+                        if (slurmJobId.empty()) {
+                            // sbatch failed or returned unexpected output — surface it to the user
+                            printf("Nova: SOL sbatch failed. Output: %s\n",
+                                   sbatchOut.empty() ? "(empty — tunnel may be down)" : sbatchOut.c_str());
+                            // Use sentinel so the wait loop exits immediately
+                            slurmJobId = "0";
+                        }
+
+                        printf("Nova: SOL finetune submitted — SLURM job ID %s\n", slurmJobId.c_str());
+
+                        // Handle: "jobId:slurmJobId:jobDir:model"
+                        string handle = jobId + ":" + slurmJobId + ":" + jobDir + ":" + model;
+                        int strIdx = (int)strMem.size();
+                        strMem.push_back(handle);
+                        mem[si.job_slot] = strIdx;
+
+                        remove(localPy.c_str());
+                        remove(localSlurm.c_str());
+                        break;
+                    }
+
+                    case SOL_OP_WAIT:
+                    {
+                        string handle = strMem[mem[si.job_slot]];
+                        // Parse handle: "jobId:slurmJobId:jobDir:model"
+                        size_t c1 = handle.find(':');
+                        size_t c2 = (c1 != string::npos) ? handle.find(':', c1 + 1) : string::npos;
+                        size_t c3 = (c2 != string::npos) ? handle.find(':', c2 + 1) : string::npos;
+                        if (c1 == string::npos) { pc = pc->next; break; }
+                        string slurmJobId = handle.substr(c1 + 1, c2 - c1 - 1);
+
+                        if (slurmJobId == "0") {
+                            printf("Nova: Skipping wait — job was not submitted.\n");
+                            pc = pc->next;
+                            break;
+                        }
+
+                        string jobDir_wait = (c3 != string::npos)
+                            ? handle.substr(c2 + 1, c3 - c2 - 1)
+                            : handle.substr(c2 + 1);
+
+                        bool seenRunning = false;
+                        int  runPolls    = 0;
+                        string lastSnippet;
+
+                        while (true) {
+                            string status = sol_trim(sshExecSOL(
+                                "squeue -j " + slurmJobId + " -h -o \"%T\" 2>/dev/null || echo DONE"));
+
+                            if (status.empty() || status == "DONE" || status == "COMPLETED") {
+                                printf("Nova: Training complete!\n");
+                                break;
+                            } else if (status == "FAILED" || status == "CANCELLED") {
+                                fprintf(stderr, "Nova: Job %s %s on SOL cluster.\n",
+                                        slurmJobId.c_str(), status.c_str());
+                                break;
+                            } else if (status == "PENDING" || status == "CONFIGURING") {
+                                printf("Nova: Training job in queue, waiting for GPU server...\n");
+                            } else if (status == "RUNNING") {
+                                if (!seenRunning) {
+                                    printf("Nova: GPU server acquired! Training started.\n");
+                                    seenRunning = true;
+                                    runPolls = 0;
+                                }
+                                // Stream a live snippet of the training log every poll (60s)
+                                if (runPolls % 1 == 0) {
+                                    string snippet = sol_trim(sshExecSOL(
+                                        "tail -2 " + jobDir_wait + "/slurm_output.txt 2>/dev/null"));
+                                    if (!snippet.empty() && snippet != lastSnippet) {
+                                        printf("%s\n", snippet.c_str());
+                                        lastSnippet = snippet;
+                                    }
+                                }
+                                runPolls++;
+                            }
+#ifndef _WIN32
+                            sleep(60);
+#endif
+                        }
+
+                        // Show final training summary (metrics + upload confirmation)
+                        string slurmLog = sol_trim(sshExecSOL(
+                            "grep -v 'it/s\\]' " + jobDir_wait +
+                            "/slurm_output.txt 2>/dev/null | tail -15"));
+                        if (!slurmLog.empty())
+                            printf("Nova: [Training summary]\n%s\n", slurmLog.c_str());
+
+                        // Show any errors from SLURM stderr
+                        string slurmErr = sol_trim(sshExecSOL(
+                            "tail -10 " + jobDir_wait + "/slurm_error.txt 2>/dev/null"));
+
+                        break;
+                    }
+
+                    case SOL_OP_PREDICT:
+                    {
+                        string handle = strMem[mem[si.job_slot]];
+                        size_t c2 = handle.find(':', handle.find(':') + 1);
+                        size_t c3 = (c2 != string::npos) ? handle.find(':', c2 + 1) : string::npos;
+                        string jobDir = (c3 != string::npos)
+                            ? handle.substr(c2 + 1, c3 - c2 - 1)
+                            : handle.substr(c2 + 1);
+                        string input  = strMem[mem[si.input_slot]];
+
+                        // Escape input for embedding in Python string literal
+                        string escaped;
+                        for (char c : input) {
+                            if (c == '"') escaped += "\\\"";
+                            else if (c == '\\') escaped += "\\\\";
+                            else escaped += c;
+                        }
+
+                        string inferPy =
+                            "import sys, os, json\n"
+                            "job_dir = '" + jobDir + "'\n"
+                            "if not os.path.isdir(job_dir):\n"
+                            "    print(f'[SOL predict] Job directory not found: {job_dir}')\n"
+                            "    sys.exit(0)\n"
+                            "if 'config.json' not in os.listdir(job_dir):\n"
+                            "    print('[SOL predict] config.json missing — training likely failed')\n"
+                            "    sys.exit(0)\n"
+                            "try:\n"
+                            "    import torch\n"
+                            "    from transformers import AutoTokenizer, AutoModelForSequenceClassification\n"
+                            "    tokenizer = AutoTokenizer.from_pretrained(job_dir, local_files_only=True)\n"
+                            "    model = AutoModelForSequenceClassification.from_pretrained(\n"
+                            "        job_dir, local_files_only=True, ignore_mismatched_sizes=True)\n"
+                            "    model.eval()\n"
+                            "    inputs = tokenizer(\"" + escaped + "\", return_tensors='pt',\n"
+                            "                       truncation=True, padding=True, max_length=512)\n"
+                            "    inputs.pop('token_type_ids', None)  # not all models use this\n"
+                            "    with torch.no_grad():\n"
+                            "        logits = model(**inputs).logits\n"
+                            "    probs = torch.softmax(logits, dim=-1)[0]\n"
+                            "    pred  = int(torch.argmax(probs).item())\n"
+                            "    label = model.config.id2label.get(pred, f'LABEL_{pred}')\n"
+                            "    score = float(probs[pred].item())\n"
+                            "    print(f'{label} ({score:.3f})')\n"
+                            "except Exception as e:\n"
+                            "    print(f'[SOL predict error: {e}]')\n";
+
+                        string localInfer  = "/tmp/infer_" + to_string((long long)(intptr_t)pc) + ".py";
+                        string remoteInfer = jobDir + "/infer.py";
+                        sol_write_file(localInfer, inferPy);
+                        sftpUploadSOL(localInfer, remoteInfer);
+                        remove(localInfer.c_str());
+
+                        // Use bash -l (login shell) so module system init scripts are sourced.
+                        // Direct SSH exec doesn't run /etc/profile.d/modules.sh, so
+                        // `module load` would silently fail in a plain exec session.
+                        string output = sol_trim(sshExecSOL(
+                            "bash -l -c '"
+                            "source /etc/profile.d/modules.sh 2>/dev/null || true; "
+                            "module load python/3.10 2>/dev/null || true; "
+                            "python3 " + remoteInfer + " 2>&1'"));
+                        if (output.empty())
+                            output = "[SOL predict: no output — model may not have saved correctly]";
+                        int strIdx = (int)strMem.size();
+                        strMem.push_back(output);
+                        if (si.result_slot >= 0) mem[si.result_slot] = strIdx;
+                        break;
+                    }
+
+                    case SOL_OP_SAVE:
+                    {
+                        string handle = strMem[mem[si.job_slot]];
+                        size_t c1 = handle.find(':');
+                        size_t c2 = (c1 != string::npos) ? handle.find(':', c1 + 1) : string::npos;
+                        size_t c3 = (c2 != string::npos) ? handle.find(':', c2 + 1) : string::npos;
+                        string jobId  = handle.substr(0, c1);
+                        string jobDir = (c3 != string::npos) ? handle.substr(c2 + 1, c3 - c2 - 1) : handle.substr(c2 + 1);
+                        string model  = (c3 != string::npos) ? handle.substr(c3 + 1) : "";
+                        string savePath = strMem[mem[si.path_slot]];
+
+                        // Check if the SLURM job uploaded the model to S3
+                        string uploadedS3Key;
+                        string slurmFullLog = sol_trim(sshExecSOL(
+                            "cat " + jobDir + "/slurm_output.txt 2>/dev/null"));
+                        const string UPLOAD_MARKER = "NOVA_MODEL_UPLOADED:";
+                        size_t mpos = slurmFullLog.find(UPLOAD_MARKER);
+                        if (mpos != string::npos) {
+                            size_t end = slurmFullLog.find('\n', mpos + UPLOAD_MARKER.size());
+                            uploadedS3Key = sol_trim(slurmFullLog.substr(
+                                mpos + UPLOAD_MARKER.size(),
+                                end == string::npos ? string::npos
+                                                    : end - mpos - UPLOAD_MARKER.size()));
+                        }
+
+                        if (!uploadedS3Key.empty()) {
+                            // Model was uploaded to S3 by the SLURM compute node
+                            string fname = uploadedS3Key;
+                            size_t sl = fname.rfind('/');
+                            if (sl != string::npos) fname = fname.substr(sl + 1);
+                            printf("Nova: Model saved to your file storage as '%s'\n", fname.c_str());
+                            // Marker for server to register in DynamoDB (no upload needed)
+                            printf("NOVA_S3_FILE:%s\n", uploadedS3Key.c_str());
+                        } else {
+                            // Fallback: write a small JSON reference — model stays on SOL scratch
+                            string meta =
+                                "{\n"
+                                "  \"type\": \"hf_model_ref\",\n"
+                                "  \"model\": \"" + model + "\",\n"
+                                "  \"job_id\": \"" + jobId + "\",\n"
+                                "  \"sol_path\": \"" + jobDir + "\"\n"
+                                "}\n";
+
+                            ofstream nbc(savePath);
+                            nbc << meta;
+                            nbc.close();
+
+                            printf("Nova: Model reference saved to %s\n", savePath.c_str());
+                            printf("Nova: Full model weights remain on SOL at %s\n", jobDir.c_str());
+                            printf("NOVA_SAVE_FILE:%s\n", savePath.c_str());
+                        }
+                        break;
+                    }
+                }
+
                 pc = pc->next;
                 break;
             }
@@ -4557,43 +5350,426 @@ void run_repl()
     }
 }
 
-// main 
+// ── CUDA codegen ─────────────────────────────────────────────────────────────
 
+void generate_cuda(struct InstructionNode* program, const std::string& outputFile)
+{
+    // Pass 1: collect which tensor op types are actually used in the IR
+    std::unordered_set<int> ops_used;
+    for (auto* p = program; p; p = p->next)
+        if (p->type == TENSOR_CALL)
+            ops_used.insert((int)p->tensor_call_inst.op);
+
+    if (ops_used.empty())
+    {
+        fprintf(stderr, "Error: --emit-cuda requires tensor operations in source\n");
+        return;
+    }
+
+    auto has = [&](TensorOp op) { return ops_used.count((int)op) > 0; };
+
+    bool needMatmul   = has(TEN_MATMUL);
+    bool needAdd      = has(TEN_ADD);
+    bool needRelu     = has(TEN_RELU) || has(TEN_RELU_GRAD);
+    bool needSoftmax  = has(TEN_SOFTMAX);
+    bool needBackward = has(TEN_BACKWARD) || has(TEN_RELU_GRAD) || has(TEN_SIGMOID_GRAD)
+                     || has(TEN_MSE_GRAD) || has(TEN_BCE_GRAD)  || has(TEN_CE_GRAD);
+
+    FILE* out = fopen(outputFile.c_str(), "w");
+    if (!out)
+    {
+        fprintf(stderr, "Error: could not open output file '%s'\n", outputFile.c_str());
+        return;
+    }
+
+    // ── 1. Header ────────────────────────────────────────────────────────────
+    fprintf(out,
+        "// Generated by NovaComp --emit-cuda\n"
+        "#include <stdio.h>\n"
+        "#include <stdlib.h>\n"
+        "#include <cuda_runtime.h>\n"
+        "#include <math.h>\n\n");
+
+    // ── 2. CUDA_CHECK macro ───────────────────────────────────────────────────
+    fprintf(out,
+        "#define CUDA_CHECK(call) \\\n"
+        "    do { \\\n"
+        "        cudaError_t err = call; \\\n"
+        "        if (err != cudaSuccess) { \\\n"
+        "            fprintf(stderr, \"CUDA error at %%s:%%d: %%s\\n\", \\\n"
+        "                    __FILE__, __LINE__, cudaGetErrorString(err)); \\\n"
+        "            exit(1); \\\n"
+        "        } \\\n"
+        "    } while(0)\n\n");
+
+    // ── 3. Kernels (only those actually present in IR) ────────────────────────
+    if (needMatmul)
+    {
+        fprintf(out,
+            "__global__ void matmul_kernel(float* A, float* B, float* C, int M, int K, int N) {\n"
+            "    int row = blockIdx.y * blockDim.y + threadIdx.y;\n"
+            "    int col = blockIdx.x * blockDim.x + threadIdx.x;\n"
+            "    if (row < M && col < N) {\n"
+            "        float sum = 0.0f;\n"
+            "        for (int k = 0; k < K; k++)\n"
+            "            sum += A[row * K + k] * B[k * N + col];\n"
+            "        C[row * N + col] = sum;\n"
+            "    }\n"
+            "}\n\n");
+    }
+
+    if (needAdd)
+    {
+        fprintf(out,
+            "__global__ void add_kernel(float* A, float* B, float* C, int n) {\n"
+            "    int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+            "    if (i < n) C[i] = A[i] + B[i];\n"
+            "}\n\n");
+    }
+
+    if (needRelu)
+    {
+        fprintf(out,
+            "__global__ void relu_kernel(float* A, float* C, int n) {\n"
+            "    int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+            "    if (i < n) C[i] = A[i] > 0.0f ? A[i] : 0.0f;\n"
+            "}\n\n");
+    }
+
+    if (needSoftmax)
+    {
+        fprintf(out,
+            "__global__ void softmax_kernel(float* A, float* C, int n) {\n"
+            "    float sum = 0.0f;\n"
+            "    for (int i = 0; i < n; i++) sum += expf(A[i]);\n"
+            "    int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+            "    if (i < n) C[i] = expf(A[i]) / sum;\n"
+            "}\n\n");
+    }
+
+    if (needBackward)
+    {
+        fprintf(out,
+            "__global__ void backward_kernel(float* grad_out, float* activation, float* grad_in, int n) {\n"
+            "    int i = blockIdx.x * blockDim.x + threadIdx.x;\n"
+            "    if (i < n) grad_in[i] = grad_out[i] * (activation[i] > 0.0f ? 1.0f : 0.0f);\n"
+            "}\n\n");
+    }
+
+    // ── 4. main() ─────────────────────────────────────────────────────────────
+    fprintf(out, "int main() {\n");
+    fprintf(out, "    srand(42);\n\n");
+
+    // Track tensor slots: result_slot -> {device ptr name, host ptr name, rows, cols}
+    struct TenInfo { std::string dev, host; int rows, cols; };
+    std::unordered_map<int, TenInfo> tenMap;   // slot -> info
+    std::vector<std::pair<std::string,std::string>> allPtrs; // (dev, host) for cleanup
+    int counter = 0;
+    std::string lastDev, lastHost;
+    int lastN = 0;
+
+    auto newTensor = [&](int rows, int cols) -> TenInfo {
+        std::string base = "t" + std::to_string(counter++);
+        return { "d_" + base, "h_" + base, rows, cols };
+    };
+
+    auto emitAlloc = [&](const TenInfo& ti, bool randomInit) {
+        int n = ti.rows * ti.cols;
+        fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+        fprintf(out, "    float *%s;\n", ti.dev.c_str());
+        fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+        if (randomInit)
+            fprintf(out, "    for (int i = 0; i < %d; i++) %s[i] = (float)rand() / RAND_MAX;\n", n, ti.host.c_str());
+        else
+            fprintf(out, "    for (int i = 0; i < %d; i++) %s[i] = 0.0f;\n", n, ti.host.c_str());
+        fprintf(out, "    CUDA_CHECK(cudaMemcpy(%s, %s, %d * sizeof(float), cudaMemcpyHostToDevice));\n\n",
+                ti.dev.c_str(), ti.host.c_str(), n);
+        allPtrs.push_back({ti.dev, ti.host});
+        lastDev = ti.dev; lastHost = ti.host; lastN = n;
+    };
+
+    // Walk IR: emit CUDA code for each tensor operation in source order
+    for (auto* p = program; p; p = p->next)
+    {
+        // Propagate tensor slot copies through integer ASSIGN instructions.
+        // OPERATOR_NONE is a direct copy (mem[lhs] = mem[op1]), op2 is unused.
+        // For arithmetic forms, only propagate when exactly one operand is a tensor slot.
+        if (p->type == ASSIGN)
+        {
+            int lhs = p->assign_inst.left_hand_side_index;
+            int op1 = p->assign_inst.operand1_index;
+            if (p->assign_inst.op == OPERATOR_NONE)
+            {
+                if (tenMap.count(op1))
+                    tenMap[lhs] = tenMap[op1];
+            }
+            else
+            {
+                int op2 = p->assign_inst.operand2_index;
+                if (tenMap.count(op1) && !tenMap.count(op2))
+                    tenMap[lhs] = tenMap[op1];
+                else if (tenMap.count(op2) && !tenMap.count(op1))
+                    tenMap[lhs] = tenMap[op2];
+            }
+            continue;
+        }
+
+        if (p->type != TENSOR_CALL) continue;
+
+        TensorOp op   = p->tensor_call_inst.op;
+        int      rslot = p->tensor_call_inst.result_slot;
+
+        // ── Allocation ops ───────────────────────────────────────────────────
+        if (op == TEN_ALLOC || op == TEN_ZEROS || op == TEN_ONES
+         || op == TEN_RANDN || op == TEN_XAVIER)
+        {
+            int rows = 32, cols = 32;  // default; extract from IR when possible
+            TenInfo ti = newTensor(rows, cols);
+            fprintf(out, "    /* tensor %s (%dx%d) */\n",
+                    ti.dev.c_str(), rows, cols);
+            bool rnd = (op == TEN_ALLOC || op == TEN_RANDN || op == TEN_XAVIER);
+            emitAlloc(ti, rnd);
+            tenMap[rslot] = ti;
+            continue;
+        }
+
+        // ── matmul ───────────────────────────────────────────────────────────
+        if (op == TEN_MATMUL)
+        {
+            int sa = p->tensor_call_inst.arg_slots[0];
+            int sb = p->tensor_call_inst.arg_slots[1];
+            if (!tenMap.count(sa) || !tenMap.count(sb))
+            {
+                fprintf(out, "    /* skipped matmul: tensor args not tracked */\n\n");
+                continue;
+            }
+            auto& A = tenMap[sa];
+            auto& B = tenMap[sb];
+            int K = A.cols;
+            TenInfo ti = newTensor(A.rows, B.cols);
+            int n = ti.rows * ti.cols;
+            fprintf(out, "    /* matmul: %s = %s x %s (%dx%d) */\n",
+                    ti.dev.c_str(), A.dev.c_str(), B.dev.c_str(), ti.rows, ti.cols);
+            fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+            fprintf(out, "    float *%s;\n", ti.dev.c_str());
+            fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+            fprintf(out, "    {\n");
+            fprintf(out, "        dim3 block(16, 16);\n");
+            fprintf(out, "        dim3 grid((%d + 15) / 16, (%d + 15) / 16);\n", ti.cols, ti.rows);
+            fprintf(out, "        matmul_kernel<<<grid, block>>>(%s, %s, %s, %d, %d, %d);\n",
+                    A.dev.c_str(), B.dev.c_str(), ti.dev.c_str(), ti.rows, K, ti.cols);
+            fprintf(out, "        CUDA_CHECK(cudaGetLastError());\n");
+            fprintf(out, "        CUDA_CHECK(cudaDeviceSynchronize());\n");
+            fprintf(out, "    }\n\n");
+            allPtrs.push_back({ti.dev, ti.host});
+            lastDev = ti.dev; lastHost = ti.host; lastN = n;
+            tenMap[rslot] = ti;
+            continue;
+        }
+
+        // ── element-wise add ─────────────────────────────────────────────────
+        if (op == TEN_ADD)
+        {
+            int sa = p->tensor_call_inst.arg_slots[0];
+            int sb = p->tensor_call_inst.arg_slots[1];
+            if (!tenMap.count(sa) || !tenMap.count(sb))
+            {
+                fprintf(out, "    /* skipped add: tensor args not tracked */\n\n");
+                continue;
+            }
+            auto& A = tenMap[sa];
+            TenInfo ti = newTensor(A.rows, A.cols);
+            int n = ti.rows * ti.cols;
+            fprintf(out, "    /* add: %s = %s + %s */\n",
+                    ti.dev.c_str(), A.dev.c_str(), tenMap[sb].dev.c_str());
+            fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+            fprintf(out, "    float *%s;\n", ti.dev.c_str());
+            fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+            fprintf(out, "    {\n");
+            fprintf(out, "        int threads = 256;\n");
+            fprintf(out, "        int blocks = (%d + threads - 1) / threads;\n", n);
+            fprintf(out, "        add_kernel<<<blocks, threads>>>(%s, %s, %s, %d);\n",
+                    A.dev.c_str(), tenMap[sb].dev.c_str(), ti.dev.c_str(), n);
+            fprintf(out, "        CUDA_CHECK(cudaGetLastError());\n");
+            fprintf(out, "        CUDA_CHECK(cudaDeviceSynchronize());\n");
+            fprintf(out, "    }\n\n");
+            allPtrs.push_back({ti.dev, ti.host});
+            lastDev = ti.dev; lastHost = ti.host; lastN = n;
+            tenMap[rslot] = ti;
+            continue;
+        }
+
+        // ── relu / relu_grad ─────────────────────────────────────────────────
+        if (op == TEN_RELU || op == TEN_RELU_GRAD)
+        {
+            int sa = p->tensor_call_inst.arg_slots[0];
+            if (!tenMap.count(sa))
+            {
+                fprintf(out, "    /* skipped relu: tensor arg not tracked */\n\n");
+                continue;
+            }
+            auto& A = tenMap[sa];
+            TenInfo ti = newTensor(A.rows, A.cols);
+            int n = ti.rows * ti.cols;
+            const char* opname = (op == TEN_RELU) ? "relu" : "relu_grad";
+            fprintf(out, "    /* %s: %s = %s(%s) */\n",
+                    opname, ti.dev.c_str(), opname, A.dev.c_str());
+            fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+            fprintf(out, "    float *%s;\n", ti.dev.c_str());
+            fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+            fprintf(out, "    {\n");
+            fprintf(out, "        int threads = 256;\n");
+            fprintf(out, "        int blocks = (%d + threads - 1) / threads;\n", n);
+            fprintf(out, "        relu_kernel<<<blocks, threads>>>(%s, %s, %d);\n",
+                    A.dev.c_str(), ti.dev.c_str(), n);
+            fprintf(out, "        CUDA_CHECK(cudaGetLastError());\n");
+            fprintf(out, "        CUDA_CHECK(cudaDeviceSynchronize());\n");
+            fprintf(out, "    }\n\n");
+            allPtrs.push_back({ti.dev, ti.host});
+            lastDev = ti.dev; lastHost = ti.host; lastN = n;
+            tenMap[rslot] = ti;
+            continue;
+        }
+
+        // ── softmax ──────────────────────────────────────────────────────────
+        if (op == TEN_SOFTMAX)
+        {
+            int sa = p->tensor_call_inst.arg_slots[0];
+            if (!tenMap.count(sa))
+            {
+                fprintf(out, "    /* skipped softmax: tensor arg not tracked */\n\n");
+                continue;
+            }
+            auto& A = tenMap[sa];
+            TenInfo ti = newTensor(A.rows, A.cols);
+            int n = ti.rows * ti.cols;
+            fprintf(out, "    /* softmax: %s = softmax(%s) */\n",
+                    ti.dev.c_str(), A.dev.c_str());
+            fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+            fprintf(out, "    float *%s;\n", ti.dev.c_str());
+            fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+            fprintf(out, "    {\n");
+            fprintf(out, "        int threads = 256;\n");
+            fprintf(out, "        int blocks = (%d + threads - 1) / threads;\n", n);
+            fprintf(out, "        softmax_kernel<<<blocks, threads>>>(%s, %s, %d);\n",
+                    A.dev.c_str(), ti.dev.c_str(), n);
+            fprintf(out, "        CUDA_CHECK(cudaGetLastError());\n");
+            fprintf(out, "        CUDA_CHECK(cudaDeviceSynchronize());\n");
+            fprintf(out, "    }\n\n");
+            allPtrs.push_back({ti.dev, ti.host});
+            lastDev = ti.dev; lastHost = ti.host; lastN = n;
+            tenMap[rslot] = ti;
+            continue;
+        }
+
+        // ── backward / gradient ops → backward_kernel ────────────────────────
+        if (op == TEN_MSE_GRAD || op == TEN_BCE_GRAD || op == TEN_CE_GRAD
+         || op == TEN_SIGMOID_GRAD)
+        {
+            int sa = p->tensor_call_inst.arg_slots[0];
+            int sb = p->tensor_call_inst.arg_slots[1];
+            if (!tenMap.count(sa) || !tenMap.count(sb))
+            {
+                fprintf(out, "    /* skipped backward: tensor args not tracked */\n\n");
+                continue;
+            }
+            auto& A = tenMap[sa];
+            auto& B = tenMap[sb];
+            TenInfo ti = newTensor(A.rows, A.cols);
+            int n = ti.rows * ti.cols;
+            fprintf(out, "    /* backward: %s = backward(%s, %s) */\n",
+                    ti.dev.c_str(), A.dev.c_str(), B.dev.c_str());
+            fprintf(out, "    float *%s = (float*)malloc(%d * sizeof(float));\n", ti.host.c_str(), n);
+            fprintf(out, "    float *%s;\n", ti.dev.c_str());
+            fprintf(out, "    CUDA_CHECK(cudaMalloc(&%s, %d * sizeof(float)));\n", ti.dev.c_str(), n);
+            fprintf(out, "    {\n");
+            fprintf(out, "        int threads = 256;\n");
+            fprintf(out, "        int blocks = (%d + threads - 1) / threads;\n", n);
+            fprintf(out, "        backward_kernel<<<blocks, threads>>>(%s, %s, %s, %d);\n",
+                    A.dev.c_str(), B.dev.c_str(), ti.dev.c_str(), n);
+            fprintf(out, "        CUDA_CHECK(cudaGetLastError());\n");
+            fprintf(out, "        CUDA_CHECK(cudaDeviceSynchronize());\n");
+            fprintf(out, "    }\n\n");
+            allPtrs.push_back({ti.dev, ti.host});
+            lastDev = ti.dev; lastHost = ti.host; lastN = n;
+            tenMap[rslot] = ti;
+            continue;
+        }
+    }
+
+    // ── Copy last result back to host and print ───────────────────────────────
+    if (!lastDev.empty())
+    {
+        fprintf(out, "    /* copy result back */\n");
+        fprintf(out, "    CUDA_CHECK(cudaMemcpy(%s, %s, %d * sizeof(float), cudaMemcpyDeviceToHost));\n",
+                lastHost.c_str(), lastDev.c_str(), lastN);
+        fprintf(out, "    printf(\"Result[0..4]: \");\n");
+        fprintf(out, "    for (int i = 0; i < 5 && i < %d; i++) printf(\"%%.4f \", %s[i]);\n",
+                lastN, lastHost.c_str());
+        fprintf(out, "    printf(\"\\n\");\n\n");
+    }
+
+    // ── Cleanup ───────────────────────────────────────────────────────────────
+    for (auto& pr : allPtrs)
+    {
+        fprintf(out, "    cudaFree(%s);\n", pr.first.c_str());
+        fprintf(out, "    free(%s);\n", pr.second.c_str());
+    }
+    fprintf(out, "\n    return 0;\n}\n");
+
+    fclose(out);
+    fprintf(stderr, "CUDA output written to: %s\n", outputFile.c_str());
+}
+
+// main
+
+#ifndef NOVA_NOVM_BUILD
 int main(int argc, char* argv[])
 {
     setvbuf(stdout, nullptr, _IONBF, 0);  // disable stdout buffering
     setvbuf(stderr, nullptr, _IONBF, 0); // disable stderr buffering
 
-    string inputFile    = "";
-    bool flag_dump_ir   = false;
-    bool flag_optimize  = false;
-    bool flag_benchmark = false;
-    bool flag_repl = false;
-    int  bench_iters    = 10000;
-    bool flag_emit_asm = false;
-    bool flag_build = false;
-    string asmFile = "";
+    string inputFile       = "";
+    bool flag_dump_ir      = false;
+    bool flag_optimize     = false;
+    bool flag_benchmark    = false;
+    bool flag_repl         = false;
+    int  bench_iters       = 10000;
+    bool flag_emit_asm     = false;
+    bool flag_build        = false;
+    bool flag_emit_cuda    = false;
+    bool flag_emit_bytecode= false;
+    string asmFile         = "";
+    string cudaOutputFile  = "";
+    string bytecodeOutFile = "";
 
     for (int i = 1; i < argc; i++)
     {
         string arg = argv[i];
-        if (arg == "--dump-ir")   { flag_dump_ir   = true; continue; }
-        if (arg == "--optimize")  { flag_optimize  = true; continue; }
-        if (arg == "--benchmark") { flag_benchmark = true; continue; }
-        if (arg == "--emit-asm")  { flag_emit_asm  = true; continue; }
-        if (arg == "--build")     { flag_build     = true; continue; }
-        if (arg == "--repl") { flag_repl = true; continue; }
-        if (arg == "--debug") { debug_mode = true; debug_step = true; continue; }
-        if (arg[0] != '-')       { inputFile = arg; continue; }
+        if (arg == "--dump-ir")        { flag_dump_ir        = true; continue; }
+        if (arg == "--optimize")       { flag_optimize       = true; continue; }
+        if (arg == "--benchmark")      { flag_benchmark      = true; continue; }
+        if (arg == "--emit-asm")       { flag_emit_asm       = true; continue; }
+        if (arg == "--build")          { flag_build          = true; continue; }
+        if (arg == "--repl")           { flag_repl           = true; continue; }
+        if (arg == "--debug")          { debug_mode = true; debug_step = true; continue; }
+        if (arg == "--emit-cuda")      { flag_emit_cuda      = true; continue; }
+        if (arg == "--emit-bytecode")  { flag_emit_bytecode  = true; continue; }
+        if (arg[0] != '-')             { inputFile = arg; continue; }
 
         if (arg == "--iters" && i + 1 < argc)
         {
             bench_iters = atoi(argv[++i]);
             continue;
         }
+        if (arg == "-o" && i + 1 < argc)
+        {
+            bytecodeOutFile = argv[++i];
+            continue;
+        }
 
         fprintf(stderr, "Unknown flag: %s\n", arg.c_str());
-        fprintf(stderr, "Usage: %s [file.csl] [--dump-ir] [--optimize] [--benchmark] [--iters N]\n",
+        fprintf(stderr, "Usage: %s [file.csl] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--emit-bytecode] [-o out.nbc]\n",
                 argv[0]);
         return 1;
     }
@@ -4731,6 +5907,41 @@ int main(int argc, char* argv[])
     // Identify pure + recursive functions for automatic memoization
     detect_memoizable_functions();
 
+    // CUDA codegen — output .cu file and exit (does not execute the program)
+    if (flag_emit_cuda)
+    {
+        if (inputFile.empty())
+        {
+            fprintf(stderr, "Error: --emit-cuda requires an input file\n");
+            return 1;
+        }
+        cudaOutputFile = inputFile;
+        size_t dot = cudaOutputFile.rfind('.');
+        if (dot != string::npos) cudaOutputFile = cudaOutputFile.substr(0, dot);
+        cudaOutputFile += ".cu";
+        generate_cuda(program, cudaOutputFile);
+        return 0;
+    }
+
+    // Bytecode emit — serialize IR to .nbc and exit
+    if (flag_emit_bytecode)
+    {
+        if (bytecodeOutFile.empty())
+        {
+            if (inputFile.empty())
+            {
+                fprintf(stderr, "Error: --emit-bytecode requires an input file or -o <out.nbc>\n");
+                return 1;
+            }
+            bytecodeOutFile = inputFile;
+            size_t dot = bytecodeOutFile.rfind('.');
+            if (dot != string::npos) bytecodeOutFile = bytecodeOutFile.substr(0, dot);
+            bytecodeOutFile += ".nbc";
+        }
+        emit_bytecode(program, bytecodeOutFile);
+        return 0;
+    }
+
     if (flag_emit_asm)
     {
         // derive output Filename from input (program.csl -> program.asm)
@@ -4858,3 +6069,4 @@ int main(int argc, char* argv[])
 
     return 0;
 }
+#endif  // NOVA_NOVM_BUILD
