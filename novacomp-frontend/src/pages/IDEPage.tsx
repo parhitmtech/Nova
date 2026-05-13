@@ -77,7 +77,7 @@ export default function IDEPage() {
         if (lastFile && fileList.some(f => f.fileName === lastFile)) {
           try {
             const r = await loadFile(token, lastFile)
-            setCode(r.data.content ?? '')
+            if (typeof r.data.content === 'string') setCode(r.data.content)
             setCurrentFile(lastFile)
           } catch { /* ignore — user can pick manually */ }
         }
@@ -122,13 +122,20 @@ export default function IDEPage() {
 
   const handleLoadFile = async (fileName: string) => {
     if (!token) return
+    // Already open — nothing to do
+    if (fileName === currentFile) return
+    // Binary files can't be displayed in the editor
+    if (/\.(tar\.gz|gz|bin|pt|pth)$/.test(fileName)) {
+      setCurrentFile(fileName)
+      setOutput({ mode: 'run', content: `Binary file — ${fileName}\nThis is a trained model archive. Download it to use locally with HuggingFace.` })
+      return
+    }
     try {
       const res = await loadFile(token, fileName)
-      setCode(res.data.content ?? '')
+      const content = res.data.content
+      // Only update editor if S3 returned actual content — never wipe to empty on a null response
+      if (typeof content === 'string') setCode(content)
       setCurrentFile(fileName)
-      setOutput({ mode: 'idle', content: '' })
-      setGpuStatus('idle'); setGpuOutput(''); setGpuError(''); setGpuScenario(''); setGpuBenefit('')
-      if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? (err instanceof Error ? err.message : 'Load failed')
