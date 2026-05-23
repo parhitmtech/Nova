@@ -1,0 +1,61 @@
+# ── Node.js ──
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# ── Frontend build ──
+novacomp-frontend/dist/
+novacomp-frontend/node_modules/
+
+# ── Backend build artifacts ──
+Compiler_PJ_3/node_modules/
+Compiler_PJ_3/dist/
+
+# ── C++ build outputs ──
+Compiler_PJ_3/compiler
+Compiler_PJ_3/compiler.exe
+Compiler_PJ_3/novavm
+Compiler_PJ_3/*.o
+Compiler_PJ_3/*.asm
+Compiler_PJ_3/*.nbc
+Compiler_PJ_3/_tmp/
+Compiler_PJ_3/compiler_debug/
+
+# ── Environment / secrets ──
+.env
+.env.*
+!.env.example
+Compiler_PJ_3/.env
+novacomp-frontend/.env
+
+# ── SSH / credentials ──
+*.pem
+*.key
+sol_tunnel.pid
+sol_tunnel_job.txt
+
+# ── Python ──
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Test / scratch files ──
+Compiler_PJ_3/workspace/
+Compiler_PJ_3/*.csl
+Compiler_PJ_3/test_*.nova
+Compiler_PJ_3/server.log
+mnist_X.csv
+mnist_Y.csv
+test_run.csl
+
+# ── CUDA build artifacts ──
+*.cubin
+*.ptx
+
+# ── Misc ──
+*.png
+*.tar.gz
+Project Goals.txt
