@@ -2,19 +2,23 @@ import { lazy, Suspense, useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Save, Play, BarChart2, LogOut, Plus, Trash2, FileCode,
-  Loader2, Share2, TerminalSquare, Check, Zap, Download,
+  Loader2, Share2, Check, Zap, Download,
 } from 'lucide-react'
 import { listFiles, saveFile, loadFile, deleteFile } from '../api/files'
 import { runCodeStream, compareCode, submitGpuJob, getGpuStatus, getGpuResults, compileBytecode } from '../api/compiler'
 import { shareCode } from '../api/share'
 import { useAuth } from '../contexts/AuthContext'
 import { registerNovaLanguage } from '../lib/novaLanguage'
+import BottomPanel from '../components/BottomPanel'
+import NovaBot from '../components/NovaBot'
 
-const MonacoEditor   = lazy(() => import('@monaco-editor/react'))
-const TerminalPanel  = lazy(() => import('../components/TerminalPanel'))
+// Monaco is code-split to keep the initial bundle small.
+const MonacoEditor = lazy(() => import('@monaco-editor/react'))
 
-interface FileEntry  { fileName: string; updatedAt: string }
+// Metadata returned by GET /files — content is fetched separately via loadFile.
+interface FileEntry { fileName: string; updatedAt: string }
 
+// Shape of the data returned by POST /compare.
 interface CompareResult {
   output: string
   outputMismatch: boolean
@@ -30,39 +34,48 @@ type OutputMode = 'idle' | 'run' | 'compare' | 'error'
 interface OutputState {
   mode: OutputMode
   content: string
-  ms?: number
+  ms?: number           // elapsed milliseconds, set when the "done" SSE event arrives
   compareData?: CompareResult
 }
 
 export default function IDEPage() {
   const { token, user, logout } = useAuth()
   const navigate = useNavigate()
+
   const [files,       setFiles]       = useState<FileEntry[]>([])
   const [currentFile, setCurrentFile] = useState('')
   const [code,        setCode]        = useState('// Start writing Nova code here\n')
   const [output,      setOutput]      = useState<OutputState>({ mode: 'idle', content: '' })
   const [loading,     setLoading]     = useState(false)
   const [saving,      setSaving]      = useState(false)
-  const [termOpen,    setTermOpen]    = useState(false)
   const [shareMsg,    setShareMsg]    = useState('')
+
+  // GPU job state machine: idle → submitting → pending → running → completed/failed
   const [gpuStatus,   setGpuStatus]   = useState<'idle' | 'submitting' | 'pending' | 'running' | 'completed' | 'failed' | 'unavailable'>('idle')
   const [gpuOutput,   setGpuOutput]   = useState('')
   const [gpuError,    setGpuError]    = useState('')
   const [gpuScenario, setGpuScenario] = useState('')
   const [gpuBenefit,  setGpuBenefit]  = useState('')
-  const outputRef        = useRef<HTMLDivElement>(null)
-  const handleSaveRef    = useRef<() => Promise<void>>(async () => {})
-  const termWsRef        = useRef<WebSocket | null>(null)
-  const pollRef          = useRef<ReturnType<typeof setInterval> | null>(null)
-  const restoredFileRef  = useRef(false)
-  const runAbortRef      = useRef<AbortController | null>(null)
 
-  // Pre-load forked code from SharePage
+  // Stored in a ref so Monaco's onMount closure always calls the latest version
+  // without needing to be re-registered on every render.
+  const handleSaveRef   = useRef<() => Promise<void>>(async () => {})
+  const termWsRef       = useRef<WebSocket | null>(null)
+  const pollRef         = useRef<ReturnType<typeof setInterval> | null>(null)
+  const restoredFileRef = useRef(false)
+  const runAbortRef     = useRef<AbortController | null>(null)
+  const autoSaveTimer   = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [autoSaveStatus, setAutoSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle')
+
+  // If the user arrived by clicking "Fork in IDE" on a share page, pre-populate
+  // the editor with that code and clear the sessionStorage entry immediately.
   useEffect(() => {
     const fork = sessionStorage.getItem('novacomp_fork')
     if (fork) { setCode(fork); sessionStorage.removeItem('novacomp_fork') }
   }, [])
 
+  // Fetch the user's file list from DynamoDB. On the very first call, also
+  // auto-restore the last-open file so the editor isn't blank after a refresh.
   const fetchFiles = useCallback(async () => {
     if (!token) return
     try {
@@ -70,36 +83,51 @@ export default function IDEPage() {
       const fileList: FileEntry[] = res.data.files ?? []
       setFiles(fileList)
 
-      // On first load, auto-restore the last-open file from localStorage
       if (!restoredFileRef.current && fileList.length > 0) {
         restoredFileRef.current = true
         const lastFile = localStorage.getItem('novacomp_last_file')
         if (lastFile && fileList.some(f => f.fileName === lastFile)) {
           try {
             const r = await loadFile(token, lastFile)
+            // Only update editor if S3 returned actual string content —
+            // a null response must not wipe the editor placeholder.
             if (typeof r.data.content === 'string') setCode(r.data.content)
             setCurrentFile(lastFile)
           } catch { /* ignore — user can pick manually */ }
         }
       }
-    } catch { /* ignore */ }
+    } catch { /* ignore network errors on background refresh */ }
   }, [token])
 
   useEffect(() => { fetchFiles() }, [fetchFiles])
 
-  // Persist the current file name so we can restore it on next page load
+  // Remember the open file name across page refreshes so auto-restore works.
   useEffect(() => {
     if (currentFile) localStorage.setItem('novacomp_last_file', currentFile)
   }, [currentFile])
 
+  // Auto-save: 2 seconds after the user stops typing, silently persist to S3.
   useEffect(() => {
-    if (outputRef.current)
-      outputRef.current.scrollTop = outputRef.current.scrollHeight
-  }, [output])
+    if (!currentFile || !token) return
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    setAutoSaveStatus('idle')
+    autoSaveTimer.current = setTimeout(async () => {
+      setAutoSaveStatus('saving')
+      try {
+        await saveFile(token, currentFile, code)
+        setAutoSaveStatus('saved')
+        setTimeout(() => setAutoSaveStatus('idle'), 2000)
+      } catch {
+        setAutoSaveStatus('idle')
+      }
+    }, 2000)
+    return () => { if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current) }
+  }, [code, currentFile, token])
 
   const handleSave = useCallback(async () => {
     if (!token) return
     let name = currentFile
+    // Prompt for a file name only when there is no current file open.
     if (!name) {
       name = prompt('Enter file name:', 'untitled.nova') ?? ''
       if (!name) return
@@ -109,6 +137,7 @@ export default function IDEPage() {
       await saveFile(token, name, code)
       setCurrentFile(name)
       await fetchFiles()
+      // Sync the file to the server-side workspace so the terminal sees it too.
       if (termWsRef.current?.readyState === WebSocket.OPEN)
         termWsRef.current.send(JSON.stringify({ type: 'write', fileName: name, content: code }))
     } catch (err: unknown) {
@@ -118,24 +147,32 @@ export default function IDEPage() {
     } finally { setSaving(false) }
   }, [token, currentFile, code, fetchFiles])
 
+  // Keep the ref in sync so Monaco's Ctrl+S binding always calls the latest save.
   useEffect(() => { handleSaveRef.current = handleSave }, [handleSave])
 
   const handleLoadFile = async (fileName: string) => {
     if (!token) return
-    // Already open — nothing to do
+    // Clicking the already-open file is a no-op — avoids unnecessary S3 fetch
+    // and prevents wiping unsaved changes if the file content comes back empty.
     if (fileName === currentFile) return
-    // Binary files can't be displayed in the editor
+
+    // Binary model archives (.tar.gz) can't be displayed as text.
+    // Show an informational message instead of loading garbage bytes into Monaco.
     if (/\.(tar\.gz|gz|bin|pt|pth)$/.test(fileName)) {
       setCurrentFile(fileName)
       setOutput({ mode: 'run', content: `Binary file — ${fileName}\nThis is a trained model archive. Download it to use locally with HuggingFace.` })
       return
     }
+
     try {
       const res = await loadFile(token, fileName)
       const content = res.data.content
-      // Only update editor if S3 returned actual content — never wipe to empty on a null response
+      // Guard: only update editor if S3 returned a real string.
+      // A null/undefined response must never wipe the current editor content.
       if (typeof content === 'string') setCode(content)
       setCurrentFile(fileName)
+      // Intentionally NOT clearing output — the user may want to keep the
+      // results from a previous run visible while browsing other files.
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? (err instanceof Error ? err.message : 'Load failed')
@@ -146,8 +183,11 @@ export default function IDEPage() {
   const handleNewFile = async () => {
     const name = prompt('Enter file name:', 'untitled.nova')
     if (!name) return
-    setCurrentFile(name); setCode(''); setOutput({ mode: 'idle', content: '' })
+    setCurrentFile(name)
+    setCode('')
+    setOutput({ mode: 'idle', content: '' })
     try {
+      // Create an empty placeholder in S3 so the file appears in the sidebar immediately.
       await saveFile(token!, name, '')
       await fetchFiles()
       if (termWsRef.current?.readyState === WebSocket.OPEN)
@@ -159,6 +199,7 @@ export default function IDEPage() {
     if (!token || !confirm(`Delete ${fileName}?`)) return
     try {
       await deleteFile(token, fileName)
+      // If the deleted file was open, reset to a blank editor.
       if (currentFile === fileName) { setCurrentFile(''); setCode('') }
       await fetchFiles()
     } catch (err: unknown) {
@@ -169,11 +210,16 @@ export default function IDEPage() {
   }
 
   const handleRun = async () => {
+    // Abort any in-flight stream before starting a new one (e.g. user clicks Run again).
     if (runAbortRef.current) runAbortRef.current.abort()
     runAbortRef.current = new AbortController()
     setLoading(true)
     setOutput({ mode: 'run', content: '' })
+
+    // Accumulate stdout in a local variable so the closure always appends to
+    // the full text rather than the stale state snapshot from the previous render.
     const acc = { text: '' }
+
     try {
       await runCodeStream(code, '', (type, text) => {
         if (type === 'stdout') {
@@ -187,9 +233,11 @@ export default function IDEPage() {
         } else if (type === 'error') {
           setOutput({ mode: 'error', content: text })
         } else if (type === 'done') {
+          // "done" text is elapsed milliseconds as a string.
           const ms = parseInt(text, 10)
           setOutput(prev => ({ ...prev, ms }))
-          fetchFiles() // refresh file list in case sol.save uploaded new files
+          // Refresh the file list in case sol.save() uploaded new model files.
+          fetchFiles()
         }
       }, runAbortRef.current.signal, token ?? undefined)
     } catch (err: unknown) {
@@ -203,7 +251,8 @@ export default function IDEPage() {
   }
 
   const handleCompare = async () => {
-    setLoading(true); setOutput({ mode: 'idle', content: '' })
+    setLoading(true)
+    setOutput({ mode: 'idle', content: '' })
     try {
       const res = await compareCode(code)
       setOutput(res.data.error
@@ -220,6 +269,7 @@ export default function IDEPage() {
     try {
       const res = await shareCode(code)
       const url = `${window.location.origin}/share/${res.data.id}`
+      // Copy the shareable URL directly to the clipboard for convenience.
       await navigator.clipboard.writeText(url)
       setShareMsg('copied!')
     } catch {
@@ -237,13 +287,16 @@ export default function IDEPage() {
     setGpuScenario('')
     setGpuBenefit('')
     if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null }
+
     try {
       const res = await submitGpuJob(token, code)
       const jobId: string = res.data.jobId
       setGpuScenario(res.data.scenario || '')
       setGpuBenefit(res.data.gpuBenefit || '')
-      // Local jobs (HF/SOL) start as 'running'; CUDA jobs start as 'pending'
+      // Local HF/SOL jobs start as 'running'; pure CUDA jobs enter the queue as 'pending'.
       setGpuStatus((res.data.status as typeof gpuStatus) ?? 'pending')
+
+      // Poll for job completion every 5 seconds.
       pollRef.current = setInterval(async () => {
         try {
           const statusRes = await getGpuStatus(token, jobId)
@@ -267,16 +320,19 @@ export default function IDEPage() {
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
         ?? (err instanceof Error ? err.message : 'GPU submission failed')
+      // Distinguish "SOL tunnel is down" from generic job failure.
       setGpuStatus(msg.toLowerCase().includes('unavailable') || msg.toLowerCase().includes('ssh') ? 'unavailable' : 'failed')
       setGpuError(msg)
     }
   }
 
+  // Clear the GPU polling interval when the component unmounts (e.g. user logs out).
   useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
 
   const handleExportBytecode = async () => {
     try {
       const res = await compileBytecode(code)
+      // Create a temporary object URL and click it to trigger a browser download.
       const url = URL.createObjectURL(new Blob([res.data], { type: 'application/octet-stream' }))
       const a = document.createElement('a')
       a.href = url
@@ -292,95 +348,27 @@ export default function IDEPage() {
 
   const handleLogout = () => { logout(); navigate('/login') }
 
+  // Register the Ctrl+S / Cmd+S shortcut inside Monaco.
+  // We pass a stable ref instead of handleSave directly because this callback
+  // is only registered once on editor mount — the ref always points to the latest save.
   const handleEditorMount = useCallback((editor: unknown, monaco: unknown) => {
     const m = monaco as { KeyMod: { CtrlCmd: number }; KeyCode: { KeyS: number } }
     const e = editor as { addCommand: (b: number, h: () => void) => void }
     e.addCommand(m.KeyMod.CtrlCmd | m.KeyCode.KeyS, () => handleSaveRef.current())
   }, [])
 
-  const toMs = (us: number | undefined) =>
-    us != null ? `${(us / 1000).toFixed(2)} ms` : '—'
 
-  const renderOutput = () => {
-    // Show spinner only when nothing has been output yet (compare or initial run)
-    if (loading && output.mode === 'idle') return (
-      <div className="flex items-center justify-center h-full gap-2">
-        <Loader2 size={18} className="animate-spin" style={{ color: '#00d4ff' }} />
-        <span className="text-sm" style={{ color: '#8b949e' }}>Running…</span>
-      </div>
-    )
-    if (output.mode === 'idle') return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-sm" style={{ color: '#8b949e' }}>Press Run to execute your code</p>
-      </div>
-    )
-    if (output.mode === 'error') return (
-      <div className="p-4">
-        {output.ms != null && <div className="text-xs mb-2" style={{ color: '#8b949e' }}>{output.ms} ms</div>}
-        <pre className="text-sm font-mono whitespace-pre-wrap" style={{ color: '#f85149' }}>{output.content}</pre>
-      </div>
-    )
-    if (output.mode === 'run') return (
-      <div className="p-4">
-        {output.ms != null && <div className="text-xs mb-2" style={{ color: '#8b949e' }}>{output.ms} ms</div>}
-        <pre className="text-sm font-mono whitespace-pre-wrap" style={{ color: '#c9d1d9' }}>
-          {output.content || (loading ? '' : '(no output)')}
-        </pre>
-        {loading && (
-          <div className="flex items-center gap-1.5 mt-3">
-            <Loader2 size={11} className="animate-spin" style={{ color: '#8b949e' }} />
-            <span className="text-xs" style={{ color: '#8b949e' }}>Running…</span>
-          </div>
-        )}
-      </div>
-    )
-    if (output.mode === 'compare' && output.compareData) {
-      const d = output.compareData
-      return (
-        <div className="p-4 space-y-3 text-sm">
-          <div className="font-semibold" style={{ color: '#00d4ff' }}>Optimization Report</div>
-          {d.speedup && (
-            <div className="rounded-lg p-3" style={{ background: '#0d1117', border: '1px solid #39ff8f' }}>
-              <div className="text-xs font-medium mb-1" style={{ color: '#39ff8f' }}>Speedup</div>
-              <div className="text-xl font-bold" style={{ color: '#c9d1d9' }}>{d.speedup}×</div>
-            </div>
-          )}
-          <div className="grid grid-cols-2 gap-2">
-            {(['normal', 'optimized'] as const).map(k => (
-              <div key={k} className="rounded-lg p-3" style={{ background: '#0d1117', border: '1px solid #30363d' }}>
-                <div className="text-xs font-medium mb-2" style={{ color: k === 'normal' ? '#8b949e' : '#00d4ff' }}>
-                  {k === 'normal' ? 'Normal' : 'Optimized'}
-                </div>
-                <div className="text-xs space-y-1" style={{ color: '#c9d1d9' }}>
-                  <div>{toMs(d[k]?.us)}</div>
-                  <div>{d[k]?.nodes ?? '—'} nodes</div>
-                  {k === 'optimized' && d.optimized?.folds != null && <div>{d.optimized.folds} folds</div>}
-                </div>
-              </div>
-            ))}
-          </div>
-          {d.nodesEliminated != null && (
-            <div className="text-xs" style={{ color: '#8b949e' }}>{d.nodesEliminated} AST nodes eliminated</div>
-          )}
-          {d.output && (
-            <div>
-              <div className="text-xs font-medium mb-1" style={{ color: '#8b949e' }}>Output</div>
-              <pre className="text-xs font-mono whitespace-pre-wrap p-2 rounded"
-                style={{ background: '#0d1117', color: '#c9d1d9', border: '1px solid #30363d' }}>{d.output}</pre>
-            </div>
-          )}
-          {d.outputMismatch && <div className="text-xs" style={{ color: '#f85149' }}>Warning: output mismatch between runs</div>}
-        </div>
-      )
-    }
-    return null
-  }
+  // Plain text passed to NovaBot so it can reference the last run output
+  const recentOutput = output.mode === 'run' || output.mode === 'error' ? output.content : ''
 
   return (
     <div className="flex flex-col" style={{ height: '100vh', background: '#0d1117', color: '#c9d1d9' }}>
+
       {/* ── Toolbar ── */}
       <div className="flex items-center justify-between px-4 py-2 shrink-0"
         style={{ background: '#161b22', borderBottom: '1px solid #30363d' }}>
+
+        {/* Left: logo + open file */}
         <div className="flex items-center gap-2">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
@@ -391,27 +379,32 @@ export default function IDEPage() {
               <span style={{ color: '#30363d' }}>/</span>
               <span className="text-sm" style={{ color: '#8b949e' }}>{currentFile}</span>
               {saving && <Loader2 size={11} className="animate-spin" style={{ color: '#8b949e' }} />}
+              {!saving && autoSaveStatus === 'saving' && <Loader2 size={11} className="animate-spin" style={{ color: '#8b949e' }} />}
+              {!saving && autoSaveStatus === 'saved' && <Check size={11} style={{ color: '#39ff8f' }} />}
             </>
           )}
         </div>
 
+        {/* Right: action buttons */}
         <div className="flex items-center gap-1.5">
-          {/* Primary actions */}
           <button onClick={handleSave} disabled={saving} title="Save (Ctrl+S)"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
             style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}>
             <Save size={12} /> Save
           </button>
+
           <button onClick={handleRun} disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
             style={{ background: '#1f6feb', color: '#fff', border: '1px solid #1f6feb' }}>
             <Play size={12} /> Run
           </button>
+
           <button onClick={handleCompare} disabled={loading}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
             style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}>
             <BarChart2 size={12} /> Compare
           </button>
+
           <button onClick={handleRunOnGpu}
             disabled={gpuStatus === 'submitting' || gpuStatus === 'pending' || gpuStatus === 'running'}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
@@ -421,29 +414,18 @@ export default function IDEPage() {
               : <Zap size={12} />}
             Run on GPU
           </button>
-          <button onClick={handleExportBytecode} title="Compile and download .nbc bytecode"
+
+          <button onClick={handleExportBytecode}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{ background: '#0d2a1a', color: '#3fb950', border: '1px solid #238636' }}>
             <Download size={12} /> Export .nbc
           </button>
 
-          {/* Share */}
           <button onClick={handleShare}
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
             style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}>
             {shareMsg === 'copied!' ? <Check size={12} style={{ color: '#39ff8f' }} /> : <Share2 size={12} />}
-            {shareMsg ? shareMsg : 'Share'}
-          </button>
-
-          <div className="w-px h-4 mx-0.5" style={{ background: '#30363d' }} />
-
-          {/* Terminal toggle */}
-          <button onClick={() => setTermOpen(v => !v)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium"
-            style={termOpen
-              ? { background: '#00d4ff20', color: '#00d4ff', border: '1px solid #00d4ff40' }
-              : { background: '#21262d',   color: '#8b949e', border: '1px solid #30363d' }}>
-            <TerminalSquare size={12} /> Terminal
+            {shareMsg || 'Share'}
           </button>
 
           <div className="w-px h-4 mx-0.5" style={{ background: '#30363d' }} />
@@ -457,13 +439,17 @@ export default function IDEPage() {
         </div>
       </div>
 
-      {/* ── Main area (editor + panels) ── */}
+      {/* ── Main area: three columns ── */}
       <div className="flex flex-1 min-h-0">
-        {/* Sidebar */}
-        <div className="flex flex-col shrink-0" style={{ width: '220px', background: '#161b22', borderRight: '1px solid #30363d' }}>
-          <div className="flex items-center justify-between px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #30363d' }}>
+
+        {/* Left: file browser */}
+        <div className="flex flex-col shrink-0"
+          style={{ width: 220, background: '#161b22', borderRight: '1px solid #30363d' }}>
+          <div className="flex items-center justify-between px-3 py-2 shrink-0"
+            style={{ borderBottom: '1px solid #30363d' }}>
             <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b949e' }}>Files</span>
-            <button onClick={handleNewFile} title="New file" className="p-0.5 rounded" style={{ color: '#8b949e' }}>
+            <button onClick={handleNewFile} title="New file" className="p-0.5 rounded"
+              style={{ color: '#8b949e', background: 'none', border: 'none', cursor: 'pointer' }}>
               <Plus size={14} />
             </button>
           </div>
@@ -477,13 +463,14 @@ export default function IDEPage() {
                   onClick={() => handleLoadFile(f.fileName)}>
                   <div className="flex items-center gap-1.5 min-w-0">
                     <FileCode size={12} style={{ flexShrink: 0, color: currentFile === f.fileName ? '#00d4ff' : '#8b949e' }} />
-                    <span className="text-xs truncate" style={{ color: currentFile === f.fileName ? '#00d4ff' : '#c9d1d9' }}>
+                    <span className="text-xs truncate"
+                      style={{ color: currentFile === f.fileName ? '#00d4ff' : '#c9d1d9' }}>
                       {f.fileName}
                     </span>
                   </div>
                   <button onClick={e => { e.stopPropagation(); handleDeleteFile(f.fileName) }}
                     title="Delete" className="opacity-0 group-hover:opacity-100 p-0.5 rounded"
-                    style={{ color: '#f85149' }}>
+                    style={{ color: '#f85149', background: 'none', border: 'none', cursor: 'pointer' }}>
                     <Trash2 size={11} />
                   </button>
                 </div>
@@ -492,9 +479,8 @@ export default function IDEPage() {
           </div>
         </div>
 
-        {/* Editor column — split vertically for terminal */}
+        {/* Center: editor + bottom panel (vertical flex) */}
         <div className="flex flex-col flex-1 min-w-0">
-          {/* Monaco Editor */}
           <div className="flex-1 min-h-0">
             <Suspense fallback={
               <div className="flex items-center justify-center h-full gap-2" style={{ color: '#8b949e' }}>
@@ -521,99 +507,30 @@ export default function IDEPage() {
             </Suspense>
           </div>
 
-          {/* Terminal panel */}
-          {termOpen && (
-            <div className="shrink-0" style={{ height: '240px', borderTop: '1px solid #30363d' }}>
-              <Suspense fallback={
-                <div className="flex items-center justify-center h-full gap-2" style={{ color: '#8b949e', background: '#0d1117' }}>
-                  <Loader2 size={16} className="animate-spin" /> Connecting…
-                </div>
-              }>
-                <TerminalPanel
-                  key={termOpen ? 'open' : 'closed'}
-                  onClose={() => setTermOpen(false)}
-                  onWsReady={ws => { termWsRef.current = ws }}
-                />
-              </Suspense>
-            </div>
-          )}
+          <BottomPanel
+            output={output}
+            loading={loading}
+            gpuStatus={gpuStatus}
+            gpuOutput={gpuOutput}
+            gpuError={gpuError}
+            gpuScenario={gpuScenario}
+            gpuBenefit={gpuBenefit}
+            onWsReady={(ws: WebSocket) => { termWsRef.current = ws }}
+          />
         </div>
 
-        {/* Output panel */}
-        <div className="flex flex-col shrink-0" style={{ width: '300px', background: '#161b22', borderLeft: '1px solid #30363d' }}>
-          <div className="flex items-center px-3 py-2 shrink-0" style={{ borderBottom: '1px solid #30363d' }}>
-            <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b949e' }}>Output</span>
-          </div>
-          <div ref={outputRef} className="flex-1 overflow-y-auto">{renderOutput()}</div>
-
-          {/* GPU status section */}
-          {gpuStatus !== 'idle' && (
-            <div className="shrink-0" style={{ borderTop: '1px solid #30363d' }}>
-              <div className="flex items-center gap-1.5 px-3 py-2" style={{ borderBottom: '1px solid #30363d' }}>
-                <Zap size={11} style={{ color: '#a855f7' }} />
-                <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#a855f7' }}>GPU</span>
-                {gpuScenario && (
-                  <span className="ml-auto text-xs px-1.5 py-0.5 rounded" style={{ background: '#2d1b4e', color: '#c084fc', fontSize: '10px' }}>
-                    {gpuScenario === 'cuda' ? 'CUDA' : gpuScenario === 'hf' ? 'HuggingFace' : gpuScenario === 'sol' ? 'SOL HPC' : 'HF+SOL'}
-                  </span>
-                )}
-              </div>
-              <div className="p-3">
-                {gpuStatus === 'submitting' && (
-                  <div className="flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
-                    <span className="text-xs" style={{ color: '#8b949e' }}>Submitting job…</span>
-                  </div>
-                )}
-                {gpuStatus === 'pending' && (
-                  <div className="flex items-center gap-2">
-                    <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
-                    <span className="text-xs" style={{ color: '#8b949e' }}>Queued on SOL cluster…</span>
-                  </div>
-                )}
-                {gpuStatus === 'running' && (
-                  <div>
-                    <div className="flex items-center gap-2 mb-1.5">
-                      <Loader2 size={14} className="animate-spin" style={{ color: '#a855f7' }} />
-                      <span className="text-xs" style={{ color: '#a855f7' }}>
-                        {gpuScenario === 'hf'     ? 'Calling HuggingFace GPU inference…'
-                         : gpuScenario === 'sol'    ? 'Running on SOL HPC cluster…'
-                         : gpuScenario === 'hf_sol' ? 'Fine-tuning via SOL + HuggingFace…'
-                         : 'Running on GPU…'}
-                      </span>
-                    </div>
-                    {gpuBenefit && (
-                      <p className="text-xs leading-relaxed" style={{ color: '#8b949e' }}>{gpuBenefit}</p>
-                    )}
-                  </div>
-                )}
-                {gpuStatus === 'completed' && (
-                  <div>
-                    <div className="flex items-center gap-1.5 mb-2">
-                      <Check size={12} style={{ color: '#39ff8f' }} />
-                      <span className="text-xs font-medium" style={{ color: '#39ff8f' }}>Completed</span>
-                    </div>
-                    <pre className="text-xs font-mono whitespace-pre-wrap" style={{ color: '#c9d1d9' }}>
-                      {gpuOutput || '(no output)'}
-                    </pre>
-                  </div>
-                )}
-                {gpuStatus === 'failed' && (
-                  <div>
-                    <div className="text-xs font-medium mb-1" style={{ color: '#f85149' }}>Job failed</div>
-                    <pre className="text-xs font-mono whitespace-pre-wrap" style={{ color: '#f85149' }}>{gpuError}</pre>
-                  </div>
-                )}
-                {gpuStatus === 'unavailable' && (
-                  <div>
-                    <div className="text-xs font-medium mb-1" style={{ color: '#e3b341' }}>GPU unavailable</div>
-                    <p className="text-xs" style={{ color: '#8b949e' }}>SOL cluster is unreachable. Check the SSH tunnel.</p>
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
+        {/* Right: NovaBot */}
+        <div className="shrink-0 flex flex-col"
+          style={{ width: 320, borderLeft: '1px solid #30363d' }}>
+          <NovaBot
+            token={token!}
+            currentCode={code}
+            currentFile={currentFile}
+            recentOutput={recentOutput}
+            onFileWrite={() => { fetchFiles() }}
+          />
         </div>
+
       </div>
     </div>
   )

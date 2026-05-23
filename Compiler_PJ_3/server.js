@@ -25,9 +25,26 @@ const bcrypt     = require("bcryptjs");
 const jwt        = require("jsonwebtoken");
 
 const { DynamoDBClient, CreateTableCommand, DescribeTableCommand } = require("@aws-sdk/client-dynamodb");
-const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand } = require("@aws-sdk/lib-dynamodb");
+const { DynamoDBDocumentClient, PutCommand, GetCommand, DeleteCommand, QueryCommand } = require("@aws-sdk/lib-dynamodb");
 const { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand, ListObjectsV2Command } = require("@aws-sdk/client-s3");
 const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
+const { createMessage, MODEL_ID } = require('./bedrock_client');
+const { NOVA_SYSTEM_PROMPT, NOVA_TOOLS } = require('./nova_system_prompt');
+const { CloudWatchClient, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
+
+const cloudwatch = new CloudWatchClient({ region: process.env.BEDROCK_REGION || 'us-east-1' });
+
+async function logBedrockUsage(userId, inputTokens, outputTokens) {
+  try {
+    await cloudwatch.send(new PutMetricDataCommand({
+      Namespace: 'NovaComp/Bedrock',
+      MetricData: [
+        { MetricName: 'InputTokens',  Value: inputTokens,  Unit: 'Count', Dimensions: [{ Name: 'UserId', Value: userId }] },
+        { MetricName: 'OutputTokens', Value: outputTokens, Unit: 'Count', Dimensions: [{ Name: 'UserId', Value: userId }] },
+      ],
+    }));
+  } catch (_) { /* non-critical */ }
+}
 
 // node-pty is optional — install with: npm install node-pty
 // Required for the Terminal tab in the web IDE.
@@ -50,9 +67,11 @@ const PORT   = parseInt(process.env.PORT || "3001", 10);
 
 const AWS_REGION  = process.env.AWS_REGION        || "us-east-1";
 const S3_BUCKET   = process.env.S3_BUCKET         || "novacomp-files";
-const USERS_TABLE = process.env.DYNAMODB_TABLE_USERS || "novacomp-users";
-const FILES_TABLE = "novacomp-files-meta";
-const JWT_SECRET  = process.env.JWT_SECRET         || "novacomp-secret-key";
+const USERS_TABLE         = process.env.DYNAMODB_TABLE_USERS          || "novacomp-users";
+const FILES_TABLE         = "novacomp-files-meta";
+const AGENT_HISTORY_TABLE = process.env.DYNAMODB_TABLE_AGENT_HISTORY  || "novacomp-agent-history";
+const AGENT_MEMORY_TABLE  = process.env.DYNAMODB_TABLE_AGENT_MEMORY   || "novacomp-agent-memory";
+const JWT_SECRET          = process.env.JWT_SECRET                    || "novacomp-secret-key";
 
 const dynamoRaw = new DynamoDBClient({ region: AWS_REGION });
 const dynamo    = DynamoDBDocumentClient.from(dynamoRaw);
@@ -78,6 +97,24 @@ async function ensureTables() {
         { AttributeName: "userId",   AttributeType: "S" },
         { AttributeName: "filePath", AttributeType: "S" },
       ],
+      BillingMode: "PAY_PER_REQUEST",
+    },
+    {
+      TableName: AGENT_HISTORY_TABLE,
+      KeySchema: [
+        { AttributeName: "userId",    KeyType: "HASH" },
+        { AttributeName: "timestamp", KeyType: "RANGE" },
+      ],
+      AttributeDefinitions: [
+        { AttributeName: "userId",    AttributeType: "S" },
+        { AttributeName: "timestamp", AttributeType: "N" },
+      ],
+      BillingMode: "PAY_PER_REQUEST",
+    },
+    {
+      TableName: AGENT_MEMORY_TABLE,
+      KeySchema: [{ AttributeName: "userId", KeyType: "HASH" }],
+      AttributeDefinitions: [{ AttributeName: "userId", AttributeType: "S" }],
       BillingMode: "PAY_PER_REQUEST",
     },
   ];
@@ -178,8 +215,17 @@ const limiter = rateLimit({
   },
 });
 
+const agentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  handler: (_req, res) => {
+    res.status(429).json({ error: 'Too many messages. Please wait a moment.' });
+  },
+});
+
 app.use("/run",     limiter);
 app.use("/compare", limiter);
+app.use('/agent/chat', agentLimiter);
 
 // ── Request Logging ───────────────────────────────────────────────────────────
 
@@ -995,6 +1041,8 @@ app.get("/health", (_req, res) => {
     replSessions:    replSessions.size,
     ptyLoaded:       !!pty,
     terminalShell:   resolveShell().shell,
+    bedrockModel:    process.env.BEDROCK_MODEL_ID || MODEL_ID,
+    bedrockRegion:   process.env.BEDROCK_REGION   || 'us-east-1',
   });
 });
 
@@ -2096,6 +2144,338 @@ app.get('/api/share/:id', async (req, res) => {
   } catch (e) {
     if (e.name === 'NoSuchKey') return res.status(404).json({ error: 'Share not found' });
     res.status(500).json({ error: 'Failed to load share' });
+  }
+});
+
+// ── Conversation history helpers ──────────────────────────────────────────────
+
+async function saveMessage(userId, role, content) {
+  const timestamp = Date.now();
+  const expiresAt = Math.floor(timestamp / 1000) + 30 * 24 * 60 * 60; // 30-day TTL
+  await dynamo.send(new PutCommand({
+    TableName: AGENT_HISTORY_TABLE,
+    Item: { userId, timestamp, role, content: content.slice(0, 10000), expiresAt },
+  }));
+}
+
+async function loadHistory(userId, limit = 20) {
+  const result = await dynamo.send(new QueryCommand({
+    TableName: AGENT_HISTORY_TABLE,
+    KeyConditionExpression: 'userId = :uid',
+    ExpressionAttributeValues: { ':uid': userId },
+    ScanIndexForward: false,
+    Limit: limit,
+  }));
+  return (result.Items || []).reverse().map(item => ({
+    role: item.role, content: item.content, timestamp: item.timestamp,
+  }));
+}
+
+async function clearHistory(userId) {
+  const history = await loadHistory(userId, 100);
+  for (const msg of history) {
+    await dynamo.send(new DeleteCommand({
+      TableName: AGENT_HISTORY_TABLE,
+      Key: { userId, timestamp: msg.timestamp },
+    }));
+  }
+}
+
+// ── User memory helpers ───────────────────────────────────────────────────────
+
+async function loadUserMemory(userId) {
+  try {
+    const result = await dynamo.send(new GetCommand({
+      TableName: AGENT_MEMORY_TABLE,
+      Key: { userId },
+    }));
+    return result.Item || { userId, preferences: {}, workingContext: {}, facts: [] };
+  } catch {
+    return { userId, preferences: {}, workingContext: {}, facts: [] };
+  }
+}
+
+async function saveUserMemory(userId, memory) {
+  await dynamo.send(new PutCommand({
+    TableName: AGENT_MEMORY_TABLE,
+    Item: { ...memory, userId, updatedAt: new Date().toISOString() },
+  }));
+}
+
+async function updateMemoryFromConversation(userId, userMessage, assistantResponse) {
+  const memory = await loadUserMemory(userId);
+  const lowerMsg = userMessage.toLowerCase();
+
+  if (lowerMsg.includes('recursive') || lowerMsg.includes('recursion'))
+    memory.preferences.solutionStyle = 'recursive';
+  if (lowerMsg.includes('iterative') || lowerMsg.includes('loop') && !lowerMsg.includes('recursion'))
+    memory.preferences.solutionStyle = 'iterative';
+
+  if (lowerMsg.includes('explain') || lowerMsg.includes("don't understand") ||
+      lowerMsg.includes('what is') || lowerMsg.includes('how does'))
+    memory.preferences.experienceLevel = 'beginner';
+  if (lowerMsg.includes('optimize') || lowerMsg.includes('performance') ||
+      lowerMsg.includes('complexity'))
+    memory.preferences.experienceLevel = 'advanced';
+
+  if (lowerMsg.includes('neural network') || lowerMsg.includes(' ml ') || lowerMsg.includes('tensor'))
+    memory.workingContext.currentProject = 'machine_learning';
+  if (lowerMsg.includes('sort') || lowerMsg.includes('search') || lowerMsg.includes('algorithm'))
+    memory.workingContext.currentProject = 'algorithms';
+
+  if (lowerMsg.includes('error') || lowerMsg.includes('not working') || lowerMsg.includes('broken')) {
+    memory.workingContext.lastIssue   = userMessage.slice(0, 200);
+    memory.workingContext.lastIssueAt = new Date().toISOString();
+  }
+
+  memory.facts = [`User asked about: ${userMessage.slice(0, 100)}`, ...(memory.facts || [])].slice(0, 10);
+  await saveUserMemory(userId, memory);
+  return memory;
+}
+
+// ── Personalized system prompt ────────────────────────────────────────────────
+
+function buildPersonalizedSystemPrompt(basePrompt, memory, userEmail) {
+  let section = `\n\n## User Context\nUser: ${userEmail}\n`;
+
+  if (memory.preferences.experienceLevel) {
+    section += `Experience level: ${memory.preferences.experienceLevel}\n`;
+    if (memory.preferences.experienceLevel === 'beginner')
+      section += `→ Explain concepts clearly with examples. Avoid jargon.\n`;
+    else if (memory.preferences.experienceLevel === 'advanced')
+      section += `→ Be concise. Focus on performance and best practices.\n`;
+  }
+
+  if (memory.preferences.solutionStyle)
+    section += `Preferred style: ${memory.preferences.solutionStyle} — default to this unless asked otherwise.\n`;
+
+  const projectNames = { machine_learning: 'ML/tensor operations', algorithms: 'algorithms and data structures' };
+  if (memory.workingContext.currentProject)
+    section += `Currently working on: ${projectNames[memory.workingContext.currentProject] || memory.workingContext.currentProject}\n`;
+
+  if (memory.workingContext.lastIssue)
+    section += `Last issue: ${memory.workingContext.lastIssue}\n`;
+
+  if (memory.facts?.length > 0) {
+    section += `\nRecent topics:\n`;
+    memory.facts.slice(0, 5).forEach(f => { section += `- ${f}\n`; });
+  }
+
+  return basePrompt + section;
+}
+
+// ── executeTool: handle NovaBot tool calls ─────────────────────────────────
+
+async function executeTool(name, input, userId) {
+  if (name === 'run_nova_code') {
+    const { code, inputs = '' } = input;
+    if (!code || typeof code !== 'string') return { error: 'code is required' };
+    let tmpFile, tmpDir;
+    try {
+      ({ tmpFile, tmpDir } = writeTempFile(code));
+      const timeout = /\/\/\s*@ml\b/.test(code) ? ML_EXECUTION_MS : MAX_EXECUTION_MS;
+      const { stdout, stderr, ms, exitCode } = await runCompiler(tmpFile, [], inputs, timeout);
+      const errOut = filterStderr(stderr);
+      if (exitCode !== 0) return { error: errOut || 'Compilation failed', ms };
+      return { output: stdout || '(no output)', ms };
+    } catch (e) {
+      return { error: e.message };
+    } finally {
+      cleanupTempFile(tmpFile, tmpDir);
+    }
+  }
+
+  if (name === 'read_user_file') {
+    const { fileName } = input;
+    if (!fileName) return { error: 'fileName is required' };
+    try {
+      const obj = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: `${userId}/${fileName}` }));
+      const chunks = [];
+      for await (const chunk of obj.Body) chunks.push(chunk);
+      return { content: Buffer.concat(chunks).toString('utf8') };
+    } catch (e) {
+      if (e.name === 'NoSuchKey') return { error: `File not found: ${fileName}` };
+      return { error: e.message };
+    }
+  }
+
+  if (name === 'write_user_file') {
+    const { fileName, content } = input;
+    if (!fileName || !content) return { error: 'fileName and content are required' };
+    if (!fileName.endsWith('.nova')) return { error: 'File must end in .nova' };
+    const key = `${userId}/${fileName}`;
+    try {
+      await s3.send(new PutObjectCommand({ Bucket: S3_BUCKET, Key: key, Body: content, ContentType: 'text/plain' }));
+      await dynamo.send(new PutCommand({
+        TableName: FILES_TABLE,
+        Item: { userId, filePath: fileName, updatedAt: Date.now() },
+      }));
+      return { success: true };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  if (name === 'list_user_files') {
+    try {
+      const result = await s3.send(new ListObjectsV2Command({ Bucket: S3_BUCKET, Prefix: `${userId}/` }));
+      const files = (result.Contents || []).map(obj => obj.Key.replace(`${userId}/`, ''));
+      return { files };
+    } catch (e) {
+      return { error: e.message };
+    }
+  }
+
+  if (name === 'explain_error') {
+    const { error, code } = input;
+    return { acknowledged: true, error, code };
+  }
+
+  return { error: `Unknown tool: ${name}` };
+}
+
+// POST /agent/chat
+app.post('/agent/chat', requireAuth, async (req, res) => {
+  const { message, currentCode = '', currentFile = '', recentOutput = '' } = req.body;
+
+  if (!message || typeof message !== 'string' || !message.trim())
+    return res.status(400).json({ error: 'Message is required' });
+  if (message.length > 2000)
+    return res.status(400).json({ error: 'Message too long (max 2000 characters)' });
+  if (!process.env.BEDROCK_REGION && !process.env.BEDROCK_MODEL_ID)
+    log('warn', 'Bedrock env vars not set — using defaults');
+
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const send = (type, data) =>
+    res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+
+  const { userId, email } = req.user;
+
+  try {
+    const [history, memory] = await Promise.all([
+      loadHistory(userId, 20).catch(() => []),
+      loadUserMemory(userId),
+    ]);
+
+    const systemPrompt = buildPersonalizedSystemPrompt(NOVA_SYSTEM_PROMPT, memory, email);
+
+    let contextualMessage = '';
+    if (currentFile) contextualMessage += `[Current file: ${currentFile}]\n`;
+    if (currentCode?.trim())
+      contextualMessage += `[Current code:\n\`\`\`nova\n${currentCode.slice(0, 2000)}\n\`\`\`]\n`;
+    if (recentOutput?.trim())
+      contextualMessage += `[Recent output: ${recentOutput.slice(0, 500)}]\n`;
+    contextualMessage += message;
+
+    await saveMessage(userId, 'user', contextualMessage).catch(() => {});
+
+    const messages = [
+      ...history.map(m => ({ role: m.role, content: m.content })),
+      { role: 'user', content: contextualMessage },
+    ];
+
+    const MAX_TOOL_ROUNDS = 5;
+    let fullAssistantResponse = '';
+
+    for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+      const response = await createMessage({
+        model: MODEL_ID,
+        max_tokens: 4096,
+        system: systemPrompt,
+        tools: NOVA_TOOLS,
+        messages,
+      });
+
+      if (response.usage)
+        logBedrockUsage(userId, response.usage.input_tokens || 0, response.usage.output_tokens || 0);
+
+      const toolUseBlocks = [];
+      for (const block of response.content) {
+        if (block.type === 'text' && block.text) {
+          fullAssistantResponse += block.text;
+          send('text', block.text);
+        } else if (block.type === 'tool_use') {
+          toolUseBlocks.push(block);
+        }
+      }
+
+      if (toolUseBlocks.length === 0 || response.stop_reason !== 'tool_use') break;
+
+      messages.push({ role: 'assistant', content: response.content });
+
+      const toolResults = [];
+      for (const toolBlock of toolUseBlocks) {
+        send('tool_start', { name: toolBlock.name, id: toolBlock.id });
+        const result = await executeTool(toolBlock.name, toolBlock.input, userId);
+        send('tool_result', { id: toolBlock.id, result });
+        if (toolBlock.name === 'write_user_file' && result.success)
+          send('file_written', { fileName: toolBlock.input.fileName });
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: toolBlock.id,
+          content: JSON.stringify(result).slice(0, 5000),
+        });
+      }
+
+      messages.push({ role: 'user', content: toolResults });
+    }
+
+    if (fullAssistantResponse)
+      await saveMessage(userId, 'assistant', fullAssistantResponse).catch(() => {});
+
+    updateMemoryFromConversation(userId, message, fullAssistantResponse).catch(() => {});
+
+    send('done', '');
+    res.end();
+
+  } catch (err) {
+    log('error', 'Bedrock call failed', { error: err.message, code: err.name });
+
+    const bedrockMsg =
+      err.name === 'AccessDeniedException'   ? 'Bedrock access denied. Check IAM role permissions.'
+    : err.name === 'ThrottlingException'     ? 'AI service rate limited. Please wait a moment and try again.'
+    : err.name === 'ModelNotReadyException'  ? 'AI model is warming up. Please try again in a few seconds.'
+    : err.name === 'ValidationException'     ? 'Invalid request to AI service. Please try rephrasing.'
+    :                                          'AI assistant unavailable. Please try again.';
+
+    if (!res.headersSent) {
+      return res.status(500).json({ error: bedrockMsg });
+    }
+    try { send('error', bedrockMsg); res.end(); } catch (_) {}
+  }
+});
+
+// GET /agent/history
+app.get('/agent/history', requireAuth, async (req, res) => {
+  try {
+    const history = await loadHistory(req.user.userId, 50);
+    res.json({ history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /agent/history
+app.delete('/agent/history', requireAuth, async (req, res) => {
+  try {
+    await clearHistory(req.user.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /agent/memory
+app.get('/agent/memory', requireAuth, async (req, res) => {
+  try {
+    const memory = await loadUserMemory(req.user.userId);
+    res.json({ memory });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
