@@ -3,10 +3,11 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { X } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
+import { API } from '../api/client'
 
 // Convert the HTTP API base URL to a WebSocket URL so we can connect to the
 // terminal endpoint. Replaces "http" with "ws" (and "https" with "wss").
-const WS_URL = import.meta.env.VITE_API_URL.replace(/^http/, 'ws')
+const WS_URL = (API || window.location.origin).replace(/^http/, 'ws')
 
 interface Props {
   onClose: () => void
@@ -17,6 +18,8 @@ interface Props {
 
 export default function TerminalPanel({ onClose, onWsReady }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const onReadyRef = useRef(onWsReady)
+  useEffect(() => { onReadyRef.current = onWsReady }, [onWsReady])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -58,7 +61,7 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
 
     ws.onopen = () => {
       fitAddon.fit()       // refit now that the connection is live
-      onWsReady?.(ws)      // hand the socket to IDEPage for file-write commands
+      onReadyRef.current?.(ws)      // hand the socket to IDEPage for file-write commands
     }
 
     // Server sends raw PTY output — write it directly to the terminal.
@@ -100,7 +103,7 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b949e' }}>
           Nova REPL
         </span>
-        <button onClick={onClose} className="p-0.5 rounded" style={{ color: '#8b949e' }} title="Close terminal">
+        <button onClick={onClose} className="p-0.5 rounded" style={{ color: '#8b949e' }} title="Close terminal" aria-label="Close terminal">
           <X size={14} />
         </button>
       </div>

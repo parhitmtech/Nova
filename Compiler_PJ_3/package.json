@@ -1,4 +1,15 @@
 {
+  "name": "novacomp-backend",
+  "private": true,
+  "engines": { "node": ">=22.12" },
+  "scripts": {
+    "start": "node server.js",
+    "build:compiler": "node scripts/build-compiler.js",
+    "test:security": "node --test tests/*.test.js",
+    "test:language": "node run_tests.js",
+    "test:worker": "node scripts/test-worker.js",
+    "test": "npm run test:security && npm run test:language"
+  },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1048.0",
     "@aws-sdk/client-cloudwatch": "^3.1048.0",

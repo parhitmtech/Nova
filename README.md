@@ -1,5 +1,7 @@
 # NovaComp — System Architecture & Technical Overview
 
+**Current setup and security behavior:** see [Setup and verification](docs/SETUP.md). The IDE now includes a command palette, responsive panels, searchable files, persistent editor settings, starter examples, and safer autosave. Authenticated, isolated execution replaces the earlier shared execution model described below; the historical architecture overview is retained for context.
+
 ---
 
 ## 1. What Is NovaComp?

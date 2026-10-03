@@ -54,7 +54,7 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
           },
         }],
         // Brackets, semicolons, commas, dots
-        [/[{}()\[\];,.]/, 'delimiter'],
+        [/[{}()[\];,.]/, 'delimiter'],
         // Arithmetic, comparison, bitwise, and assignment operators
         [/[=<>!+\-*/%&|^~]/, 'operator'],
         // Whitespace (ignored)
@@ -86,13 +86,13 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      { token: 'keyword',          foreground: '00d4ff', fontStyle: 'bold' },
+      { token: 'keyword',          foreground: 'ADA5FA', fontStyle: 'bold' },
       { token: 'type.identifier',  foreground: 'ffb347' },   // ML types — orange
       { token: 'support.function', foreground: 'ffd700' },   // built-ins — gold
-      { token: 'string',           foreground: '39ff8f' },   // strings — neon green
+      { token: 'string',           foreground: '8DD6BD' },   // strings — neon green
       { token: 'number',           foreground: 'ff9980' },
       { token: 'number.float',     foreground: 'ff9980' },
-      { token: 'comment',          foreground: '3d4259', fontStyle: 'italic' },
+      { token: 'comment',          foreground: '8290A7', fontStyle: 'italic' },
       { token: 'annotation',       foreground: '7a8099', fontStyle: 'italic' }, // @ml etc.
       { token: 'delimiter',        foreground: 'c9d1d9' },
       { token: 'operator',         foreground: '58a6ff' },

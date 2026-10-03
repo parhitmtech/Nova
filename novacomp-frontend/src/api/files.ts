@@ -1,6 +1,4 @@
-import axios from 'axios'
-
-const API = import.meta.env.VITE_API_URL
+import { http as axios, API } from './client'
 
 // Attach the JWT on every file request so the server can scope S3 operations
 // to the correct user prefix ({userId}/{fileName}).

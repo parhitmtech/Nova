@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect, lazy, Suspense } from 'react'
-import { FileText, Terminal, Maximize2, Minimize2, Loader2, Check, Zap } from 'lucide-react'
+import { FileText, Terminal, Maximize2, Minimize2, Loader2, Check, Zap, Copy, Trash2 } from 'lucide-react'
 
 const TerminalPanel = lazy(() => import('./TerminalPanel'))
 
@@ -31,13 +31,15 @@ interface BottomPanelProps {
   gpuScenario: string
   gpuBenefit:  string
   onWsReady:   (ws: WebSocket) => void
+  onClear?: () => void
+  onNotify?: (text: string, error?: boolean) => void
 }
 
 const toMs = (us: number | undefined) =>
   us != null ? `${(us / 1000).toFixed(2)} ms` : '—'
 
 export default function BottomPanel({
-  output, loading, gpuStatus, gpuOutput, gpuError, gpuScenario, gpuBenefit, onWsReady,
+  output, loading, gpuStatus, gpuOutput, gpuError, gpuScenario, gpuBenefit, onWsReady, onClear, onNotify,
 }: BottomPanelProps) {
   const [activeTab,   setActiveTab]   = useState<Tab>('output')
   const [height,      setHeight]      = useState(220)
@@ -51,11 +53,12 @@ export default function BottomPanel({
     outputBottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [output.content, gpuOutput])
 
-  // Auto-switch to output tab whenever a run completes or errors
-  useEffect(() => {
-    if (output.mode === 'run' || output.mode === 'error' || output.mode === 'compare')
-      setActiveTab('output')
-  }, [output.mode])
+  const activity = `${output.mode}:${loading}:${gpuStatus}`
+  const [previousActivity, setPreviousActivity] = useState(activity)
+  if (previousActivity !== activity) {
+    setPreviousActivity(activity)
+    if (output.mode !== 'idle' || loading || gpuStatus !== 'idle') setActiveTab('output')
+  }
 
   const handleTerminalTab = () => {
     setActiveTab('terminal')
@@ -179,6 +182,8 @@ export default function BottomPanel({
     <>
       {/* Drag handle — sits between editor and this panel */}
       <div
+        role="separator" tabIndex={0} aria-label="Resize output panel" aria-orientation="horizontal" aria-valuenow={height} aria-valuemin={100} aria-valuemax={600}
+        onKeyDown={e => { if (e.key === 'ArrowUp' || e.key === 'ArrowDown') { e.preventDefault(); setHeight(h => Math.max(100, Math.min(600, h + (e.key === 'ArrowUp' ? 30 : -30)))) } }}
         onMouseDown={onDragStart}
         style={{
           height: 4, flexShrink: 0, cursor: 'row-resize',
@@ -189,7 +194,7 @@ export default function BottomPanel({
       />
 
       <div className="flex flex-col shrink-0"
-        style={{ height: panelHeight, background: '#0d1117', overflow: 'hidden' }}>
+        style={{ height: panelHeight, maxHeight: '50dvh', background: '#0d1117', overflow: 'hidden' }}>
 
         {/* Tab bar */}
         <div className="flex items-center justify-between shrink-0"
@@ -214,10 +219,13 @@ export default function BottomPanel({
           </div>
 
           <div className="flex items-center gap-1 pr-2">
+            <button className="icon-button" aria-label="Copy output" disabled={!output.content && !output.compareData?.output} onClick={() => { navigator.clipboard.writeText(output.content || output.compareData?.output || '').then(() => onNotify?.('Output copied')).catch(() => onNotify?.('Clipboard access is unavailable', true)) }}><Copy size={12}/></button>
+            <button className="icon-button" aria-label="Clear output" disabled={loading} onClick={onClear}><Trash2 size={12}/></button>
             {loading && (
               <span className="text-xs" style={{ color: '#1f6feb', marginRight: 4 }}>Running…</span>
             )}
             <button
+              aria-label={isMaximized ? "Restore output panel" : "Expand output panel"}
               onClick={() => setIsMaximized(v => !v)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#8b949e', padding: 4 }}>
               {isMaximized ? <Minimize2 size={12} /> : <Maximize2 size={12} />}
@@ -296,7 +304,7 @@ export default function BottomPanel({
               {gpuStatus === 'unavailable' && (
                 <div>
                   <div className="text-xs font-medium mb-1" style={{ color: '#e3b341' }}>GPU unavailable</div>
-                  <p className="text-xs" style={{ color: '#8b949e' }}>SOL cluster unreachable. Check the SSH tunnel.</p>
+                  <p className="text-xs" style={{ color: '#8b949e' }}>{gpuError || 'GPU execution is unavailable in this deployment.'}</p>
                 </div>
               )}
             </div>

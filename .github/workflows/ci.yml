@@ -1,0 +1,28 @@
+name: Build and test
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            Compiler_PJ_3/package-lock.json
+            novacomp-frontend/package-lock.json
+      - run: npm ci
+        working-directory: Compiler_PJ_3
+      - run: npm run build:compiler && npm test
+        working-directory: Compiler_PJ_3
+      - run: npm ci && npm run lint && npm run build
+        working-directory: novacomp-frontend
+      - run: npx playwright install --with-deps chromium && npm run test:e2e
+        working-directory: novacomp-frontend
+      - run: docker build --target worker -t novacomp-worker:local .
+      - run: npm run test:worker
+        working-directory: Compiler_PJ_3
+      - run: docker build --target server -t novacomp-server:ci .

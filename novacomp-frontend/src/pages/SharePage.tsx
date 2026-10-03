@@ -1,128 +1,28 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { Loader2, Copy, Check, ExternalLink } from 'lucide-react'
+import { Loader2, Copy, Check, ExternalLink, Code2, Download, FileCode, AlertCircle } from 'lucide-react'
 import { getShare } from '../api/share'
 import { registerNovaLanguage } from '../lib/novaLanguage'
-
-// Monaco is code-split so it doesn't bloat the initial page load bundle.
-const MonacoEditor = lazy(() => import('@monaco-editor/react'))
-
+import { downloadBlob } from '../lib/workspace'
+const MonacoEditor = lazy(() => import('../components/NovaEditor'))
 export default function SharePage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const [code,    setCode]    = useState('')
+  const [code, setCode] = useState('')
   const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState('')
-  const [copied,  setCopied]  = useState(false)
-
-  // Fetch the shared snippet as soon as we have the UUID from the URL.
+  const [error, setError] = useState('')
+  const [copied, setCopied] = useState(false)
+  const [copyError, setCopyError] = useState('')
   useEffect(() => {
+    let active = true
     if (!id) return
-    getShare(id)
-      .then(res => setCode(res.data.code))
-      .catch(() => setError('Share not found or has expired.'))
-      .finally(() => setLoading(false))
+    getShare(id).then(res => { if (active) { if (typeof res.data.code !== 'string') throw new Error('Invalid snippet'); setCode(res.data.code) } }).catch(() => { if (active) setError('This snippet could not be found. The link may have expired.') }).finally(() => { if (active) setLoading(false) })
+    return () => { active = false }
   }, [id])
-
-  const handleCopy = async () => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-    // Reset the icon back to Copy after 2 seconds.
-    setTimeout(() => setCopied(false), 2000)
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(code); setCopied(true); setCopyError(''); setTimeout(() => setCopied(false), 2000) }
+    catch { setCopyError('Clipboard access is unavailable. Download the source or select it in the editor.') }
   }
-
-  // Store the snippet in sessionStorage so IDEPage can pick it up on mount
-  // and pre-populate the editor — effectively "forking" the shared code.
-  const handleOpenIDE = () => {
-    sessionStorage.setItem('novacomp_fork', code)
-    navigate('/ide')
-  }
-
-  return (
-    <div className="flex flex-col" style={{ height: '100vh', background: '#0d1117', color: '#c9d1d9' }}>
-
-      {/* Toolbar — read-only indicator + copy/fork actions */}
-      <div
-        className="flex items-center justify-between px-4 py-2 shrink-0"
-        style={{ background: '#161b22', borderBottom: '1px solid #30363d' }}
-      >
-        <div className="flex items-center gap-2">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="16 18 22 12 16 6" /><polyline points="8 6 2 12 8 18" />
-          </svg>
-          <span className="font-semibold text-sm" style={{ color: '#c9d1d9' }}>NovaComp</span>
-          <span style={{ color: '#30363d' }}>/</span>
-          <span className="text-sm font-mono" style={{ color: '#8b949e' }}>shared snippet</span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {/* Copy the raw source to clipboard */}
-          <button
-            onClick={handleCopy}
-            disabled={!code}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
-            style={{ background: '#21262d', color: '#c9d1d9', border: '1px solid #30363d' }}
-          >
-            {copied ? <Check size={12} /> : <Copy size={12} />}
-            {copied ? 'Copied!' : 'Copy code'}
-          </button>
-
-          {/* Open in the IDE with the snippet pre-loaded for editing */}
-          <button
-            onClick={handleOpenIDE}
-            disabled={!code}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium disabled:opacity-50"
-            style={{ background: '#1f6feb', color: '#ffffff', border: '1px solid #1f6feb' }}
-          >
-            <ExternalLink size={12} /> Fork in IDE
-          </button>
-        </div>
-      </div>
-
-      {/* Loading state while fetching the snippet from S3 */}
-      {loading && (
-        <div className="flex items-center justify-center flex-1 gap-2" style={{ color: '#8b949e' }}>
-          <Loader2 size={18} className="animate-spin" />
-          Loading snippet…
-        </div>
-      )}
-
-      {/* Expired / not-found error */}
-      {error && (
-        <div className="flex items-center justify-center flex-1">
-          <p className="text-sm" style={{ color: '#f85149' }}>{error}</p>
-        </div>
-      )}
-
-      {/* Read-only Monaco editor — editing is intentionally disabled */}
-      {!loading && !error && (
-        <div className="flex-1 min-h-0">
-          <Suspense fallback={
-            <div className="flex items-center justify-center h-full gap-2" style={{ color: '#8b949e' }}>
-              <Loader2 size={18} className="animate-spin" /> Loading editor…
-            </div>
-          }>
-            <MonacoEditor
-              height="100%"
-              language="nova"
-              theme="nova-dark"
-              value={code}
-              beforeMount={registerNovaLanguage}
-              options={{
-                readOnly: true,          // viewer only — use "Fork in IDE" to edit
-                fontSize: 14,
-                fontFamily: 'ui-monospace, Consolas, monospace',
-                minimap: { enabled: false },
-                scrollBeyondLastLine: false,
-                padding: { top: 16 },
-                wordWrap: 'on',
-                domReadOnly: true,                        // disables right-click paste too
-                renderValidationDecorations: 'off',       // suppress red squiggles in read-only view
-              }}
-            />
-          </Suspense>
-        </div>
-      )}
-    </div>
-  )
+  const fork = () => { sessionStorage.setItem('novacomp_fork', code); navigate('/ide') }
+  return <main className="share-shell"><header className="share-toolbar"><a className="brand" href="/"><span className="brand-symbol"><Code2 size={20}/></span><span>Nova<span className="brand-light">Comp</span><small>SHARED IDEAS START HERE</small></span></a><div><button className="button" onClick={() => void copy()} disabled={loading || !!error}>{copied ? <Check size={14}/> : <Copy size={14}/>} {copied ? 'Copied' : 'Copy'}</button><button className="button" aria-label="Download shared source" onClick={() => downloadBlob(new Blob([code], { type: 'text/plain' }), 'shared.nova')} disabled={loading || !!error}><Download size={14}/></button><button className="button primary" onClick={fork} disabled={loading || !!error}><ExternalLink size={14}/>Open in IDE</button></div></header><div className="share-meta"><FileCode size={15}/>shared.nova<span className="share-badge">READ ONLY</span><span style={{ marginLeft: 'auto' }}>{code.split('\n').length} lines · Nova</span></div>{copyError && <div role="alert" className="form-error" style={{ padding: '0 20px' }}>{copyError}</div>}<section className="share-content" aria-label="Shared source code">{loading ? <div className="editor-loading"><Loader2 className="animate-spin" size={20}/>Loading shared code…</div> : error ? <div className="share-error"><AlertCircle size={32}/><h1>Snippet unavailable</h1><p>{error}</p><button className="button primary" onClick={() => navigate('/ide')}>Go to workspace</button></div> : <Suspense fallback={<div className="editor-loading">Preparing editor…</div>}><MonacoEditor height="100%" language="nova" theme="nova-dark" value={code} beforeMount={registerNovaLanguage} options={{ readOnly: true, domReadOnly: true, fontSize: 14, minimap: { enabled: false }, scrollBeyondLastLine: false, padding: { top: 22 }, wordWrap: 'on', automaticLayout: true }}/></Suspense>}</section></main>
 }

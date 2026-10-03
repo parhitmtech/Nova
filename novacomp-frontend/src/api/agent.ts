@@ -12,7 +12,7 @@ export interface ChatMessage {
     toolEvents?: ToolEvent[]
 }
 
-const API = import.meta.env.VITE_API_URL
+import { API } from './client'
 
 export const loadAgentHistory = async (token: string): Promise<ChatMessage[]> => {
     const res = await fetch(`${API}/agent/history`, {

@@ -931,7 +931,6 @@ string read_file(const string& path)
 string get_stdlib_path()
 {
     const char* nova_home = getenv("NOVA_HOME");
-     fprintf(stderr, "NOVA_HOME=%s\n", nova_home ? nova_home : "(not set)");
     if (!nova_home)
     {
         cerr << "Error: NOVA_HOME environment variable is not set.\n";

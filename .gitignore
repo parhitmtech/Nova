@@ -47,6 +47,7 @@ Compiler_PJ_3/workspace/
 Compiler_PJ_3/*.csl
 Compiler_PJ_3/test_*.nova
 Compiler_PJ_3/server.log
+Compiler_PJ_3/_test_*/
 mnist_X.csv
 mnist_Y.csv
 test_run.csl
