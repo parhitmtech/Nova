@@ -12,7 +12,9 @@ require("dotenv").config();
 const express    = require("express");
 const cors       = require("cors");
 const crypto     = require("crypto");
-const { execFile, spawn } = require("child_process");
+const { spawnCompiler, createExecutor } = require("./execution");
+createExecutor(); // Reject an invalid or unsafe execution mode before accepting traffic.
+const security = require("./security");
 const fs         = require("fs");
 const path       = require("path");
 const os         = require("os");
@@ -71,7 +73,7 @@ const USERS_TABLE         = process.env.DYNAMODB_TABLE_USERS          || "novaco
 const FILES_TABLE         = "novacomp-files-meta";
 const AGENT_HISTORY_TABLE = process.env.DYNAMODB_TABLE_AGENT_HISTORY  || "novacomp-agent-history";
 const AGENT_MEMORY_TABLE  = process.env.DYNAMODB_TABLE_AGENT_MEMORY   || "novacomp-agent-memory";
-const JWT_SECRET          = process.env.JWT_SECRET                    || "novacomp-secret-key";
+const JWT_SECRET          = security.validateSecret(process.env.JWT_SECRET);
 
 const dynamoRaw = new DynamoDBClient({ region: AWS_REGION });
 const dynamo    = DynamoDBDocumentClient.from(dynamoRaw);
@@ -137,10 +139,10 @@ async function ensureTables() {
 // ── JWT Auth Middleware ───────────────────────────────────────────────────────
 
 function requireAuth(req, res, next) {
-  const token = req.headers.authorization?.split(" ")[1];
+  const token = /^Bearer ([^\s]+)$/.exec(req.headers.authorization || "")?.[1];
   if (!token) return res.status(401).json({ error: "Unauthorized" });
   try {
-    req.user = jwt.verify(token, JWT_SECRET);
+    req.user = security.verifyToken(jwt, token, JWT_SECRET);
     next();
   } catch {
     res.status(401).json({ error: "Invalid token" });
@@ -160,18 +162,15 @@ if (!fs.existsSync(WORKSPACE)) fs.mkdirSync(WORKSPACE, { recursive: true });
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const MAX_SOURCE_LENGTH  = 10_000;
-const MAX_EXECUTION_MS   = 30_000;          // default: 30s (infinite loops caught by compiler)
-const ML_EXECUTION_MS    = 45 * 60 * 1000; // @ml annotation: 45 minutes (SOL finetune + predict + save)
+const MAX_EXECUTION_MS   = Math.min(30_000, Math.max(1, Number(process.env.NOVA_EXECUTION_TIMEOUT_MS) || 30_000));
+const ML_EXECUTION_MS    = MAX_EXECUTION_MS; // annotations cannot raise web execution limits
 const MAX_OUTPUT_BYTES   = 256_000;
 const MAX_CONCURRENT     = 5;
 const BENCH_ITERS        = 10000;
 const REPL_IDLE_TIMEOUT  = 5 * 60 * 1000;  // 5 minutes
 
-// Returns the appropriate timeout for a given source.
-// Add "// @ml" anywhere in the file to opt into the ML timeout.
-function getExecutionTimeout(source) {
-  return /\/\/\s*@ml\b/.test(source) ? ML_EXECUTION_MS : MAX_EXECUTION_MS;
-}
+// All web execution shares the same hard deadline, including ML annotations.
+function getExecutionTimeout(_source) { return MAX_EXECUTION_MS; }
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -191,15 +190,19 @@ function log(level, message, meta = {}) {
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
-app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+app.use((req, res, next) => {
+  if (!security.originAllowed(req.headers.origin, req)) return res.status(403).json({ error: 'Origin not allowed' });
+  next();
+});
+app.use(cors({ origin: true }));
+app.use(express.json({ limit: "64kb" }));
 
 app.get("/", (req, res) => {
   res.sendFile(path.join(__dirname, "landing.html"));
 });
 
 app.use(express.static(path.join(__dirname, 'dist')));
-app.use(express.static(__dirname));
+
 // ── Rate Limiting ─────────────────────────────────────────────────────────────
 
 const limiter = rateLimit({
@@ -223,6 +226,15 @@ const agentLimiter = rateLimit({
   },
 });
 
+app.use('/auth', rateLimit({ windowMs: 60000, max: 10, standardHeaders: true, legacyHeaders: false }));
+app.use(['/run', '/run-stream', '/compile-bytecode', '/compare', '/fs', '/gpu', '/git', '/agent'], requireAuth);
+app.use(['/run-stream', '/compile-bytecode', '/gpu/submit', '/api/share'], limiter);
+app.use('/api/share', (req, res, next) => req.method === 'POST' ? requireAuth(req, res, next) : next());
+app.use('/gpu', (req, res, next) => {
+  if (process.env.NOVA_ENABLE_GPU !== 'true' || process.env.NOVA_EXECUTION_MODE !== 'local' || process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'GPU execution is disabled on this deployment' });
+  next();
+});
+app.use('/run-debug', requireAuth, (_req, res) => res.status(501).json({ error: 'Debug sessions require isolated session support and are unavailable' }));
 app.use("/run",     limiter);
 app.use("/compare", limiter);
 app.use('/agent/chat', agentLimiter);
@@ -249,7 +261,7 @@ app.use((req, _res, next) => {
 // POST /auth/signup  { email, password }
 app.post("/auth/signup", async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password)
+  if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length < 8 || Buffer.byteLength(password) > 72)
     return res.status(400).json({ error: "email and password required" });
 
   try {
@@ -265,7 +277,7 @@ app.post("/auth/signup", async (req, res) => {
       Item: { email, userId, passwordHash, createdAt },
     }));
 
-    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
     res.json({ token, user: { userId, email, createdAt } });
   } catch (e) {
     log("error", "Signup failed", { error: e.message });
@@ -276,7 +288,7 @@ app.post("/auth/signup", async (req, res) => {
 // POST /auth/login  { email, password }
 app.post("/auth/login", async (req, res) => {
   const { email, password } = req.body || {};
-  if (!email || !password)
+  if (typeof email !== 'string' || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || typeof password !== 'string' || password.length === 0 || Buffer.byteLength(password) > 4096)
     return res.status(400).json({ error: "email and password required" });
 
   try {
@@ -287,7 +299,7 @@ app.post("/auth/login", async (req, res) => {
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
     const { userId, createdAt } = result.Item;
-    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d" });
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
     res.json({ token, user: { userId, email, createdAt } });
   } catch (e) {
     log("error", "Login failed", { error: e.message });
@@ -343,21 +355,40 @@ function validateSource(source) {
 // ── Temp File Helpers ─────────────────────────────────────────────────────────
 
 // Use a local _tmp folder right next to server.js — short path, no permission issues
-const LOCAL_TEMP = path.join(__dirname, '_tmp');
+const LOCAL_TEMP = process.env.NOVA_TEMP_DIR ? path.resolve(process.env.NOVA_TEMP_DIR) : path.join(__dirname, '_tmp');
 if (!fs.existsSync(LOCAL_TEMP)) fs.mkdirSync(LOCAL_TEMP, { recursive: true });
 
+const activeTempDirs = new Set();
 function writeTempFile(source) {
-  const id = Date.now() + '_' + Math.random().toString(36).slice(2);
+  const id = crypto.randomUUID();
   const tmpDir  = path.join(LOCAL_TEMP, id);
   const tmpFile = path.join(tmpDir, 'program.csl');
-  fs.mkdirSync(tmpDir, { recursive: true });
+  fs.mkdirSync(tmpDir, { recursive: true, mode: 0o700 });
+  activeTempDirs.add(tmpDir);
   fs.writeFileSync(tmpFile, source + '\n', 'utf8');
   return { tmpDir, tmpFile };
 }
 
 function cleanupTempFile(tmpFile, tmpDir) {
-  // try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
+  if (!tmpDir || path.dirname(tmpDir) !== LOCAL_TEMP) return;
+  activeTempDirs.delete(tmpDir);
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
+const cleanupTimer = setInterval(() => {
+  for (const entry of fs.readdirSync(LOCAL_TEMP, { withFileTypes: true })) {
+    const target = path.join(LOCAL_TEMP, entry.name);
+    if (activeTempDirs.has(target) || entry.isSymbolicLink()) continue;
+    try {
+      if (entry.name.startsWith('gpu_job_') && entry.isFile()) {
+        const meta = JSON.parse(fs.readFileSync(target, 'utf8'));
+        if (['pending', 'running'].includes(meta.status)) continue;
+      }
+      if (Date.now() - fs.lstatSync(target).mtimeMs > 24 * 60 * 60 * 1000)
+        fs.rmSync(target, { recursive: true, force: true });
+    } catch (_) {}
+  }
+}, 60 * 60 * 1000);
+cleanupTimer.unref();
 // ── Run Helper ────────────────────────────────────────────────────────────────
 
 function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECUTION_MS) {
@@ -370,10 +401,12 @@ function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECU
     const start = Date.now();
     let stdout = "";
     let stderr = "";
+    let timedOut = false;
 
-    const child = spawn(BINARY, [tmpFile, ...extraArgs], {
+    const child = spawnCompiler( [tmpFile, ...extraArgs], {
       stdio: ["pipe", "pipe", "pipe"],
-      cwd: WORKSPACE,
+      cwd: path.dirname(tmpFile),
+      timeoutMs,
       shell: process.platform === 'win32'
     });
 
@@ -395,15 +428,16 @@ function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECU
     const timer = setTimeout(() => {
       const elapsed = Date.now() - start;
       console.log(`⏰ TIMEOUT TRIGGERED after ${elapsed}ms`);
+      timedOut = true;
       child.kill();
-      reject({ type: "timeout", ms: elapsed });
     }, timeoutMs);
 
     child.on("close", (code) => {
       clearTimeout(timer);
       const ms = Date.now() - start;
       console.log(`✅ Process closed: code=${code}, time=${ms}ms`);
-      resolve({ stdout, stderr, ms, exitCode: code });
+      if (timedOut || child.stopReason === "timeout") reject({ type: "timeout", ms });
+      else resolve({ stdout, stderr, ms, exitCode: code });
     });
 
     child.on("error", (err) => {
@@ -460,7 +494,7 @@ app.post("/run", async (req, res) => {
   }
 
   const source = sanitizeSource(req.body.source);
-  const inputs = req.body.inputs || "";
+  const inputs = typeof req.body.inputs === "string" ? req.body.inputs : "";
 
   let tmpFile, tmpDir;
   try {
@@ -485,7 +519,7 @@ app.post("/run", async (req, res) => {
     return res.json({ error: msg, terminal: terminalOutput, ms })
   } catch (e) {
     if (e.type === "timeout")
-      return res.json({ error: "Execution timed out. Check for infinite loops, or add // @ml for a 10-minute limit.", ms: e.ms });
+      return res.json({ error: "Execution timed out. Check for infinite loops.", ms: e.ms });
     return res.json({ error: "Unknown runtime error." });
   } finally {
     activeExecutions--;
@@ -539,35 +573,20 @@ app.post("/run-stream", async (req, res) => {
     if (validationError) return res.status(400).json({ error: validationError });
     if (activeExecutions >= MAX_CONCURRENT) return res.status(503).json({ error: "Server busy." });
 
-    // Optional auth — needed to upload model results to user's S3 storage
-    let streamUser = null;
-    try {
-        const tok = req.headers.authorization?.split(' ')[1];
-        if (tok) streamUser = jwt.verify(tok, JWT_SECRET);
-    } catch (_) {}
+    const streamUser = req.user;
 
-    // Generate a pre-signed S3 PUT URL so the SLURM compute node can upload
-    // the trained model directly without going through the server.
-    let modelUploadUrl = '';
-    let modelS3Key = '';
-    if (streamUser) {
-        try {
-            modelS3Key = `${streamUser.userId}/model_${Date.now()}.tar.gz`;
-            modelUploadUrl = await getSignedUrl(s3, new PutObjectCommand({
-                Bucket: S3_BUCKET,
-                Key: modelS3Key,
-                ContentType: 'application/gzip',
-            }), { expiresIn: 86400 }); // valid for 24 hours
-        } catch (e) {
-            log('warn', 'Failed to generate pre-signed model upload URL', { error: e.message });
-        }
-    }
+    const modelS3Key = '';
 
     const source = sanitizeSource(req.body.source);
-    const inputs = req.body.inputs || "";
+    const inputs = typeof req.body.inputs === "string" ? req.body.inputs : "";
     let tmpFile, tmpDir;
     try { ({ tmpFile, tmpDir } = writeTempFile(source)); }
     catch (err) { return res.status(500).json({ error: "Internal error." }); }
+
+    const execTimeout = getExecutionTimeout(source);
+    let child;
+    try { child = spawnCompiler([tmpFile], { cwd: tmpDir, timeoutMs: execTimeout }); }
+    catch (err) { cleanupTempFile(tmpFile, tmpDir); return res.status(503).json({ error: err.message }); }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache');
@@ -576,29 +595,13 @@ app.post("/run-stream", async (req, res) => {
 
     activeExecutions++;
     const start = Date.now();
-    const send = (type, text) => res.write(`data: ${JSON.stringify({ type, text })}\n\n`);
-    const execTimeout = getExecutionTimeout(source);
+    const send = (type, text) => { if (!res.destroyed && !res.writableEnded) res.write(`data: ${JSON.stringify({ type, text })}\n\n`); };
 
     let timedOut = false;
     let stdout = '';
     let stderr = '';
     const pendingSaveFiles = []; // local paths printed via NOVA_SAVE_FILE:
     const pendingS3Files   = []; // S3 keys printed via NOVA_S3_FILE: (already uploaded by SLURM)
-
-    const child = spawn(BINARY, [tmpFile], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: WORKSPACE,
-        shell: false,
-        windowsHide: true,
-        env: {
-            ...process.env,
-            NOVA_HOME: __dirname,
-            ...(modelUploadUrl ? {
-                NOVA_MODEL_UPLOAD_URL: modelUploadUrl,
-                NOVA_MODEL_S3_KEY:     modelS3Key,
-            } : {}),
-        },
-    });
 
     let stdoutBuf = '';
     let flushTimer = null;
@@ -613,9 +616,11 @@ app.post("/run-stream", async (req, res) => {
         const visible = [];
         for (const line of lines) {
             if (line.startsWith('NOVA_SAVE_FILE:')) {
-                pendingSaveFiles.push(line.slice('NOVA_SAVE_FILE:'.length).trim());
+                const file = line.slice('NOVA_SAVE_FILE:'.length).trim();
+                if (pendingSaveFiles.length < 10 && !pendingSaveFiles.includes(file)) pendingSaveFiles.push(file);
             } else if (line.startsWith('NOVA_S3_FILE:')) {
-                pendingS3Files.push(line.slice('NOVA_S3_FILE:'.length).trim());
+                const key = line.slice('NOVA_S3_FILE:'.length).trim();
+                if (pendingS3Files.length < 10 && !pendingS3Files.includes(key)) pendingS3Files.push(key);
             } else {
                 visible.push(line);
             }
@@ -640,8 +645,13 @@ app.post("/run-stream", async (req, res) => {
 
     const timer = setTimeout(() => { timedOut = true; child.kill(); }, execTimeout);
 
+    let finished = false;
+    res.on('close', () => { if (!finished) child.kill(); });
     child.on('close', async (code) => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
+        clearTimeout(flushTimer);
         const isMarker = stdoutBuf.startsWith('NOVA_SAVE_FILE:') ||
                          stdoutBuf.startsWith('NOVA_S3_FILE:');
         if (stdoutBuf && !isMarker) { send('stdout', stdoutBuf); stdoutBuf = ''; }
@@ -649,7 +659,7 @@ app.post("/run-stream", async (req, res) => {
         if (f) send('stderr', f);
         if (timedOut) {
             const secs = Math.round(execTimeout / 1000);
-            send('error', `Execution timed out (> ${secs}s). Add // @ml for a 10-minute limit.`);
+            send('error', `Execution timed out (> ${secs}s).`);
         } else if (code !== 0 && !stdout) {
             send('error', `Runtime error (exit code ${code})`);
         }
@@ -658,10 +668,8 @@ app.post("/run-stream", async (req, res) => {
         if (streamUser && pendingSaveFiles.length > 0) {
             for (const filePath of pendingSaveFiles) {
                 try {
-                    const absPath = path.isAbsolute(filePath)
-                        ? filePath
-                        : path.join(WORKSPACE, filePath);
-                    if (!fs.existsSync(absPath)) continue;
+                    const absPath = security.safePath(tmpDir, filePath, { regularFile: true });
+                    if (!absPath || fs.statSync(absPath).size > MAX_OUTPUT_BYTES) continue;
                     const fileName = path.basename(filePath);
                     const content  = fs.readFileSync(absPath);
                     await s3.send(new PutObjectCommand({
@@ -687,6 +695,7 @@ app.post("/run-stream", async (req, res) => {
         // Register models uploaded directly to S3 by SLURM (NOVA_S3_FILE:)
         if (streamUser && pendingS3Files.length > 0) {
             for (const s3Key of pendingS3Files) {
+                if (!modelS3Key || s3Key !== modelS3Key) continue;
                 try {
                     const fileName = path.basename(s3Key);
                     await dynamo.send(new PutCommand({
@@ -711,7 +720,10 @@ app.post("/run-stream", async (req, res) => {
     });
 
     child.on('error', err => {
+        if (finished) return;
+        finished = true;
         clearTimeout(timer);
+        clearTimeout(flushTimer);
         send('error', err.message);
         send('done', String(Date.now() - start));
         res.end();
@@ -719,116 +731,6 @@ app.post("/run-stream", async (req, res) => {
         cleanupTempFile(tmpFile, tmpDir);
     });
 });
-
-// Debug session state
-let debugChild = null;
-let debugRes = null;
-
-app.post("/run-debug/start", (req, res) => {
-    const validationError = validateSource(req.body?.source);
-    if (validationError) return res.status(400).json({ error: validationError });
-
-    let tmpFile, tmpDir;
-    try { ({ tmpFile, tmpDir } = writeTempFile(sanitizeSource(req.body.source))); }
-    catch (err) { return res.status(500).json({ error: "Internal error." }); }
-
-    // Kill any existing debug session
-    if (debugChild) { try { debugChild.kill(); } catch(_) {} debugChild = null; }
-
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-    debugRes = res;
-
-    const send = (obj) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
-
-    // Use spawn — we need interactive stdin for step/continue commands
-    debugChild = spawn(BINARY, ['--debug', tmpFile], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        cwd: WORKSPACE,
-        shell: false,
-        windowsHide: true,
-        env: { ...process.env, NOVA_HOME: __dirname }
-    });
-
-    // ADD THESE TEMPORARILY:
-    console.log('DEBUG: spawned PID', debugChild.pid);
-    debugChild.on('error', err => console.log('DEBUG spawn error:', err.message));
-    debugChild.on('close', (code, signal) => console.log('DEBUG close code:', code, signal));
-
-    debugChild.on('error', err => {
-        send({ type: 'error', text: err.message });
-        send({ type: 'done' });
-        res.end();
-        debugChild = null;
-    });
-
-    // Stream stdout line by line
-    let buf = '';
-    debugChild.stdout.on('data', d => {
-        buf += d.toString();
-        let nl;
-        while ((nl = buf.indexOf('\n')) !== -1) {
-            const line = buf.slice(0, nl).trimEnd();
-            buf = buf.slice(nl + 1);
-            if (line.startsWith('__DEBUG__')) {
-                try {
-                    const obj = JSON.parse(line.slice(9));
-                    send({ type: 'debug', line: obj.line, vars: obj.vars || {} });
-                } catch(_) {}
-            } else if (line.length > 0) {
-                send({ type: 'stdout', text: line + '\n' });
-            }
-        }
-    });
-
-    debugChild.stderr.on('data', d => {
-        const f = filterStderr(d.toString());
-        if (f) send({ type: 'stderr', text: f });
-    });
-
-    debugChild.on('close', () => {
-        send({ type: 'done' });
-        res.end();
-        debugChild = null;
-        cleanupTempFile(tmpFile, tmpDir);
-    });
-
-    // req.on('close', () => {
-    //   // Small delay - SSe connections can briefly disconnecting on start
-    //   setTimeout(() => {
-    //     if (debugChild) {
-    //       try { debugChild.kill(); } catch(_) {}
-    //       debugChild = null;
-    //     }
-    //   }, 500);
-    // });
-});
-
-app.post("/run-debug/command", (req, res) => {
-  const cmd = req.body?.command;
-  if (!debugChild || !['step', 'continue', 'stop'].includes(cmd)) {
-    return res.json({ ok: false });
-  }
-  try {
-    debugChild.stdin.write(cmd + '\n');
-    res.json({ ok: true });
-  } catch (e) {
-    res.json({ ok: false, error: e.message });
-  }
-});
-
-app.post("/run-debug/breakpoints", (req, res) => {
-  const lines = req.body?.lines || [];
-  if (debugChild)
-  {
-    debugChild.stdin.write('breakpoints:' + lines.join(',') + '\n');
-  }
-  res.json({ ok: true });
-});
-
-// ── POST /compare ─────────────────────────────────────────────────────────────
 
 app.post("/compare", async (req, res) => {
   const validationError = validateSource(req.body?.source);
@@ -843,7 +745,7 @@ app.post("/compare", async (req, res) => {
   }
 
   const source = sanitizeSource(req.body.source);
-  const inputs = req.body.inputs || "";
+  const inputs = typeof req.body.inputs === "string" ? req.body.inputs : "";
 
   let tmpFile, tmpDir;
   try {
@@ -895,16 +797,13 @@ app.post("/compare", async (req, res) => {
 
 // ── Filesystem helpers ────────────────────────────────────────────────────────
 
-function safeWorkspacePath(rel) {
-  const resolved = path.resolve(WORKSPACE, rel || "");
-  if (!resolved.startsWith(WORKSPACE + path.sep) && resolved !== WORKSPACE)
-    return null;
-  return resolved;
+function safeWorkspacePath(req, rel) {
+  return security.safePath(security.userWorkspace(WORKSPACE, req.user.userId), rel);
 }
 
 // ── POST /fs/write  { path, content } ────────────────────────────────────────
 app.post("/fs/write", (req, res) => {
-  const target = safeWorkspacePath(req.body?.path);
+  const target = safeWorkspacePath(req, req.body?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -917,7 +816,7 @@ app.post("/fs/write", (req, res) => {
 
 // ── DELETE /fs/delete?path=... ────────────────────────────────────────────────
 app.delete("/fs/delete", (req, res) => {
-  const target = safeWorkspacePath(req.query?.path);
+  const target = safeWorkspacePath(req, req.query?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
     fs.rmSync(target, { recursive: true, force: true });
@@ -929,7 +828,7 @@ app.delete("/fs/delete", (req, res) => {
 
 // ── POST /fs/mkdir  { path } ──────────────────────────────────────────────────
 app.post("/fs/mkdir", (req, res) => {
-  const target = safeWorkspacePath(req.body?.path);
+  const target = safeWorkspacePath(req, req.body?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
     fs.mkdirSync(target, { recursive: true });
@@ -941,8 +840,8 @@ app.post("/fs/mkdir", (req, res) => {
 
 // ── POST /fs/rename  { from, to } ────────────────────────────────────────────
 app.post("/fs/rename", (req, res) => {
-  const src  = safeWorkspacePath(req.body?.from);
-  const dest = safeWorkspacePath(req.body?.to);
+  const src  = safeWorkspacePath(req, req.body?.from);
+  const dest = safeWorkspacePath(req, req.body?.to);
   if (!src || !dest) return res.status(400).json({ error: "Invalid path" });
   try {
     fs.mkdirSync(path.dirname(dest), { recursive: true });
@@ -955,7 +854,7 @@ app.post("/fs/rename", (req, res) => {
 
 // ── GET /fs/read?path=... ─────────────────────────────────────────────────────
 app.get("/fs/read", (req, res) => {
-  const target = safeWorkspacePath(req.query?.path);
+  const target = safeWorkspacePath(req, req.query?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
     const content = fs.readFileSync(target, "utf8");
@@ -974,7 +873,7 @@ app.get("/fs/tree", (req, res) => {
       
       for (const entry of entries) {
         // Skip hidden files and node_modules
-        if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+        if (entry.isSymbolicLink() || entry.name.startsWith('.') || entry.name === 'node_modules') continue;
         
         const relPath = prefix ? `${prefix}/${entry.name}` : entry.name;
         
@@ -998,7 +897,7 @@ app.get("/fs/tree", (req, res) => {
   };
   
   try {
-    const files = walk(WORKSPACE);
+    const files = walk(security.userWorkspace(WORKSPACE, req.user.userId));
     res.json({ files });
   } catch (err) {
     log("error", "Failed to walk workspace", { error: err.message });
@@ -1007,25 +906,7 @@ app.get("/fs/tree", (req, res) => {
 });
 
 // ── GET /git/status ───────────────────────────────────────────────────────────
-app.get("/git/status", (_req, res) => {
-  const { exec } = require("child_process");
-  exec(`git status --porcelain -- ${WORKSPACE_REL}/`, { cwd: __dirname }, (err, stdout) => {
-    if (err) return res.json({ status: {}, error: err.message });
-    const status = {};
-    const prefix = WORKSPACE_REL + "/";
-    stdout.split("\n").forEach(line => {
-      if (line.length < 4) return;
-      const xy   = line.slice(0, 2);           // e.g. " M", "??", "R "
-      let   file = line.slice(3).trim();        // e.g. "workspace/main.nova"
-      // handle renames: "old -> new"
-      if (file.includes(" -> ")) file = file.split(" -> ")[1];
-      if (file.startsWith(prefix)) file = file.slice(prefix.length);
-      const code = xy.trim() || xy[1];         // prefer non-space char
-      status[file] = code === "?" ? "U" : code; // untracked shown as U like VS Code
-    });
-    res.json({ status });
-  });
-});
+app.get("/git/status", (_req, res) => res.status(501).json({ error: 'Git status requires an isolated user repository' }));
 
 // ── GET /health ───────────────────────────────────────────────────────────────
 
@@ -1244,6 +1125,15 @@ async function sftpDownload(remotePath, localPath) {
 // ── POST /gpu/submit ──────────────────────────────────────────────────────────
 
 app.post('/gpu/submit', async (req, res) => {
+  let userJobs = 0, totalJobs = 0;
+  for (const entry of fs.readdirSync(LOCAL_TEMP, { withFileTypes: true })) {
+    if (!entry.isFile() || !/^gpu_job_[0-9]+_[a-z0-9]+\.json$/.test(entry.name)) continue;
+    try {
+      const job = JSON.parse(fs.readFileSync(path.join(LOCAL_TEMP, entry.name), 'utf8'));
+      if (['pending', 'running'].includes(job.status)) { totalJobs++; if (job.ownerId === req.user.userId) userJobs++; }
+    } catch (_) {}
+  }
+  if (userJobs >= 2 || totalJobs >= MAX_CONCURRENT) return res.status(503).json({ error: 'GPU job limit reached' });
   const validationError = validateSource(req.body?.source);
   if (validationError) return res.status(400).json({ error: validationError });
 
@@ -1316,7 +1206,7 @@ echo "EXIT_CODE:$?"
       }
 
       const jobMeta = {
-        jobId, slurmJobId, type: 'slurm', scenario,
+        ownerId: req.user.userId, jobId, slurmJobId, type: 'slurm', scenario,
         clientIp: req.ip, submittedAt: new Date().toISOString(),
         status: 'pending', jobDir,
       };
@@ -1339,7 +1229,7 @@ echo "EXIT_CODE:$?"
   // The compiler makes HuggingFace API calls and/or SSHes into SOL internally.
   // We fire it off in the background so the response returns immediately.
   const jobMeta = {
-    jobId, type: 'local', scenario,
+    ownerId: req.user.userId, jobId, type: 'local', scenario,
     clientIp: req.ip, submittedAt: new Date().toISOString(),
     status: 'running', output: null, errorOutput: null,
   };
@@ -1371,6 +1261,7 @@ echo "EXIT_CODE:$?"
 
 app.get('/gpu/status/:jobId', async (req, res) => {
   const { jobId } = req.params;
+  if (!/^[0-9]+_[a-z0-9]+$/.test(jobId)) return res.status(400).json({ error: 'Invalid job ID' });
   const metaPath  = path.join(LOCAL_TEMP, `gpu_job_${jobId}.json`);
 
   if (!fs.existsSync(metaPath))
@@ -1379,6 +1270,7 @@ app.get('/gpu/status/:jobId', async (req, res) => {
   let jobMeta;
   try { jobMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); }
   catch { return res.status(500).json({ error: 'Failed to read job metadata' }); }
+  if (jobMeta.ownerId !== req.user.userId) return res.status(404).json({ error: 'Job not found' });
 
   // If already in a terminal state, return immediately without re-querying SLURM
   if (jobMeta.status === 'completed' || jobMeta.status === 'failed') {
@@ -1425,6 +1317,7 @@ app.get('/gpu/status/:jobId', async (req, res) => {
 
 app.get('/gpu/results/:jobId', async (req, res) => {
   const { jobId } = req.params;
+  if (!/^[0-9]+_[a-z0-9]+$/.test(jobId)) return res.status(400).json({ error: 'Invalid job ID' });
   const metaPath  = path.join(LOCAL_TEMP, `gpu_job_${jobId}.json`);
 
   if (!fs.existsSync(metaPath))
@@ -1433,6 +1326,7 @@ app.get('/gpu/results/:jobId', async (req, res) => {
   let jobMeta;
   try { jobMeta = JSON.parse(fs.readFileSync(metaPath, 'utf8')); }
   catch { return res.status(500).json({ error: 'Failed to read job metadata' }); }
+  if (jobMeta.ownerId !== req.user.userId) return res.status(404).json({ error: 'Job not found' });
 
   // Local jobs (HF / SOL) store output directly in the meta file
   if (jobMeta.type === 'local') {
@@ -1472,7 +1366,8 @@ app.get('/gpu/results/:jobId', async (req, res) => {
 // ── Error Boundaries ──────────────────────────────────────────────────────────
 
 app.use((err, req, res, _next) => {
-  if (activeExecutions > 0) activeExecutions--;
+  if (res.headersSent) return res.end();
+  if (err.type === "entity.too.large") return res.status(413).json({ error: "Request body exceeds 64KB" });
   log("error", "Unhandled Express error", { error: err.message, stack: err.stack, path: req.path, ip: req.ip });
   res.status(500).json({ error: "Internal server error." });
 });
@@ -1506,18 +1401,20 @@ process.on("uncaughtException", (err) => {
 const replSessions = new Map();  // ws → { child, idleTimer }
 
 function createReplSession(ws) {
+  const { tmpDir } = writeTempFile('');
   log("info", "REPL session started", { activeSessions: replSessions.size + 1 });
 
   // spawn the compiler in REPL mode
-  const child = spawn(BINARY, ["--repl"], {
-    stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, NOVA_HOME: __dirname }
-  });
+  let child;
+  try { child = spawnCompiler(["--repl"], { cwd: tmpDir, timeoutMs: REPL_IDLE_TIMEOUT }); }
+  catch (err) { cleanupTempFile(null, tmpDir); ws.close(1013, 'Execution unavailable'); return; }
 
   // ── helper: send JSON message to browser ──────────────────────────────────
   function send(type, text) {
-    if (ws.readyState === WebSocket.OPEN)
-      ws.send(JSON.stringify({ type, text }));
+    if (ws.readyState === WebSocket.OPEN) {
+      if (ws.bufferedAmount > MAX_OUTPUT_BYTES) ws.close(1009, 'Output limit exceeded');
+      else ws.send(JSON.stringify({ type, text }));
+    }
   }
 
   // ── idle timeout — kill session after 5 minutes of no input ──────────────
@@ -1551,14 +1448,20 @@ function createReplSession(ws) {
     log("info", "REPL process exited", { code });
     send("closed", "");
     if (idleTimer) clearTimeout(idleTimer);
+    const session = replSessions.get(ws);
+    if (session?._idleTimer) clearTimeout(session._idleTimer);
     replSessions.delete(ws);
+    cleanupTempFile(null, tmpDir);
   });
 
   child.on("error", (err) => {
     log("error", "REPL process error", { error: err.message });
     send("error", `\n  Process error: ${err.message}\n`);
     send("closed", "");
+    const session = replSessions.get(ws);
+    if (session?._idleTimer) clearTimeout(session._idleTimer);
     replSessions.delete(ws);
+    cleanupTempFile(null, tmpDir);
   });
 
   // ── store session ─────────────────────────────────────────────────────────
@@ -1592,23 +1495,32 @@ const server = http.createServer(app);
 // two WebSocket.Server instances both attach upgrade listeners to the same
 // http.Server (they can intercept each other's connections).
 
-const wss     = new WebSocket.Server({ noServer: true });  // REPL
-const termWss = new WebSocket.Server({ noServer: true });  // Terminal
+const wss     = new WebSocket.Server({ noServer: true, maxPayload: 16384 });  // REPL
+const termWss = new WebSocket.Server({ noServer: true, maxPayload: 16384 });  // Terminal
 
+const socketCounts = new Map();
+const upgradeRates = new Map();
 server.on('upgrade', (req, socket, head) => {
-  const url      = new URL(req.url, 'http://localhost');
-  const pathname = url.pathname;
-  if (pathname === '/repl') {
-    wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req));
-  } else if (pathname === '/terminal') {
-    try {
-      const payload = jwt.verify(url.searchParams.get('token') || '', JWT_SECRET);
-      req._userId = payload.userId;
-    } catch { req._userId = null; }
-    termWss.handleUpgrade(req, socket, head, ws => termWss.emit('connection', ws, req));
-  } else {
-    socket.destroy();
-  }
+  const reject = status => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
+  const url = new URL(req.url, 'http://localhost');
+  if (!['/repl', '/terminal'].includes(url.pathname)) return reject('404 Not Found');
+  if (!req.headers.origin || !security.originAllowed(req.headers.origin, req)) return reject('403 Forbidden');
+  try { req.user = security.verifyToken(jwt, url.searchParams.get('token') || '', JWT_SECRET); }
+  catch { return reject('401 Unauthorized'); }
+  req._userId = req.user.userId;
+  const id = req._userId;
+  for (const [key, value] of upgradeRates) if (Date.now() - value.start > 60000) upgradeRates.delete(key);
+  const rate = upgradeRates.get(id);
+  const now = Date.now();
+  const window = !rate || now - rate.start > 60000 ? { start: now, count: 0 } : rate;
+  window.count++; upgradeRates.set(id, window);
+  if (window.count > 10 || (socketCounts.get(id) || 0) >= 3 || [...socketCounts.values()].reduce((a, b) => a + b, 0) >= 20) return reject('429 Too Many Requests');
+  const target = url.pathname === '/repl' ? wss : termWss;
+  target.handleUpgrade(req, socket, head, ws => {
+    socketCounts.set(id, (socketCounts.get(id) || 0) + 1);
+    ws.once('close', () => { const n = (socketCounts.get(id) || 1) - 1; n ? socketCounts.set(id, n) : socketCounts.delete(id); });
+    target.emit('connection', ws, req);
+  });
 });
 
 // ── REPL connection handler ───────────────────────────────────────────────────
@@ -1620,6 +1532,7 @@ wss.on("connection", (ws, req) => {
   });
 
   createReplSession(ws);
+  let inputBytes = 0;
 
   ws.on("message", (raw) => {
     let msg;
@@ -1641,8 +1554,11 @@ wss.on("connection", (ws, req) => {
         ws.close();
       }, REPL_IDLE_TIMEOUT);
 
-      const line = (msg.line || "") + "\n";
-      try { session.child.stdin.write(line); } catch (_) {}
+      if (typeof msg.line !== "string" || msg.line.length > MAX_SOURCE_LENGTH) return ws.close(1009, "Input limit exceeded");
+      const line = msg.line + "\n";
+      inputBytes += Buffer.byteLength(line);
+      if (inputBytes > 64000) return ws.close(1009, "Session input limit exceeded");
+      try { if (!session.child.stdin.write(line)) ws.close(1009, "Input buffer full"); } catch (_) { ws.close(); }
     }
   });
 
@@ -1650,6 +1566,8 @@ wss.on("connection", (ws, req) => {
     log("info", "WebSocket REPL connection closed");
     const session = replSessions.get(ws);
     if (session) {
+      if (session._idleTimer) clearTimeout(session._idleTimer);
+      if (session.idleTimer) clearTimeout(session.idleTimer());
       try { session.child.kill(); } catch (_) {}
       replSessions.delete(ws);
     }
@@ -1666,9 +1584,7 @@ wss.on("connection", (ws, req) => {
 // Supports: ls, cd, pwd, cat, mkdir, rm, cp, mv, touch, echo, novacomp, clear, help
 
 async function createShellSession(ws, userId) {
-  const userWorkspace = userId
-    ? path.join(WORKSPACE, userId.replace(/[^a-zA-Z0-9-]/g, ''))
-    : WORKSPACE;
+  const userWorkspace = security.userWorkspace(WORKSPACE, userId);
   fs.mkdirSync(userWorkspace, { recursive: true });
 
   log('info', 'Shell session started', { userId: userId || 'anonymous' });
@@ -1683,7 +1599,7 @@ async function createShellSession(ws, userId) {
   // ── helpers ───────────────────────────────────────────────────────────────
 
   function send(text) {
-    if (ws.readyState === WebSocket.OPEN) ws.send(text);
+    if (ws.readyState === WebSocket.OPEN) { if (ws.bufferedAmount > MAX_OUTPUT_BYTES) ws.close(1009, 'Output limit exceeded'); else ws.send(text); }
   }
 
   // Send a JSON control message to the browser to sync filesystem state
@@ -1709,13 +1625,9 @@ async function createShellSession(ws, userId) {
 
   // Resolve a user-supplied path safely — returns null if outside workspace
   function safe(p) {
-    if (!p || p === '~') return WORKSPACE;
-    const abs = path.isAbsolute(p)
-      ? path.join(userWorkspace, p)      // treat /foo as ~/foo
-      : path.resolve(cwd, p);
-    const norm = path.resolve(abs);
-    if (norm !== userWorkspace && !norm.startsWith(userWorkspace + path.sep)) return null;
-    return norm;
+    if (!p || p === '~' || p === '/') return security.safePath(userWorkspace, '', { allowRoot: true });
+    const abs = p.startsWith('/') ? path.resolve(userWorkspace, '.' + p) : path.resolve(cwd, p);
+    return security.safePath(userWorkspace, abs, { allowRoot: true });
   }
 
   // ── commands ──────────────────────────────────────────────────────────────
@@ -1732,7 +1644,7 @@ async function createShellSession(ws, userId) {
       if (!entries.length) return;
       if (long) {
         send(entries.map(name => {
-          const st  = fs.statSync(path.join(dir, name));
+          const st  = fs.lstatSync(path.join(dir, name));
           const dir2 = st.isDirectory();
           return `${dir2 ? 'd' : '-'}rw-r--r--  ${String(dir2 ? '-' : st.size).padStart(8)}  `
                + `${st.mtime.toISOString().slice(0,10)}  `
@@ -1740,7 +1652,7 @@ async function createShellSession(ws, userId) {
         }).join('\r\n'));
       } else {
         send(entries.map(name => {
-          const isDir = fs.statSync(path.join(dir, name)).isDirectory();
+          const isDir = fs.lstatSync(path.join(dir, name)).isDirectory();
           return isDir ? `\x1b[34m${name}/\x1b[0m` : name;
         }).join('  '));
       }
@@ -1749,7 +1661,7 @@ async function createShellSession(ws, userId) {
 
   function cmdCd(args) {
     const t = args[0] || '~';
-    if (t === '~' || t === '/') { cwd = WORKSPACE; return; }
+    if (t === '~' || t === '/') { cwd = userWorkspace; return; }
     const p = safe(t);
     if (!p)                      { send(`\x1b[31mcd: permission denied\x1b[0m`); return; }
     if (!fs.existsSync(p))       { send(`\x1b[31mcd: ${t}: No such file or directory\x1b[0m`); return; }
@@ -1758,7 +1670,7 @@ async function createShellSession(ws, userId) {
   }
 
   function cmdPwd() {
-    send('/' + path.relative(WORKSPACE, cwd).replace(/\\/g, '/'));
+    send('/' + path.relative(userWorkspace, cwd).replace(/\\/g, '/'));
   }
 
   function cmdCat(args) {
@@ -1787,7 +1699,7 @@ async function createShellSession(ws, userId) {
     if (!targets.length) { send('\x1b[31mrm: missing operand\x1b[0m'); return; }
     for (const t of targets) {
       const p = safe(t);
-      if (!p)                { send(`\x1b[31mrm: '${t}': Permission denied\x1b[0m`); continue; }
+      if (!p || p === userWorkspace) { send('rm: permission denied'); continue; }
       if (!fs.existsSync(p)) { send(`\x1b[31mrm: '${t}': No such file or directory\x1b[0m`); continue; }
       try { fs.rmSync(p, { recursive, force: true }); notifyFsChange('delete', [rel(p)]); }
       catch (e) { send(`\x1b[31mrm: ${e.message}\x1b[0m`); }
@@ -1876,7 +1788,8 @@ async function createShellSession(ws, userId) {
     // Write the compiled artifact — a JSON metadata file the runtime uses.
     // When x86 codegen lands (v9), this becomes a real binary in place.
     // When JIT lands (v10), this becomes a bytecode (.nbc) file.
-    const exePath = path.join(cwd, outName);
+    const exePath = safe(outName);
+    if (!exePath || exePath === userWorkspace || extraArgs.some(flag => !['--optimize', '--dump-ir'].includes(flag))) { send('novacomp: invalid output path or option'); return; }
     const meta = {
       source:    path.relative(userWorkspace, p).replace(/\\/g, '/'),
       extraArgs,
@@ -1917,13 +1830,17 @@ async function createShellSession(ws, userId) {
     }
 
     // The compiler binary requires a .csl extension — write source to a temp file.
-    const { tmpDir, tmpFile } = writeTempFile(fs.readFileSync(srcPath, 'utf8'));
+    const source = fs.readFileSync(srcPath, 'utf8');
+    const invalid = validateSource(source);
+    if (invalid) { send(invalid); return; }
+    const { tmpDir, tmpFile } = writeTempFile(source);
 
     return new Promise(resolve => {
-      const proc = spawn(BINARY, [tmpFile, ...(meta.extraArgs || [])], {
-        stdio: ['pipe', 'pipe', 'pipe'],
-        shell: process.platform === 'win32'
-      });
+      const flags = Array.isArray(meta.extraArgs) ? meta.extraArgs : [];
+      if (flags.some(flag => !['--optimize', '--dump-ir'].includes(flag))) { cleanupTempFile(tmpFile, tmpDir); send('Invalid compiler options'); resolve(); return; }
+      let proc;
+      try { proc = spawnCompiler([tmpFile, ...flags], { cwd: tmpDir, timeoutMs: MAX_EXECUTION_MS }); }
+      catch (err) { cleanupTempFile(tmpFile, tmpDir); send(err.message); resolve(); return; }
       currentProc = proc;
       proc.__killed = false;
 
@@ -1939,9 +1856,10 @@ async function createShellSession(ws, userId) {
         const f = filterStderr(d.toString());
         if (f) send('\x1b[31m' + f.replace(/\n/g, '\r\n') + '\x1b[0m');
       });
+      proc.on('error', err => { send(err.message); });
       proc.on('close', code => {
         currentProc = null;
-        fs.rmSync(tmpDir, { recursive: true, force: true });
+        cleanupTempFile(tmpFile, tmpDir);
         if (!proc.__killed && code !== 0 && code !== null)
           send(`\x1b[2m[process exited with code ${code}]\x1b[0m`);
         resolve();
@@ -1981,6 +1899,7 @@ async function createShellSession(ws, userId) {
     if (!trimmed) return;
     if (!history.length || history[history.length - 1] !== trimmed)
       history.push(trimmed);
+      if (history.length > 100) history.shift();
     histIdx = -1; histDraft = '';
 
     // Tokenise (handles "quoted args")
@@ -2051,7 +1970,7 @@ async function createShellSession(ws, userId) {
         }
         i += 2;
       } else if (code >= 0x20 && code !== 0x7f) {             // Printable
-        inputBuf += char; send(char);
+        if (inputBuf.length < 4096) { inputBuf += char; send(char); }
       }
       i++;
     }
@@ -2068,7 +1987,8 @@ async function createShellSession(ws, userId) {
       for (const obj of Contents) {
         const fileName = path.basename(obj.Key.replace(`${userId}/`, ''));
         if (!fileName) continue;
-        const localPath = path.join(userWorkspace, fileName);
+        const localPath = security.safePath(userWorkspace, fileName);
+        if (!localPath) continue;
         try {
           if (!fs.existsSync(localPath) ||
               new Date(obj.LastModified) > fs.statSync(localPath).mtime) {
@@ -2086,27 +2006,32 @@ async function createShellSession(ws, userId) {
   send('\x1b[32mNovaComp IDE\x1b[0m\r\n');
   showPrompt();
 
+  let inputQueue = Promise.resolve();
+  let pendingInputBytes = 0;
   ws.on('message', raw => {
     let msg;
     try { msg = JSON.parse(raw.toString()); } catch { return; }
     if (msg.type === 'input') {
-      processInput(msg.data).catch(() => {});
+      if (typeof msg.data !== 'string' || pendingInputBytes + msg.data.length > 32768) return ws.close(1009, 'Input limit exceeded');
+      pendingInputBytes += msg.data.length;
+      inputQueue = inputQueue.then(() => processInput(msg.data)).catch(() => {}).finally(() => { pendingInputBytes -= msg.data.length; });
     } else if (msg.type === 'write' && msg.fileName) {
       const p = safe(path.basename(String(msg.fileName)));
       if (p) try { fs.writeFileSync(p, String(msg.content ?? ''), 'utf8'); } catch (_) {}
     }
   });
 
-  ws.on('close', () => log('info', 'Shell session closed'));
+  const shellIdle = setTimeout(() => ws.close(1000, 'Session expired'), REPL_IDLE_TIMEOUT);
+  ws.on('close', () => { clearTimeout(shellIdle); if (currentProc) currentProc.kill(); log('info', 'Shell session closed'); });
   ws.on('error', err => log('error', 'Shell WebSocket error', { error: err.message }));
 }
 
 // ── Terminal connection handler ───────────────────────────────────────────────
 
 termWss.on('connection', (ws, req) => {
-  const userId = req._userId || null;
+  const userId = req._userId;
   log('info', 'Terminal connection', { ip: req.socket.remoteAddress, userId });
-  createShellSession(ws, userId);
+  createShellSession(ws, userId).catch(err => { log('error', 'Shell initialization failed', { error: err.message }); ws.close(1011, 'Workspace unavailable'); });
 });
 
 // ── Share endpoints ───────────────────────────────────────────────────────────
@@ -2269,7 +2194,8 @@ function buildPersonalizedSystemPrompt(basePrompt, memory, userEmail) {
 async function executeTool(name, input, userId) {
   if (name === 'run_nova_code') {
     const { code, inputs = '' } = input;
-    if (!code || typeof code !== 'string') return { error: 'code is required' };
+    const invalid = validateSource(code);
+    if (invalid) return { error: invalid };
     let tmpFile, tmpDir;
     try {
       ({ tmpFile, tmpDir } = writeTempFile(code));
@@ -2481,12 +2407,14 @@ app.get('/agent/memory', requireAuth, async (req, res) => {
 
 // ── SPA fallback — serve React app for all non-API routes ────────────────────
 app.use((req, res) => {
-  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  const index = path.join(__dirname, 'dist', 'index.html');
+  if (!fs.existsSync(index)) return res.status(404).json({ error: 'Not found' });
+  res.sendFile(index);
 });
 
 // ── Start (use server.listen instead of app.listen for WebSocket support) ────
 
-server.listen(PORT, () => {
+if (require.main === module) server.listen(PORT, () => {
   ensureTables().catch(e => log("error", "DynamoDB table init failed", { error: e.message }));
 
   log("info", "NovaComp server started", {
@@ -2507,3 +2435,4 @@ server.listen(PORT, () => {
     });
   }
 });
+module.exports = { app, server, cleanupTempFile, writeTempFile };

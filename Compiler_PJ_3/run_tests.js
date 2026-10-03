@@ -14,7 +14,7 @@ const { spawn }   = require("child_process");
 const fs          = require("fs");
 const path        = require("path");
 
-const BINARY      = path.resolve(__dirname, process.platform === "win32" ? "./compiler.exe" : "./compiler");
+const BINARY      = process.env.NOVA_COMPILER_PATH || path.resolve(__dirname, process.platform === "win32" ? "./compiler.exe" : "./compiler");
 const TESTS_DIR   = path.resolve(__dirname, "tests");
 const TIMEOUT_MS  = 10000;
 const filter      = process.argv[2] || "";
@@ -22,15 +22,15 @@ const filter      = process.argv[2] || "";
 // ── helpers ───────────────────────────────────────────────────────────────────
 
 // Temp files must live inside the project dir so stdlib/ imports resolve correctly.
-const TMP_FILE = path.resolve(__dirname, "_test_run_.csl");
-
 function writeTempFile(source) {
-  fs.writeFileSync(TMP_FILE, source + "\n", "utf8");
-  return { tmpDir: null, tmpFile: TMP_FILE };
+  const tmpDir = fs.mkdtempSync(path.join(__dirname, '_test_'));
+  const tmpFile = path.join(tmpDir, 'program.csl');
+  fs.writeFileSync(tmpFile, source + "\n", "utf8");
+  return { tmpDir, tmpFile };
 }
 
-function cleanup(tmpFile, _tmpDir) {
-  try { fs.unlinkSync(tmpFile); } catch (_) {}
+function cleanup(_tmpFile, tmpDir) {
+  try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
 
 function runCompiler(source, inputs) {
@@ -55,10 +55,16 @@ function runCompiler(source, inputs) {
       resolve({ ok: false, reason: "TIMEOUT" });
     }, TIMEOUT_MS);
 
-    child.on("close", () => {
+    child.on('error', error => {
       clearTimeout(timer);
       cleanup(tmpFile, tmpDir);
-      if (stderr.trim()) resolve({ ok: false, reason: "COMPILER_ERROR", detail: stderr.trim() });
+      resolve({ ok: false, reason: 'COMPILER_ERROR', detail: `Compiler could not start: ${error.message}. Run npm run build:compiler.` });
+    });
+    child.stdin.on('error', () => {});
+    child.on("close", code => {
+      clearTimeout(timer);
+      cleanup(tmpFile, tmpDir);
+      if (code !== 0 || stderr.trim()) resolve({ ok: false, reason: "COMPILER_ERROR", detail: stderr.trim() || `Compiler exited with status ${code}` });
       else               resolve({ ok: true,  output: stdout });
     });
   });

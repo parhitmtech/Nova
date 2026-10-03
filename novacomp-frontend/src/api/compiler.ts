@@ -1,6 +1,4 @@
-import axios from 'axios'
-
-const API = import.meta.env.VITE_API_URL
+import { http as axios, API, authHeaders, sessionExpired } from './client'
 
 // Buffered run — waits for the entire execution to finish before returning.
 // Prefer runCodeStream for any long-running code (ML training, SOL jobs).
@@ -26,14 +24,13 @@ export const runCodeStream = (
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      // Only attach Authorization when a token is present —
-      // anonymous runs are still allowed but won't trigger file uploads.
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...authHeaders(token),
     },
     body: JSON.stringify({ source, inputs }),
     signal,
   }).then(async res => {
     if (!res.ok) {
+      if (res.status === 401) sessionExpired()
       const data = await res.json().catch(() => ({}))
       throw new Error((data as { error?: string }).error ?? `HTTP ${res.status}`)
     }
@@ -63,8 +60,8 @@ export const runCodeStream = (
 
 // Run the same code twice (normal AST vs constant-folded/optimised AST) and
 // return timing and node-count comparisons. Used by the Compare button.
-export const compareCode = (source: string, inputs: string = '') =>
-  axios.post(`${API}/compare`, { source, inputs })
+export const compareCode = (source: string, inputs: string = '', token?: string) =>
+  axios.post(`${API}/compare`, { source, inputs }, { headers: authHeaders(token) })
 
 // Submit a GPU job to the SOL HPC cluster via the server's SSH tunnel.
 // The server detects the job type (CUDA / HuggingFace / SOL finetune) from the source.
@@ -87,5 +84,5 @@ export const getGpuResults = (token: string, jobId: string) =>
 
 // Compile Nova source to bytecode and return the raw binary as a Blob
 // so the browser can trigger a .nbc file download directly.
-export const compileBytecode = (source: string) =>
-  axios.post(`${API}/compile-bytecode`, { source }, { responseType: 'blob' })
+export const compileBytecode = (source: string, token?: string) =>
+  axios.post(`${API}/compile-bytecode`, { source }, { responseType: 'blob', headers: authHeaders(token) })
