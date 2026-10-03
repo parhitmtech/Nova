@@ -1,4 +1,6 @@
-FROM gcc:13-bookworm AS compiler-build
+# Build with Bookworm's compiler so its C++ ABI matches both runtime images.
+FROM debian:bookworm-slim AS compiler-build
+RUN apt-get update && apt-get install -y --no-install-recommends g++ && rm -rf /var/lib/apt/lists/*
 WORKDIR /src
 COPY Compiler_PJ_3/*.cc Compiler_PJ_3/*.h ./
 COPY Compiler_PJ_3/stdlib ./stdlib
