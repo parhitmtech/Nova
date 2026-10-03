@@ -1,8 +1,7 @@
-import axios from 'axios'
+import { http as axios, API } from './client'
 
 // Base URL is injected by Vite at build time from the .env file (VITE_API_URL).
 // Changing .env requires a rebuild — it is not a runtime variable.
-const API = import.meta.env.VITE_API_URL
 
 // Register a new account. Server hashes the password with bcrypt before storing.
 export const signup = (email: string, password: string) =>
