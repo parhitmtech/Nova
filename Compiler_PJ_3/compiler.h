@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 
 extern std::vector<int> mem;  // int memory - grows on demand
@@ -57,7 +58,8 @@ enum ArithmeticOperatorType {
 enum ConditionalOperatorType {
     CONDITION_GREATER = 345,
     CONDITION_LESS,
-    CONDITION_NOTEQUAL
+    CONDITION_NOTEQUAL,
+    CONDITION_EQUAL,  // "==" (added after the others so existing values don't change)
 };
 
 // Tensor operation codes
@@ -107,7 +109,11 @@ enum TensorOp {
     TEN_BACKWARD,  // backward(loss) -> void
     TEN_TENSOR_GRAD,  // tensor_grad(t) -> handle
     TEN_ZERO_GRAD,  // zero_grad(t) -> void
-    TEN_GRAD_STEP,  // grad_step(t, lr) -> handle
+    TEN_GRAD_STEP,  // grad_step(t, lr) -> void (updates t in place, clears its grad)
+    TEN_LIVE_COUNT, // tensor_live_count() -> int: tensors not yet freed (for leak tests)
+    TEN_RANK,  // tensor_rank(t) -> int: number of dimensions
+    TEN_DIM,  // tensor_dim(t, i) -> int: size of dimension i (0 = outermost)
+    TEN_RESHAPE,  // tensor_reshape(t, d0, d1, ...) -> handle; one dimension may be -1 (inferred)
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────
@@ -154,6 +160,11 @@ struct InstructionNode
             int operand1_index;
             int operand2_index;
             ArithmeticOperatorType op;
+            // Object-field ownership, set by insert_tensor_releases():
+            // 0 = ordinary copy, 1 = field store (release the field's old 
+            // tensor, retain the new one), 2 = field move (method copy-in / 
+            // copy-back: ownership moves with the value , no refcount change).
+            int own_kind;
         } assign_inst;
 
         struct
@@ -178,6 +189,12 @@ struct InstructionNode
             int operand1_index;
             int operand2_index;
             struct InstructionNode* target;
+            VarType operand_type;  // TYPE_INT (default), TYPE_FLOAT or TYPE_DOUBLE.
+            // Comparisons previously always read mem[] (int space) regardless of operand type, so
+            // comparing float/double variables in a condition silently compared the wrong memory, and for
+            // doubles, whose slot indices run past mem[]'s size, could read out of bounds. Must be set explitcitly
+            // at every CJMP construction site; TYPE_INT is the correct default since int is the common case
+            // and matches every pre-existing CJMP's behavior. 
         } cjmp_inst;
 
         struct {
@@ -196,10 +213,17 @@ struct InstructionNode
             int* arg_val_slots;
             int* all_ret_slots;
             int num_ret_slots;
+            // Type of ret_val_index. mem[], fmem[], dmem[] are seperately slot spaces.
+            // TYPE_UNKNOWN (0) = old mem[] behavior.
+            VarType ret_type;
+            // Type of each slot in all_ret_slots (null when it is null).
+            VarType* ret_slot_types;
         } call_inst;
 
         struct {
             int ret_val_index;
+            // Type of ret_val_index (which slot space to read)
+            VarType ret_type;
         } ret_inst;
 
         struct {
@@ -307,11 +331,22 @@ struct ClassDef {
 };
 
 struct Tensor {
+    // 2-D view used by every existing op: cols = the last dimension, rows = the product of all the 
+    // others (1 for a 1-D tensor). For a 2-D tensor this is exactly rows x cols, as before. Never set 
+    // tese directly: use tensor_set_shape() so shape, strides, rows, and cols stay in step.
     int rows, cols;
+    std::vector<int> shape;  // full N-D shape, outermost first ({rows, cols}) for 2-D)
+    std::vector<int> strides;  // row-major strides in elements (last one is 1)
     std::vector<double> data;
+    int refCount = 0;  // number of mem[] slots currently holding this handle
+    bool freed = false;  // true once refCount hit 0 and data was released
     double& at(int i, int j)  { return data[i * cols + j]; }
     const double& at(int i, int j) const { return data[i * cols + j]; }
+    int ndim() const { return (int)shape.size(); }
 };
+
+// Set a tensor's N-D shape: recomputes strides and the rows/cols 2-D view.
+void tensor_set_shape(Tensor& t, const std::vector<int>& shape);
 
 extern std::map<std::string, ClassDef> classTable;
 extern std::map<std::string, std::string> varClassType;
@@ -327,10 +362,23 @@ extern std::map<std::string, std::map<std::string, std::map<std::string, int>>> 
 extern std::map<std::string, std::map<std::string, std::map<std::string, VarType>>> classMethodSelfTypes;
 
 extern std::vector<Tensor> tensor_heap;
-int alloc_tensor(int rows, int cols);  // allocates and returns handle index
+extern std::set<int> g_fieldSlots;  //  instance int fields (parser2.cc) 
+extern std::set<int> g_selfSlots;  //  method self copies of int fields (parser2.cc)
+extern std::set<int> g_tensorSlots;  // mem[] slots know to hold a tensor handle (parser2.cc)
+int alloc_tensor(int rows, int cols);  // allocates and returns handle index; refcount starts at 1
+int alloc_tensor_nd(const std::vector<int>& shape);  // same, for any number of dimensions
+int alloc_tensor_like(int src);  // new tensor with src's N-D shape (contents zero)
+static const int TENSOR_MAX_RANK = 6;  // limit set by the 8-argument tensor-call slots
+void tensor_retain(int h);  // a second mem[] slot now also holds this handle
+void tensor_release(int h);  // one fewer slot holds this handle; frees data at refcount 0
+bool tensor_is_live(int h);  // false if h is out of range or already freed
 
 extern std::map<std::string, InstructionNode*> functionTable;
-
+// funcName -> return type / param types. Used to keep float, double and tensor functions out of the
+// int-only memo cache.
+extern std::map<std::string, VarType> functionReturnType;
+extern std::map<std:;string, std::vector<VarType>> functionParamTypes;
+ 
 struct InstructionNode* parse_generate_intermediate_representation();
 void execute_program(struct InstructionNode* head);
 void generate_x86(struct InstructionNode* program, const std::string& outputFile);

@@ -1,0 +1,61 @@
+def dabs(double x) -> double {
+    if x < 0.0 {
+        return 0.0 - x;
+    }
+    return x;
+}
+
+main() {
+    double eps = 0.0001 ;
+    double tol = 0.001 ;
+    double maxdiff = 0.0 ;
+    double d = 0.0 ;
+
+    // ── add: C = A + B, grad wrt A ─────────────────────────────────────────
+    int adA = tensor_zeros(2, 2) ;
+    tensor_set(adA, 0, 0, 1.0) ;
+    tensor_set(adA, 0, 1, (0.0 - 2.0)) ;
+    tensor_set(adA, 1, 0, 0.5) ;
+    tensor_set(adA, 1, 1, 3.0) ;
+    int adB = tensor_zeros(2, 2) ;
+    tensor_set(adB, 0, 0, 0.3) ;
+    tensor_set(adB, 0, 1, 1.0) ;
+    tensor_set(adB, 1, 0, (0.0 - 1.5)) ;
+    tensor_set(adB, 1, 1, 0.7) ;
+    int adT = tensor_zeros(2, 2) ;
+    tensor_set(adT, 0, 0, 0.1) ;
+    tensor_set(adT, 0, 1, 0.2) ;
+    tensor_set(adT, 1, 0, (0.0 - 0.3)) ;
+    tensor_set(adT, 1, 1, 0.4) ;
+
+    requires_grad(adA) ;
+    int adY = tensor_add(adA, adB) ;
+    int adL = mse_loss(adY, adT) ;
+    backward(adL) ;
+    int adG = tensor_grad(adA) ;
+
+    maxdiff = 0.0 ;
+    int ai = 0 ;
+     while ai < 2 {
+        int aj = 0 ;
+        while aj < 2 {
+            double orig = tensor_get(adA, ai, aj) ;
+            tensor_set(adA, ai, aj, orig + eps) ;
+            int yP2 = tensor_add(adA, adB) ;
+            int lP2 = mse_loss(yP2, adT) ;
+            double lossP = tensor_get(lP2, 0, 0) ;
+            tensor_set(adA, ai, aj, orig - eps) ;
+            int yM2 = tensor_add(adA, adB) ;
+            int lM2 = mse_loss(yM2, adT) ;
+            double lossM = tensor_get(lM2, 0, 0) ;
+            tensor_set(adA, ai, aj, orig) ;
+            double numeric = (lossP - lossM) / (2.0 * eps) ;
+            double analytic = tensor_get(adG, ai, aj) ;
+            d = dabs(numeric - analytic) ;
+            if d > maxdiff { maxdiff = d ; }
+            aj = aj + 1 ;
+        }
+        ai = ai + 1 ;
+    }
+    if maxdiff < tol { print("PASS add") ; } else { print("FAIL add") ; }
+}

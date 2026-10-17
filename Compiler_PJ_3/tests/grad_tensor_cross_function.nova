@@ -1,0 +1,81 @@
+// Exercises cross-function tensor-handle tracking: a tensor passed in as a
+// parameter, used, and a (possibly different) tensor handle returned, both
+// through recursive calls. This is the path propagate_tensor_slots() and the
+// CALL-site tensor_retain() exist for -- nothing else in the suite calls a
+// user-defined function with a tensor argument or return value.
+//
+// Uses tensor_scale()/tensor_add() (handle-level ops computed in C++) rather
+// than "double v = tensor_get(...); ...v * 2.0...;" inside a function body --
+// that pattern hits the known, separately-tracked, pre-existing compound-
+// double-expression bug (see NOVA_COMPILER_ROADMAP.md), which has nothing to
+// do with tensor-handle tracking and isn't what this test is checking.
+
+def dabs(double v) -> double {
+    if v < 0.0 {
+        return 0.0 - v ;
+    }
+    return v ;
+}
+
+// Scales t by 2, n times, recursing n times, returning a NEW handle each
+// time (tensor_scale never mutates in place) -- threads a different
+// tensor handle through scaleN's own parameter and return slot on every
+// recursive call.
+def scaleN(int t, int n) -> int {
+    if n < 1 {
+        return t ;
+    }
+    int scaled = tensor_scale(t, 2.0) ;
+    return scaleN(scaled, n - 1) ;
+}
+
+// Returns a brand-new tensor (sum of a and b), independent of either input
+// handle, so callers must track the handle actually returned, not just the
+// ones passed in.
+def addTensors(int a, int b) -> int {
+    return tensor_add(a, b) ;
+}
+
+main() {
+    double tol = 0.0001 ;
+
+    int x = tensor_zeros(2, 2) ;
+    tensor_set(x, 0, 0, 1.0) ;
+    tensor_set(x, 0, 1, 2.0) ;
+    tensor_set(x, 1, 0, 3.0) ;
+    tensor_set(x, 1, 1, 4.0) ;
+
+    // x scaled by 2^3 = 8 via 3 recursive calls, threading a tensor handle
+    // through scaleN's own parameter and return slot each time -- each call
+    // returns a DIFFERENT handle than the one it received.
+    int y = scaleN(x, 3) ;
+
+    double y00 = tensor_get(y, 0, 0) ;
+    double y11 = tensor_get(y, 1, 1) ;
+
+    int z = tensor_zeros(2, 2) ;
+    tensor_set(z, 0, 0, 100.0) ;
+    tensor_set(z, 1, 1, 100.0) ;
+
+    // addTensors allocates and returns a tensor independent of y/z, so y and
+    // z must both still be valid (not prematurely released) when this runs.
+    int w = addTensors(y, z) ;
+    double w00 = tensor_get(w, 0, 0) ;
+    double w11 = tensor_get(w, 1, 1) ;
+
+    print(y00) ; print("\n") ;   // expect 8.0
+    print(y11) ; print("\n") ;   // expect 32.0
+    print(w00) ; print("\n") ;   // expect 108.0
+    print(w11) ; print("\n") ;   // expect 132.0
+
+    double d1 = dabs(y00 - 8.0) ;
+    double d2 = dabs(y11 - 32.0) ;
+    double d3 = dabs(w00 - 108.0) ;
+    double d4 = dabs(w11 - 132.0) ;
+    double maxdiff = d1 ;
+    if d2 > maxdiff { maxdiff = d2 ; }
+    if d3 > maxdiff { maxdiff = d3 ; }
+    if d4 > maxdiff { maxdiff = d4 ; }
+
+    if maxdiff < tol { print("PASS cross_function\n") ; } else { print("FAIL cross_function\n") ; }
+}
