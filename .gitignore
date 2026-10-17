@@ -57,6 +57,7 @@ test_run.csl
 *.ptx
 
 # ── Misc ──
-*.png
+/*.png
+Screenshot*.png
 *.tar.gz
 Project Goals.txt
