@@ -40,7 +40,7 @@ typedef enum { END_OF_FILE = 0,
     LBRAC, RBRAC, LPAREN, RPAREN, LBRACE, RBRACE,
 
     // comparison 
-    NOTEQUAL, GREATER, LESS,
+    NOTEQUAL, GREATER, LESS, EQEQ,
 
     // arrow operator (for function return type) 
     ARROW,

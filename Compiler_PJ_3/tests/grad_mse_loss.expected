@@ -1,0 +1,2 @@
+PASS mse_loss forward
+PASS mse_loss
