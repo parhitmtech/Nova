@@ -11,7 +11,7 @@ env:
 jobs:
   hygiene:
     name: Repo hygiene
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
@@ -30,7 +30,7 @@ jobs:
 
   backend:
     name: Backend unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -49,7 +49,7 @@ jobs:
 
   compiler:
     name: Compiler (${{ matrix.cxx }})
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -73,10 +73,8 @@ jobs:
 
   sanitizers:
     name: Compiler (ASan + UBSan)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
-    # Report-only until the memory errors it finds are fixed; then make it blocking.
-    continue-on-error: true
     defaults:
       run:
         working-directory: Compiler_PJ_3
@@ -99,7 +97,7 @@ jobs:
 
   frontend:
     name: Frontend lint and build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     defaults:
       run:
@@ -117,7 +115,7 @@ jobs:
 
   e2e:
     name: Frontend e2e (Playwright)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -145,7 +143,7 @@ jobs:
   docker:
     name: Docker images
     needs: [backend, compiler]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
