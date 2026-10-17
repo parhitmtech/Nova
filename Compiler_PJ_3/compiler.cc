@@ -342,7 +342,7 @@ map<InstructionNode*, map<vector<int>, vector<int>>> memo_cache;
 struct CallFrame {
     struct InstructionNode* returnAddress;
     int dest_index;
-    VarType dest_type = TYPE_UNKONWN;
+    VarType dest_type = TYPE_UNKNOWN;
     int slot_base;
     vector<int> savedSlots;
     vector<int> allRetSlots;
@@ -437,7 +437,7 @@ void tensor_set_shape(Tensor& t, const std::vector<int>& shape)
     //2-D view: last dimension is cols, everything before it folds into rows
     t.cols = (n == 0) ? 1 : shape[n - 1];
     t.rows = 1;
-    for (inti = 0; i < n - 1; i++) t.rows *= shape[i];
+    for (int i = 0; i < n - 1; i++) t.rows *= shape[i];
 }
 
 int alloc_tensor_nd(const std::vector<int>& shape)
@@ -447,7 +447,7 @@ int alloc_tensor_nd(const std::vector<int>& shape)
     size_t numel = 1;
     for (int d : shape) numel *= (size_t)d;
     t.data.assign(numel, 0.0);
-    t.refcount = 1;  // owned by whichever mem[] slot recieves this handle
+    t.refCount = 1;  // owned by whichever mem[] slot recieves this handle
     t.freed = false;
     tensor_heap.push_back(std::move(t));
     return (int)tensor_heap.size() - 1;
@@ -522,7 +522,7 @@ bool tensor_is_live(int h)
 void tensor_retain(int h)
 {
     if (!tensor_is_live(h)) return;
-    tensor_heap[h].refcount++;
+    tensor_heap[h].refCount++;
 }
 
 // One fewer mem[] slot holds this handle (compiler-inserted, at the slot's last use per liveness 
@@ -532,8 +532,8 @@ void tensor_retain(int h)
 void tensor_release(int h)
 {
     if (!tensor_is_live(h)) return; // already freed, or not a tracked handle
-    tensor_heap[h].refcount--;
-    if (tensor_heap[h].refcount <= 0)
+    tensor_heap[h].refCount--;
+    if (tensor_heap[h].refCount <= 0)
     {
         tensor_heap[h].data.clear();
         tensor_heap[h].data.shrink_to_fit();
@@ -576,7 +576,7 @@ static vector<ProgressBar> progress_heap;
 
 static int ten_zeros(const std::vector<int>& shape) { return alloc_tensor_nd(shape); }
 
-static int ten_ones(int r, int c)
+static int ten_ones(const std::vector<int>& shape)
 {
     int h = alloc_tensor_nd(shape);
     for (auto& v : tensor_heap[h].data) v = 1.0;
@@ -1763,7 +1763,7 @@ void execute_program(struct InstructionNode* program)
                     {
                         // Field store: the field gives up its old tensor and takes its own reference
                         // to the new one, if the value is a tensor.
-                        if (slot_owns(lhsIdx)) tensor_releaes(oldVal);
+                        if (slot_owns(lhsIdx)) tensor_release(oldVal);
                         bool isTensor = g_tensorSlots.count(srcIdx) > 0;
                         set_owns(lhsIdx, isTensor);
                         pc = pc->next;
@@ -1808,7 +1808,7 @@ void execute_program(struct InstructionNode* program)
                     double d1, d2;
                     switch (pc->cjmp_inst.operand_type)
                     {
-                        case TPYE_DOUBLE:
+                        case TYPE_DOUBLE:
                         {
                             d1 = dmem[pc->cjmp_inst.operand1_index];
                             d2 = dmem[pc->cjmp_inst.operand2_index];
@@ -2070,7 +2070,7 @@ void execute_program(struct InstructionNode* program)
                 vector<double> capturedRetVals;
                 for (int i = 0;i < (int)frame.allRetSlots.size();i++)
                 {
-                    int slot = frame.allRetsSlots[i];
+                    int slot = frame.allRetSlots[i];
                     VarType rt = (i < (int)frame.allRetTypes.size()) ? frame.allRetTypes[i] : TYPE_UNKNOWN;
                     double v = (rt == TYPE_FLOAT) ? (double)fmem[slot] :
                                 (rt == TYPE_DOUBLE) ? dmem[slot] : (double)mem[slot];
@@ -2081,7 +2081,7 @@ void execute_program(struct InstructionNode* program)
                 {
                     int slot = pc->ret_inst.ret_val_index;
                     VarType rt = pc->ret_inst.ret_type;
-                    double v = (rt == TYPE_FLOAT) ? (double)fmem[slot];
+                    double v = (rt == TYPE_FLOAT) ? (double)fmem[slot] :
                                (rt == TYPE_DOUBLE) ? dmem[slot] : (double)mem[slot];
                     capturedRetVals.push_back(v);
                 }
@@ -2106,7 +2106,7 @@ void execute_program(struct InstructionNode* program)
                     int slot = frame.allRetSlots[i];
                     VarType rt = (i < (int)frame.allRetTypes.size()) ? frame.allRetTypes[i] : TYPE_UNKNOWN;
                     if (rt == TYPE_FLOAT) fmem[slot] = (float)capturedRetVals[i];
-                    else if (rt == TPYE_DOUBLE) dmem[slot] = capturedRetVals[i];
+                    else if (rt == TYPE_DOUBLE) dmem[slot] = capturedRetVals[i];
                     else mem[slot] = (int)capturedRetVals[i];
                 }
 
@@ -2339,17 +2339,17 @@ void execute_program(struct InstructionNode* program)
                     }
                     case TEN_ZEROS:
                     {
-                        res = ten_zeros(mem[a[0]], mem[a[1]]);
+                        res = ten_zeros({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_ONES:
                     {
-                        res = ten_ones(mem[a[0]], mem[a[1]]);
+                        res = ten_ones({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_RANDN:
                     {
-                        res = ten_randn(mem[a[0]], mem[a[1]]);
+                        res = ten_randn({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_XAVIER:
@@ -2560,7 +2560,7 @@ void execute_program(struct InstructionNode* program)
                             // (Previously this branch returned a dmemdslot instead, which the parser
                             // typed identically to the tensor-handle brnahc - a real type mismatch 
                             // depending on runtime state.)
-                            double loss = ten_mse_loss(mem[a[0]], mema[a[1]]);
+                            double loss = ten_mse_loss(mem[a[0]], mem[a[1]]);
                             int h= alloc_tensor(1, 1);
                             tensor_heap[h].at(0, 0) = loss;
                             res = h;
@@ -4358,7 +4358,7 @@ static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
         case CJMP:
         {
             // a float/double comparison reads fmem[]/dmem[], not mem[]
-            if (n->cjmp_inst.operand_type != TYPE_FLOAT && n-cjmp_inst.operand_type != TYPE_DOUBLE)
+            if (n->cjmp_inst.operand_type != TYPE_FLOAT && n->cjmp_inst.operand_type != TYPE_DOUBLE)
             {
                 uses.insert(n->cjmp_inst.operand1_index);
                 uses.insert(n->cjmp_inst.operand2_index);
@@ -4404,7 +4404,7 @@ static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
         case RET:
         {
             // a float/double return slot lives in fmem[]/dmem[], not mem[]
-            if (n->ret_inst.ret_type != TYPE_FLOAT && n->ret_inst.ret_type != TPYE_DOUBLE)
+            if (n->ret_inst.ret_type != TYPE_FLOAT && n->ret_inst.ret_type != TYPE_DOUBLE)
             {
                 uses.insert(n->ret_inst.ret_val_index);
             }
@@ -4584,7 +4584,7 @@ static void propogate_tensor_slots(const std::vector<struct InstructionNode*>& a
         {
             for (struct InstructionNode* n = bodyHead; n != nullptr; n = n->next)
             {
-                if (n->type == ASSIGN && n->assign _inst.op ==  OPERATOR_NONE)
+                if (n->type == ASSIGN && n->assign_inst.op ==  OPERATOR_NONE)
                 {
                     if (g_tensorSlots.count(n->assign_inst.operand1_index) && 
                         !g_tensorSlots.count(n->assign_inst.left_hand_side_index))
@@ -4855,10 +4855,10 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
         int line = c->line_no;
         struct InstructionNode* tail = c;  // end of the fall-through chain
         struct InstructionNode* after = c->next;  // keep whatever follows the CJMP
-        for (int s : ep.fallRel) { auto r = mkrelease(s, line); tail->next = r; tail = r; }
+        for (int s : ep.fallRel) { auto r = mkRelease(s, line); tail->next = r; tail = r; }
         if (!ep.jumpRel.empty())
         {
-            auto skip = mkJmp(ep.fallNext, line);  // fall-through hops over the detour
+            auto skip = mkJmp(ep.fallnext, line);  // fall-through hops over the detour
             tail->next = skip; tail = skip;
             struct InstructionNode* first = nullptr;
             for (int s : ep.jumpRel)
@@ -4888,7 +4888,7 @@ void insert_tensor_releases(struct InstructionNode* program)
     std::set<struct InstructionNode*> seen;
     for (auto& kv : functionTable)
     {
-        if (kv.second != nullptr && seenlinsert(kv.second).second) allBodies.push_back(kv.second);
+        if (kv.second != nullptr && seen.insert(kv.second).second) allBodies.push_back(kv.second);
     }
     // class-method bodies too (they used to get no tensor frees at all)
     for (auto& ckv : classMethodTable)
@@ -6926,13 +6926,6 @@ int main(int argc, char* argv[])
         if (native) jit_compiled[fhead] = native;
     }
 #endif
-
-    // Temp Test: corrupt one compiled function to force deopt
-    for (auto& kv : jit_compiled)
-    {
-        kv.second = (void*)0xDEADBEEF;  // bad pointer -> SEH will catch it 
-        break;
-    }
 
     execute_program(program);
     fflush(stdout);

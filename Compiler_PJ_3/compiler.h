@@ -130,6 +130,7 @@ enum InstructionType
     SPILL_STORE,  // store temp slot back to stack
     HF_INFER,     // HuggingFace Inference API call
     SOL_CALL,     // SOL HPC cluster operation
+    TENSOR_RELEASE,  // drop one refcount on the tensor handle in mem[slot]
 };
 
 enum HFOp {
@@ -309,6 +310,10 @@ struct InstructionNode
             int result_slot;   // mem slot for predict/dataset result (-1 if void)
             int path_slot;     // mem slot → strMem for save path (-1 if n/a)
         } sol_inst;
+
+        struct {
+            int slot;  // mem slot holding the tensor handle to release
+        } tensor_release_inst;
     };
 
     struct InstructionNode* next;
@@ -377,7 +382,7 @@ extern std::map<std::string, InstructionNode*> functionTable;
 // funcName -> return type / param types. Used to keep float, double and tensor functions out of the
 // int-only memo cache.
 extern std::map<std::string, VarType> functionReturnType;
-extern std::map<std:;string, std::vector<VarType>> functionParamTypes;
+extern std::map<std::string, std::vector<VarType>> functionParamTypes;
  
 struct InstructionNode* parse_generate_intermediate_representation();
 void execute_program(struct InstructionNode* head);

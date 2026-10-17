@@ -853,7 +853,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             callNode->type = CALL;
             callNode->call_inst.function_head = classMethodTable[className]["init"];
             callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
-            cannNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
+            callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
             callNode->call_inst.func_slot_base = 0;
             callNode->call_inst.func_slot_count = 0;
             callNode->call_inst.num_params = (int)params.size();
@@ -1337,7 +1337,7 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
 
     bool isInt = TENSOR_INT_OPS.count(op) > 0;
     lastExprType = isVoid ? TYPE_UNKNOWN 
-                        : TYPE_DOUBLE_OPS.count(op) ? TYPE_DOUBLE
+                        : isDouble ? TYPE_DOUBLE
                         : isInt ? TYPE_INT
                         : TYPE_TENSOR;
     if (!isVoid && !isDouble && !isInt) g_tensorSlots.insert(resultSlot);  // <-- new line
@@ -1812,7 +1812,7 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     vector<VarType>& fRetTypes = functionReturnTypesList[funcName];
     int* allRets = new int[fRetSlots.size()];
     VarType* allRetTypes = new VarType[fRetSlots.size()];  // one type per slot
-    for (int i = 0;i < (inst)fRetSlots.size();i++)
+    for (int i = 0;i < (int)fRetSlots.size();i++)
     {
         allRets[i] = fRetSlots[i];
         allRetTypes[i] = (i < (int)fRetTypes.size()) ? fRetTypes[i] : TYPE_UNKNOWN;
@@ -1991,7 +1991,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             retNode->line_no = token.line_no;
             retNode->type = RET;
             retNode->ret_inst.ret_val_index = currentFuncRetIdx;
-            retNode->ret_inst.ret_val_index = currentFuncRetType;
+            retNode->ret_inst.ret_type = currentFuncRetType;
             append(head, tracker, retNode);
         }
     } 
@@ -2184,7 +2184,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         {
             // NOT a defined function or a void tensor op. This used to fall into parse_assignment,
             // while silently turned "name(args) ;" into a bogus variable assignment and emitted no call.
-            if (TENSOR_OP_MAP.COUNT(name))
+            if (TENSOR_OP_MAP.count(name))
             {
                 report_error(token.line_no, "result of '" + name + "' is not used; assign it to a variable");
             }
@@ -2354,7 +2354,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
         copyRetNode->type = ASSIGN;
         copyRetNode->assign_inst.left_hand_side_index = freshSlot;
         copyRetNode->assign_inst.operand1_index = functionReturnIndex[funcName];
-        copyRetNode->assign_inst.op = OPERATION_NONE;
+        copyRetNode->assign_inst.op = OPERATOR_NONE;
     }
     append(head, tracker, copyRetNode);
     lastExprType = funcRetType;
@@ -3086,7 +3086,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         node->type = ASSIGN_D;
         node->assign_d_inst.left_hand_side_index = doubleSymbolTable[lhs];
         node->assign_d_inst.operand1_index = srcIdx;
-        node->assign_d_inst.op = OPERATION_NONE;
+        node->assign_d_inst.op = OPERATOR_NONE;
         append(head, tracker, node);
         return;
     }
@@ -3105,7 +3105,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         node->type = ASSIGN_F;
         node->assign_f_inst.left_hand_side_index = floatSymbolTable[lhs];
         node->assign_f_inst.operand1_index = resultIdx;
-        node->assign_f_inst.op = OPERATION_NONE;
+        node->assign_f_inst.op = OPERATOR_NONE;
         append(head, tracker, node);
         return;
     }
@@ -3202,7 +3202,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
 
         ConditionalOperatorType condOp = CONDITION_NOTEQUAL;
         int rhsIdx;
-        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL
+        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL ||
             token.token_type == EQEQ)
         {
             if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
@@ -3244,7 +3244,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
 
             // Cast float/double operands to a common type before comparing.
             VarType condType = 
-                (lhsCondType == TPYE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
                 (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
                 TYPE_INT;
             if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
@@ -3252,7 +3252,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
                 lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
                 rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
             }
-            cjmoNode->type = CJMP;
+            cjmpNode->type = CJMP;
             cjmpNode->cjmp_inst.condition_op = condOp;
             cjmpNode->cjmp_inst.operand1_index = lhsIdx;
             cjmpNode->cjmp_inst.operand2_index = rhsIdx;
@@ -3311,7 +3311,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
 
         // Cast float/double operands to a common type before comparing.
             VarType condType = 
-                (lhsCondType == TPYE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
                 (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
                 TYPE_INT;
             if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
@@ -3319,7 +3319,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
                 lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
                 rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
             }
-            cjmoNode->type = CJMP;
+            cjmpNode->type = CJMP;
             cjmpNode->cjmp_inst.condition_op = condOp;
             cjmpNode->cjmp_inst.operand1_index = lhsIdx;
             cjmpNode->cjmp_inst.operand2_index = rhsIdx;

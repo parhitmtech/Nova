@@ -687,7 +687,7 @@ int ag_mse_loss(int pred, int target)
     if (grad_mode && grad_heap[pred].requires_grad)
     {
         grad_heap[h].requires_grad = true;
-        grad_tape.push_back({"mse_loss", h, {, target}, [pred, size] (int out) {
+        grad_tape.push_back({"mse_loss", h, {pred, target}, [pred, size] (int out) {
             vector<double>& gOut = grad_heap[out].data;
             double upstream = gOut[0];
             vector<double> dPred(size);
