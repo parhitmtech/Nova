@@ -29,7 +29,7 @@ map<string, int> doubleSymbolTable;
 // only place that distinction is tracked - it exists purely to drive the compiler-inserted tensor-free 
 // pass (insert_tensor_releases in compiler.cc), which must never release a slot that isn't actually 
 // a tensor handle. Populated at every tensor-call result, and propogated through plain copies (declaration and 
-// reassignments); extended across function calls by propogate_tensor_slots_across_calls() after 
+// reassignments); extended across function calls by propagate_tensor_slots_across_calls() after 
 // parsing completes.  
 std::set<int> g_tensorSlots;
 // mem[] slots that hold object state:each class instance's int fields (g_fieldSlots) and each 
