@@ -43,6 +43,8 @@ jobs:
           cache: npm
           cache-dependency-path: Compiler_PJ_3/package-lock.json
       - run: npm ci
+      # Some execution tests stream from the real compiler binary.
+      - run: npm run build:compiler
       - run: npm run test:security
 
   compiler:
