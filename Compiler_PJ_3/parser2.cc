@@ -23,6 +23,21 @@ int  currentFuncRetIdx = -1;
 map<string, int> symbolTable;
 map<string, int> floatSymbolTable;
 map<string, int> doubleSymbolTable;
+
+// mem[] slots known to hold a tensor handle (as opposed to an ordinary int).
+// Nova types tensor handles as plain TYPE_INT (see the tensorToInt coercions below), so this is the
+// only place that distinction is tracked - it exists purely to drive the compiler-inserted tensor-free 
+// pass (insert_tensor_releases in compiler.cc), which must never release a slot that isn't actually 
+// a tensor handle. Populated at every tensor-call result, and propogated through plain copies (declaration and 
+// reassignments); extended across function calls by propogate_tensor_slots_across_calls() after 
+// parsing completes.  
+std::set<int> g_tensorSlots;
+// mem[] slots that hold object state:each class instance's int fields (g_fieldSlots) and each 
+// method's "self" copies of them (g_selfSlots). The tensor-free pass never releases these by liveness: 
+// an object owns what its fields point to until the field is overwritten.
+std::set<int> g_fieldSlots;
+std::set<int> g_selfSlots;
+
 LexicalAnalyzer lexer;
 Token token;
 
@@ -88,14 +103,36 @@ static const map<string, TensorOp> TENSOR_OP_MAP = {
     {"backward", TEN_BACKWARD},
     {"tensor_grad", TEN_TENSOR_GRAD},
     {"zero_grad", TEN_ZERO_GRAD},
-    {"grad_step", TEN_GRAD_STEP}
+    {"grad_step", TEN_GRAD_STEP},
+    {"tensor_live_count", TEN_LIVE_COUNT},
+    {"tensor_rank", TEN_RANK},
+    {"tensor_dim", TEN_DIM},
+    {"tensor_dim", TEN_DIM},
+    {"tensor_reshape", TEN_RESHAPE}
 };
 
 // ops that don't return a meaningful value (void)
 static const set<TensorOp> TENSOR_VOID_OPS = {
     TEN_SET, TEN_PRINT, TEN_SET_ROW, 
     TEN_PROGRESS_UPDATE, TEN_PROGRESS_DONE,
-    TEN_REQUIRES_GRAD, TEN_BACKWARD, TEN_ZERO_GRAD
+    TEN_REQUIRES_GRAD, TEN_BACKWARD, TEN_ZERO_GRAD,
+    TEN_GRAD_STEP  // updates the tensor in place; used as a statement
+};
+
+// ops that return a plain int (a size, a random int, a progress-bar id), not a tensor handle.
+// Their result must not be tagged as a tensor slot, or the tensor-free pass would "release" the 
+// numbre 4 as if it was handle 4.
+static const set<TensorOp> TENSOR_INT_OPS = {
+    TEN_ROWS, TEN_COLS, TEN_RAND_INT, TEN_PROGRESS_BAR, TEN_LIVE_COUNT,
+    TEN_RANK, TEN_DIM
+};
+
+// ops that return a scalar double (pushed to dmem, result is a dslot index), as opposed to a 
+// tensor handle into tensor_heap. mse_loss/cross_entropy_loss are deliberately NOT here: they always
+// return a tensor handle (1x1), in both grad and non-grad mode, so their type doesn't depend on
+// a runtime flag.
+static const set<TensorOp> TENSOR_DOUBLE_OPS = {
+    TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET
 };
 
 // struct support
@@ -525,7 +562,7 @@ void parse_class_definition()
                 }
                 else if (f.type == TYPE_FLOAT) s = alloc_float_slot();
                 else if (f.type == TYPE_DOUBLE) s = alloc_double_slot();
-                else s = alloc_slot();
+                else { s = alloc_slot(); g_selfSlots.insert(s); }
                 selfSlots[f.name] = s;
                 selfTypes[f.name] = f.type; 
             }
@@ -591,6 +628,7 @@ void parse_class_definition()
                     rn->line_no = token.line_no;
                     rn->type = RET;
                     rn->ret_inst.ret_val_index = retIdx;
+                    rn->ret_inst.ret_type = retType;
                     append(mhead, mtracker, rn);
                     token = lexer.GetToken();  // advance past ';'
                 }
@@ -619,6 +657,7 @@ void parse_class_definition()
             fb->line_no = token.line_no;
             fb->type = RET;
             fb->ret_inst.ret_val_index = retIdx;
+            fb->ret_inst.ret_type = retType;
             append(mhead, mtracker, fb);
 
             classMethodTable[className][methodName] = mhead;
@@ -722,7 +761,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
         }
         else if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
         else if (field.type == TYPE_DOUBLE) slot = alloc_double_slot();
-        else slot = alloc_slot();
+        else { slot = alloc_slot(); g_fieldSlots.insert(slot); }
         fieldSlots[field.name] = slot;
         fieldTypes[field.name] = field.type;
     }
@@ -814,6 +853,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             callNode->type = CALL;
             callNode->call_inst.function_head = classMethodTable[className]["init"];
             callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
+            callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
             callNode->call_inst.func_slot_base = 0;
             callNode->call_inst.func_slot_count = 0;
             callNode->call_inst.num_params = (int)params.size();
@@ -973,6 +1013,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
             callNode->type = CALL;
             callNode->call_inst.function_head = classMethodTable[className]["init"];
             callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
+            callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
             callNode->call_inst.func_slot_base = 0;
             callNode->call_inst.func_slot_count = 0;
             callNode->call_inst.num_params = 0;
@@ -1126,11 +1167,14 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     callNode->type = CALL;
     callNode->call_inst.function_head   = classMethodTable[lookupClass][methodName];
     callNode->call_inst.ret_val_index   = functionReturnIndex[fullName];
+    callNode->call_inst.ret_type = (classMethodReturnType.count(lookupClass) && classMethodReturnType[lookupClass].count(methodName))
+                                    ? classMethodReturnType[lookupClass][methodName] : TYPE_UNKNOWN;
     callNode->call_inst.func_slot_base  = 0;
     callNode->call_inst.func_slot_count = 0;
     callNode->call_inst.num_params      = (int)params.size();
     callNode->call_inst.all_ret_slots = nullptr;
     callNode->call_inst.num_ret_slots = 0;
+    callNode->call_inst.ret_slot_types = nullptr;
     if (!params.empty())
     {
         int* pSlots = new int[params.size()];
@@ -1239,6 +1283,12 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     int argSlots[8]; VarType argTypes[8]; int numArgs = 0;
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
     {
+        if (numArgs == 8)
+        {
+            report_error(token.line_no, "'" + name + "' takes at most 8 arguments");
+            while (token.token_type != RPAREN && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            break;
+        }
         argSlots[numArgs] = parse_expression(head, tracker);
         argTypes[numArgs] = lastExprType;
         numArgs++;
@@ -1247,9 +1297,30 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     // token is now ')'
     token = lexer.GetToken();  // consume ')'
 
+    // Arguments counts for the ops that take one argument per dimension.
+    // Checked here so a wrong count is a compile error, not a garbage read.
+    {
+        int lo = -1, hi = -1;
+        const int R = TENSOR_MAX_RANK;
+        switch (op)
+        {
+            case TEN_ZEROS: case TEN_ONES: case TEN_RANDN: lo = 1; hi = R; break;
+            case TEN_GET:                                  lo = 2, hi = R + 1; break;
+            case TEN_SET:                                  lo = 3; hi = R + 2; break;
+            case TEN_RESHAPE:                              lo = 2; hi = R + 1; break;
+            default: break;
+        }
+        if (lo >= 0 && (numArgs < lo || numArgs > hi))
+        {
+            report_error(token.line_no, "'" + name + "'  takes " + to_string(lo) + " to " + to_string(hi) + 
+                         " arguments, got " + to_string(numArgs));
+        }
+    }
+
     int resultSlot = -1;
     bool isVoid = TENSOR_VOID_OPS.count(op) > 0;
-    if (!isVoid) { resultSlot = alloc_slot(); }
+    bool isDouble = TENSOR_DOUBLE_OPS.count(op) > 0;
+    if (!isVoid) { resultSlot = isDouble ? alloc_double_slot() : alloc_slot(); }
 
     struct InstructionNode* node = new InstructionNode();
     node->line_no = token.line_no;
@@ -1264,7 +1335,12 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     }
     append(head, tracker, node);
 
-    lastExprType = isVoid ? TYPE_UNKNOWN : TYPE_TENSOR;
+    bool isInt = TENSOR_INT_OPS.count(op) > 0;
+    lastExprType = isVoid ? TYPE_UNKNOWN 
+                        : isDouble ? TYPE_DOUBLE
+                        : isInt ? TYPE_INT
+                        : TYPE_TENSOR;
+    if (!isVoid && !isDouble && !isInt) g_tensorSlots.insert(resultSlot);  // <-- new line
     return isVoid ? alloc_slot() : resultSlot;
 }
 
@@ -1616,6 +1692,11 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
     node->assign_inst.operand1_index       = resultIdx;
     node->assign_inst.op                   = OPERATOR_NONE;
     append(head, tracker, node);
+    // Propogate tensor_slot-ness through a plain copy: "int x = someTensorVar ;"
+    // (tensorToInt covers "int x = tensor_zeros(...)" directly, but resultIdx is already tagged by 
+    // parse_tensor_call in that  case too, so this one check covers both - a fresh tensor-call result
+    // and a copy of an existing one).
+    if (g_tensorSlots.count(resultIdx)) g_tensorSlots.insert(symbolTable[name]);
 }
 
 void parse_multi_return_assignment(struct InstructionNode*& head, struct InstructionNode*&tracker)
@@ -1711,16 +1792,33 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     callNode->line_no = token.line_no;
     callNode->type = CALL;
     callNode->call_inst.function_head = functionTable[funcName];
+    // callNode->call_inst.ret_val_index = rSlots[0];
+    // callNode->call_inst.all_ret_slots = nullptr;
+    // callNode->call_inst.num_ret_slots = 0;
+    // vector<int>& fRetSlots = functionReturnSlots[funcName];
+    // int* allRets = new int[fRetSlots.size()];
+    // for (int i = 0;i < (int)fRetSlots.size();i++)
+    // {
+    //     allRets[i] = fRetSlots[i];
+    // }
+    // callNode->call_inst.all_ret_slots = allRets;
+    // callNode->call_inst.num_ret_slots = (int)fRetSlots.size();
     callNode->call_inst.ret_val_index = rSlots[0];
+    callNode->call_inst.ret_type = rTypes[0];
     callNode->call_inst.all_ret_slots = nullptr;
     callNode->call_inst.num_ret_slots = 0;
+    callNode->call_inst.ret_slot_types = nullptr;
     vector<int>& fRetSlots = functionReturnSlots[funcName];
+    vector<VarType>& fRetTypes = functionReturnTypesList[funcName];
     int* allRets = new int[fRetSlots.size()];
+    VarType* allRetTypes = new VarType[fRetSlots.size()];  // one type per slot
     for (int i = 0;i < (int)fRetSlots.size();i++)
     {
         allRets[i] = fRetSlots[i];
+        allRetTypes[i] = (i < (int)fRetTypes.size()) ? fRetTypes[i] : TYPE_UNKNOWN;
     }
     callNode->call_inst.all_ret_slots = allRets;
+    callNode->call_inst.ret_slot_types = allRetTypes;
     callNode->call_inst.num_ret_slots = (int)fRetSlots.size();
     callNode->call_inst.func_slot_base = functionSlotRange.count(funcName) ? functionSlotRange[funcName].first : 0;
     callNode->call_inst.func_slot_count = functionSlotRange.count(funcName) ? functionSlotRange[funcName].second : 0;
@@ -1893,6 +1991,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             retNode->line_no = token.line_no;
             retNode->type = RET;
             retNode->ret_inst.ret_val_index = currentFuncRetIdx;
+            retNode->ret_inst.ret_type = currentFuncRetType;
             append(head, tracker, retNode);
         }
     } 
@@ -2075,9 +2174,25 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         {
             parse_assignment_statement(head, tracker);
         }
-        else if (functionTable.find(name) != functionTable.end() && lexer.peek(1).token_type == LPAREN)
+        else if ((functionTable.find(name) != functionTable.end()) || functionParams.count(name))
         {
+            // functionParams also covers a function calling itself as a statement while its own
+            // body is being parsed
             parse_function_call(head, tracker);
+        }
+        else if (lexer.peek(1).token_type == LPAREN)
+        {
+            // NOT a defined function or a void tensor op. This used to fall into parse_assignment,
+            // while silently turned "name(args) ;" into a bogus variable assignment and emitted no call.
+            if (TENSOR_OP_MAP.count(name))
+            {
+                report_error(token.line_no, "result of '" + name + "' is not used; assign it to a variable");
+            }
+            else 
+            {
+                report_error(token.line_no, "call to undefined function '" + name + "'");
+            }
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
         }
         else
         {
@@ -2167,6 +2282,8 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     callNode->call_inst.num_params      = (int)params.size();
     callNode->call_inst.all_ret_slots = nullptr;
     callNode->call_inst.num_ret_slots = 0;
+    callNode->call_inst.ret_type = functionReturnType.count(funcName) ? functionReturnType[funcName] : TYPE_UNKNOWN;
+    callNode->call_inst.ret_slot_types = nullptr;
 
     if (params.size() > 0) {
         int* pSlots = new int[params.size()];
@@ -2200,16 +2317,47 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
     append(head, tracker, callNode);
 
-    int freshSlot = alloc_temp();
+    // int freshSlot = alloc_temp();
+    // struct InstructionNode* copyRetNode = new InstructionNode();
+    // copyRetNode->line_no = token.line_no;
+    // copyRetNode->type = ASSIGN;
+    // copyRetNode->assign_inst.left_hand_side_index = freshSlot;
+    // copyRetNode->assign_inst.operand1_index       = functionReturnIndex[funcName];
+    // copyRetNode->assign_inst.op                   = OPERATOR_NONE;
+    // append(head, tracker, copyRetNode);
+
+    // lastExprType = functionReturnType.count(funcName) ? functionReturnType[funcName] : TYPE_UNKNOWN;
+
+    // Copy the return value out in the callee's own slot space.
+    // (Old code always used an int ASSIGN, which broke float/double.)
+    VarType funcRetType = functionReturnType.count(funcName) ? functionReturnType[funcName] : TYPE_UNKNOWN;
+    int freshSlot = (funcRetType == TYPE_FLOAT) ? alloc_float_slot() : 
+                    (funcRetType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_temp();
     struct InstructionNode* copyRetNode = new InstructionNode();
     copyRetNode->line_no = token.line_no;
-    copyRetNode->type = ASSIGN;
-    copyRetNode->assign_inst.left_hand_side_index = freshSlot;
-    copyRetNode->assign_inst.operand1_index       = functionReturnIndex[funcName];
-    copyRetNode->assign_inst.op                   = OPERATOR_NONE;
+    if (funcRetType == TYPE_FLOAT)
+    {
+        copyRetNode->type = ASSIGN_F;
+        copyRetNode->assign_f_inst.left_hand_side_index = freshSlot;
+        copyRetNode->assign_f_inst.operand1_index = functionReturnIndex[funcName];
+        copyRetNode->assign_f_inst.op = OPERATOR_NONE;
+    }
+    else if (funcRetType == TYPE_DOUBLE)
+    {
+        copyRetNode->type = ASSIGN_D;
+        copyRetNode->assign_d_inst.left_hand_side_index = freshSlot;
+        copyRetNode->assign_d_inst.operand1_index = functionReturnIndex[funcName];
+        copyRetNode->assign_d_inst.op = OPERATOR_NONE;
+    }
+    else 
+    {
+        copyRetNode->type = ASSIGN;
+        copyRetNode->assign_inst.left_hand_side_index = freshSlot;
+        copyRetNode->assign_inst.operand1_index = functionReturnIndex[funcName];
+        copyRetNode->assign_inst.op = OPERATOR_NONE;
+    }
     append(head, tracker, copyRetNode);
-
-    lastExprType = functionReturnType.count(funcName) ? functionReturnType[funcName] : TYPE_UNKNOWN;
+    lastExprType = funcRetType;
     return freshSlot;
 }
 
@@ -2509,6 +2657,23 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
     return 0;
 }
 
+static int coerce_float_double(int slot, VarType fromType, VarType toType,
+                                struct InstructionNode*& head, struct InstructionNode*& tracker,
+                                int lineNo)
+{
+    if (fromType == toType) return slot;
+    int dst = (toType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
+    struct InstructionNode* node = new InstructionNode();
+    node->line_no = lineNo;
+    node->type = CAST;
+    node->cast_inst.src_index = slot;
+    node->cast_inst.dst_index = dst;
+    node->cast_inst.src_type = fromType;
+    node->cast_inst.dst_type = toType;
+    append(head, tracker, node);
+    return dst; 
+}
+
 int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int left = parse_factor(head, tracker);
@@ -2517,37 +2682,77 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
         int opLine = token.line_no;
         ArithmeticOperatorType op = (token.token_type == MULT) ? OPERATOR_MULT : OPERATOR_DIV;
 
-        if (leftType == TYPE_FLOAT)
-        {
-            token = lexer.GetToken();
-            int right = parse_factor(head, tracker);
-            int tmp = alloc_float_slot();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = ASSIGN_F;
-            node->assign_f_inst.left_hand_side_index = tmp;
-            node->assign_f_inst.operand1_index = left;
-            node->assign_f_inst.operand2_index = right;
-            node->assign_f_inst.op = op;
-            append(head, tracker, node);
-            left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
-            continue;
-        }
+        // if (leftType == TYPE_FLOAT)
+        // {
+        //     token = lexer.GetToken();
+        //     int right = parse_factor(head, tracker);
+        //     int tmp = alloc_float_slot();
+        //     struct InstructionNode* node = new InstructionNode();
+        //     node->line_no = token.line_no;
+        //     node->type = ASSIGN_F;
+        //     node->assign_f_inst.left_hand_side_index = tmp;
+        //     node->assign_f_inst.operand1_index = left;
+        //     node->assign_f_inst.operand2_index = right;
+        //     node->assign_f_inst.op = op;
+        //     append(head, tracker, node);
+        //     left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
+        //     continue;
+        // }
 
-        if (leftType == TYPE_DOUBLE)
+        // if (leftType == TYPE_DOUBLE)
+        // {
+        //     token = lexer.GetToken();
+        //     int right = parse_factor(head, tracker);
+        //     int tmp = alloc_double_slot();
+        //     struct InstructionNode* node = new InstructionNode();
+        //     node->line_no = token.line_no;
+        //     node->type = ASSIGN_D;
+        //     node->assign_d_inst.left_hand_side_index = tmp;
+        //     node->assign_d_inst.operand1_index = left;
+        //     node->assign_d_inst.operand2_index = right;
+        //     node->assign_d_inst.op = op;
+        //     append(head, tracker, node);
+        //     left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+        //     continue;
+        // }
+
+        if (leftType == TYPE_FLOAT || leftType == TYPE_DOUBLE)
         {
             token = lexer.GetToken();
             int right = parse_factor(head, tracker);
-            int tmp = alloc_double_slot();
+            VarType rightType = lastExprType;
+
+            if (rightType != TYPE_FLOAT && rightType != TYPE_DOUBLE && rightType != TYPE_UNKNOWN)
+            {
+                report_error(opLine, "arithmetic requires float/double operands, got " + typeToString(rightType));
+            }
+
+            // double wins if either side is double
+            VarType opType = (leftType == TYPE_DOUBLE || rightType == TYPE_DOUBLE) ? TYPE_DOUBLE : TYPE_FLOAT;
+            int leftOperand = coerce_float_double(left, leftType, opType, head, tracker, opLine);
+            int rightOperand = coerce_float_double(right, rightType, opType, head, tracker, opLine);
+
+            int tmp = (opType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
             struct InstructionNode* node = new InstructionNode();
             node->line_no = token.line_no;
-            node->type = ASSIGN_D;
-            node->assign_d_inst.left_hand_side_index = tmp;
-            node->assign_d_inst.operand1_index = left;
-            node->assign_d_inst.operand2_index = right;
-            node->assign_d_inst.op = op;
+            if (opType == TYPE_DOUBLE)
+            {
+                node->type = ASSIGN_D;
+                node->assign_d_inst.left_hand_side_index = tmp;
+                node->assign_d_inst.operand1_index = leftOperand;
+                node->assign_d_inst.operand2_index = rightOperand;
+                node->assign_d_inst.op = op;
+            }
+            else
+            {
+                node->type = ASSIGN_F;
+                node->assign_f_inst.left_hand_side_index = tmp;
+                node->assign_f_inst.operand1_index = leftOperand;
+                node->assign_f_inst.operand2_index = rightOperand;
+                node->assign_f_inst.op = op;
+            }
             append(head, tracker, node);
-            left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+            left = tmp; leftType = opType; lastExprType = opType;
             continue;
         }
 
@@ -2603,37 +2808,78 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
             continue;
         }
 
-        if (leftType == TYPE_FLOAT)
-        {
-            token = lexer.GetToken();
-            int right = parse_term(head, tracker);
-            int tmp = alloc_float_slot();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = ASSIGN_F;
-            node->assign_f_inst.left_hand_side_index = tmp;
-            node->assign_f_inst.operand1_index       = left;
-            node->assign_f_inst.operand2_index       = right;
-            node->assign_f_inst.op                   = op;
-            append(head, tracker, node);
-            left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
-            continue;
-        }
+        // if (leftType == TYPE_FLOAT)
+        // {
+        //     token = lexer.GetToken();
+        //     int right = parse_term(head, tracker);
+        //     int tmp = alloc_float_slot();
+        //     struct InstructionNode* node = new InstructionNode();
+        //     node->line_no = token.line_no;
+        //     node->type = ASSIGN_F;
+        //     node->assign_f_inst.left_hand_side_index = tmp;
+        //     node->assign_f_inst.operand1_index       = left;
+        //     node->assign_f_inst.operand2_index       = right;
+        //     node->assign_f_inst.op                   = op;
+        //     append(head, tracker, node);
+        //     left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
+        //     continue;
+        // }
 
-        if (leftType == TYPE_DOUBLE)
+        // if (leftType == TYPE_DOUBLE)
+        // {
+        //     token = lexer.GetToken();
+        //     int right = parse_term(head, tracker);
+        //     int tmp = alloc_double_slot();
+        //     struct InstructionNode* node = new InstructionNode();
+        //     node->line_no = token.line_no;
+        //     node->type = ASSIGN_D;
+        //     node->assign_d_inst.left_hand_side_index = tmp;
+        //     node->assign_d_inst.operand1_index       = left;
+        //     node->assign_d_inst.operand2_index       = right;
+        //     node->assign_d_inst.op                   = op;
+        //     append(head, tracker, node);
+        //     left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+        //     continue;
+        // }
+
+        if (leftType == TYPE_FLOAT || leftType == TYPE_DOUBLE)
         {
             token = lexer.GetToken();
-            int right = parse_term(head, tracker);
-            int tmp = alloc_double_slot();
+            int right = parse_term(head, tracker);  // parse_term here, not parse_factor
+            VarType rightType = lastExprType;
+
+            if (rightType != TYPE_FLOAT && rightType != TYPE_DOUBLE && rightType != TYPE_UNKNOWN)
+            {
+                report_error(opLine, "arithmetic requires float/double operands, got " + typeToString(rightType));
+            }
+
+            // double wins if either side is double
+            VarType opType = (leftType == TYPE_DOUBLE || rightType == TYPE_DOUBLE) ? TYPE_DOUBLE : TYPE_FLOAT;
+            // cast each side into opType's array if it isn't there already
+            int leftOperand = coerce_float_double(left, leftType, opType, head, tracker, opLine);
+            int rightOperand = coerce_float_double(right, rightType, opType, head, tracker, opLine);
+
+            int tmp = (opType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
             struct InstructionNode* node = new InstructionNode();
             node->line_no = token.line_no;
-            node->type = ASSIGN_D;
-            node->assign_d_inst.left_hand_side_index = tmp;
-            node->assign_d_inst.operand1_index       = left;
-            node->assign_d_inst.operand2_index       = right;
-            node->assign_d_inst.op                   = op;
+            if (opType == TYPE_DOUBLE)
+            {
+                node->type = ASSIGN_D;
+                node->assign_d_inst.left_hand_side_index = tmp;
+                node->assign_d_inst.operand1_index = leftOperand;
+                node->assign_d_inst.operand2_index = rightOperand;
+                node->assign_d_inst.op = op;
+            }
+            else 
+            {
+                node->type = ASSIGN_F;
+                node->assign_f_inst.left_hand_side_index = tmp;
+                node->assign_f_inst.operand1_index = leftOperand;
+                node->assign_f_inst.operand2_index = rightOperand;
+                node->assign_f_inst.op = op;
+            }
             append(head, tracker, node);
-            left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
+            left = tmp; leftType = opType; lastExprType = opType;
             continue;
         }
 
@@ -2802,6 +3048,68 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
         return;
     }
 
+    // Reassignment of an already-declared double/float vairable: foo = <expr> ;
+    // (NOT a fresh `double foo = ...` declaration, which is handled elsewhere.)
+    // Without this branch, lhs wasn't in symbolTable (it lives in doubleSymbolTable/floatSymbolTable instead),
+    // so the generic fallbackbelow treated every such reassignment as a brand-new, previously-unseen
+    // variable: it silently allocated a fresh int-space slot and retyped lhs as a TYPE_UNKNOWN (or whatever
+    // the RHS happened to be), completely disconnected from the real dmem/fmem-backed variable.
+    // Reads of the original variable kept seeing its last value, so this was a correctness bug, not just
+    // a type-checker false positive.
+    if (doubleSymbolTable.count(lhs) && typeTable.count(lhs) && typeTable[lhs] == TYPE_DOUBLE)
+    {
+        token = lexer.GetToken();  // '='
+        token = lexer.GetToken();  // RHS start
+        int resultIdx = parse_expression(head, tracker);
+        if (lastExprType != TYPE_DOUBLE && lastExprType != TYPE_FLOAT && lastExprType != TYPE_UNKNOWN)
+        {
+            report_error(lhs_line, "cannot assign " + typeToString(lastExprType) + " to double variable '" 
+            + lhs + "'");
+        }
+        int srcIdx = resultIdx;
+        if (lastExprType == TYPE_FLOAT)
+        {
+            // Promote float RHS to double, same as the declaration path does.
+            int tmp = alloc_double_slot();
+            struct InstructionNode* castNode = new InstructionNode();
+            castNode->line_no = token.line_no;
+            castNode->type = CAST;
+            castNode->cast_inst.src_index = resultIdx;
+            castNode->cast_inst.dst_index = tmp;
+            castNode->cast_inst.src_type = TYPE_FLOAT;
+            castNode->cast_inst.dst_type = TYPE_DOUBLE;
+            append(head, tracker, castNode);
+            srcIdx = tmp;
+        }
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
+        node->type = ASSIGN_D;
+        node->assign_d_inst.left_hand_side_index = doubleSymbolTable[lhs];
+        node->assign_d_inst.operand1_index = srcIdx;
+        node->assign_d_inst.op = OPERATOR_NONE;
+        append(head, tracker, node);
+        return;
+    }
+
+    if (floatSymbolTable.count(lhs) && typeTable.count(lhs) && typeTable[lhs] == TYPE_FLOAT)
+    {
+        token = lexer.GetToken();  // '='
+        token = lexer.GetToken();  // RHS start
+        int resultIdx = parse_expression(head, tracker);
+        if (lastExprType != TYPE_FLOAT && lastExprType != TYPE_UNKNOWN)
+        {
+            report_error(lhs_line, "cannot assign " + typeToString(lastExprType) + " to float variable '" + lhs + "'");
+        }
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = token.line_no;
+        node->type = ASSIGN_F;
+        node->assign_f_inst.left_hand_side_index = floatSymbolTable[lhs];
+        node->assign_f_inst.operand1_index = resultIdx;
+        node->assign_f_inst.op = OPERATOR_NONE;
+        append(head, tracker, node);
+        return;
+    }
+
     if (symbolTable.count(lhs) && typeTable.count(lhs) && typeTable[lhs] == TYPE_STRING) {
         token = lexer.GetToken();  // '='
         token = lexer.GetToken();  // RHS start
@@ -2861,6 +3169,8 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
     node->assign_inst.operand1_index       = resultIdx;
     node->assign_inst.op                   = OPERATOR_NONE;
     append(head, tracker, node);
+    // Propogate tensor-slot-ness through reassignment: "x = someTensorVar ;" 
+    if (g_tensorSlots.count(resultIdx)) g_tensorSlots.insert(symbolTable[lhs]);
 }
 
 void parse_assignment_for_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
@@ -2892,10 +3202,12 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
 
         ConditionalOperatorType condOp = CONDITION_NOTEQUAL;
         int rhsIdx;
-        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL)
+        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL ||
+            token.token_type == EQEQ)
         {
             if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
             else if (token.token_type == LESS)     condOp = CONDITION_LESS;
+            else if (token.token_type == EQEQ)     condOp = CONDITION_EQUAL;
             else                                   condOp = CONDITION_NOTEQUAL;
             token = lexer.GetToken();
             rhsIdx = parse_expression(head, tracker);
@@ -2921,10 +3233,30 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
         } 
         else 
         {
+            // cjmpNode->type = CJMP;
+            // cjmpNode->cjmp_inst.condition_op   = condOp;
+            // cjmpNode->cjmp_inst.operand1_index = lhsIdx;
+            // cjmpNode->cjmp_inst.operand2_index = rhsIdx;
+            // cjmpNode->cjmp_inst.operand_type = 
+            //                     (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+            //                     (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
+            //                     TYPE_INT;
+
+            // Cast float/double operands to a common type before comparing.
+            VarType condType = 
+                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+                (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
+                TYPE_INT;
+            if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
+            {
+                lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
+                rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
+            }
             cjmpNode->type = CJMP;
-            cjmpNode->cjmp_inst.condition_op   = condOp;
+            cjmpNode->cjmp_inst.condition_op = condOp;
             cjmpNode->cjmp_inst.operand1_index = lhsIdx;
             cjmpNode->cjmp_inst.operand2_index = rhsIdx;
+            cjmpNode->cjmp_inst.operand_type = condType;
         }
 
         struct InstructionNode* bodyEntry = new InstructionNode();
@@ -2949,6 +3281,7 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
     if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
     else if (token.token_type == LESS)     condOp = CONDITION_LESS;
     else if (token.token_type == NOTEQUAL) condOp = CONDITION_NOTEQUAL;
+    else if (token.token_type == EQEQ)     condOp = CONDITION_EQUAL;
     token = lexer.GetToken();
 
     int rhsIdx = parse_expression(head, tracker);
@@ -2967,10 +3300,30 @@ void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tra
     } 
     else 
     {
-        cjmpNode->type = CJMP;
-        cjmpNode->cjmp_inst.condition_op   = condOp;
-        cjmpNode->cjmp_inst.operand1_index = lhsIdx;
-        cjmpNode->cjmp_inst.operand2_index = rhsIdx;
+        // cjmpNode->type = CJMP;
+        // cjmpNode->cjmp_inst.condition_op   = condOp;
+        // cjmpNode->cjmp_inst.operand1_index = lhsIdx;
+        // cjmpNode->cjmp_inst.operand2_index = rhsIdx;
+        // cjmpNode->cjmp_inst.operand_type = 
+        //                         (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+        //                         (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT : 
+        //                         TYPE_INT;
+
+        // Cast float/double operands to a common type before comparing.
+            VarType condType = 
+                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
+                (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
+                TYPE_INT;
+            if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
+            {
+                lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
+                rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
+            }
+            cjmpNode->type = CJMP;
+            cjmpNode->cjmp_inst.condition_op = condOp;
+            cjmpNode->cjmp_inst.operand1_index = lhsIdx;
+            cjmpNode->cjmp_inst.operand2_index = rhsIdx;
+            cjmpNode->cjmp_inst.operand_type = condType;
     }
 
     if (token.token_type == AND) 
@@ -3128,6 +3481,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
 
     struct InstructionNode* forConditionNode = new InstructionNode(); 
     forConditionNode->type = CJMP;
+    forConditionNode->cjmp_inst.operand_type = TYPE_INT;
     forConditionNode->line_no = token.line_no;
     token = lexer.GetToken();
     if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand1_index = symbolTable[token.lexeme];
@@ -3188,6 +3542,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
                 struct InstructionNode* caseNode = new InstructionNode();
                 caseNode->line_no = token.line_no;
                 caseNode->type = CJMP;
+                caseNode->cjmp_inst.operand_type = TYPE_INT;
                 caseNode->cjmp_inst.operand1_index = switchSlot;
                 int s = alloc_slot();
                 mem[s] = stoi(token.lexeme);
@@ -3375,6 +3730,10 @@ void parse_function_definition()
                     an->assign_inst.left_hand_side_index = retSlots[i];
                     an->assign_inst.operand1_index = retExprs[i];
                     an->assign_inst.op = OPERATOR_NONE;
+                    // retSlots[i] is the function's own static return slot, resued as-is by every
+                    // call site's ret_val_index/all_ret_slots - tagging it here, once, is enough
+                    // for every caller to see it as tensor-tainted too.
+                    if (g_tensorSlots.count(retExprs[i])) g_tensorSlots.insert(retSlots[i]);
                 }
                 append(head, tracker, an);
             }
@@ -3382,6 +3741,7 @@ void parse_function_definition()
             retNode->line_no = token.line_no;
             retNode->type = RET;
             retNode->ret_inst.ret_val_index = retSlots[0];
+            retNode->ret_inst.ret_type = retTypes[0];
             append(head, tracker, retNode);
         } 
         else 
@@ -3407,6 +3767,7 @@ void parse_function_definition()
     fallbackRet->line_no = token.line_no;
     fallbackRet->type = RET; 
     fallbackRet->ret_inst.ret_val_index = retIdx;
+    fallbackRet->ret_inst.ret_type = retType;
     append(head, tracker, fallbackRet);
     functionTable[funcName] = head;
 

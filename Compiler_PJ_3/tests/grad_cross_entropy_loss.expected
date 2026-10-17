@@ -1,0 +1,2 @@
+PASS cross_entropy_loss forward
+PASS cross_entropy_loss

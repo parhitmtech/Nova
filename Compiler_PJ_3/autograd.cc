@@ -30,9 +30,13 @@ void grad_heap_ensure(int h)
 // Deep copy tensor data into a fresh tensor_heap entry and return its handle
 static int snapshot_tensor(int h)
 {
-    Tensor& src = tensor_heap[h];
-    int nh = alloc_tensor(src.rows, src.cols);
-    tensor_heap[nh].data = src.data;
+    // Copy the shape first: alloc_tensor_nd() can grow tensor_heap and move it, so a reference 
+    // taken before the call would dangle afterwards.
+
+    // Tensor& src = tensor_heap[h];
+    std::vector<int> shape = tensor_heap[h].shape;
+    int nh = alloc_tensor_nd(shape);
+    tensor_heap[nh].data = tensor_heap[h].data;
     return nh;
 }
 
@@ -100,12 +104,13 @@ int tensor_grad(int handle)
     if (!g.active)
     {
         // return a zeros tensor of the same shape
-        Tensor& t = tensor_heap[handle];
-        int nh = alloc_tensor(t.rows, t.cols);
-        return nh;
+        std::vector<int> shape = tensor_heap[handle].shape;
+        return alloc_tensor_nd(shape); 
     }
-    int nh = alloc_tensor(g.rows, g.cols);
-    tensor_heap[nh].data = g.data;
+    // gradient has the same N-D shape as the tensor it belongs to 
+    std::vector<int> shape = tensor_heap[handle].shape;
+    int nh = alloc_tensor_nd(shape);
+    tensor_heap[nh].data = grad_heap[handle].data;
     return nh;
 }
 
@@ -147,6 +152,19 @@ void backward(int loss_handle)
             entry.backward_fn(entry.output_handle);
         }
     }
+    // Release the tape's own references (taken when each entry was pushed -- see the tensor_retain
+    // calls at the end of each ag_* op above) before clearing it. This is what lets the compiler's 
+    // tensor-free pass release a mem[]-slot alias of an intermediate tensor as soon as that slot goes
+    // dead: the tape is holding a *seperate* referenceof its own, so the tensor_heap_entry survives until
+    // this point even if every mem[] slot that ever aliased it is already gone.
+    for (auto& entry : grad_tape)
+    {
+        tensor_release(entry.output_handle);
+        for (int ih : entry.input_handles)
+        {
+            tensor_release(ih);
+        }
+    }  
     // Clear tape after backward so next iteration starts fresh
     grad_tape.clear();
 }
@@ -216,6 +234,9 @@ int ag_matmul(int a, int b)
                 accum_grad(b, dB);
             }
         }});
+        tensor_retain(h);
+        tensor_retain(a);
+        tensor_retain(b);
     }
     return h;
 }
@@ -279,6 +300,9 @@ int ag_add(int a, int b)
                 }
             }
         }});
+        tensor_retain(h);
+        tensor_retain(a);
+        tensor_retain(b);
     }
     return h;
 }
@@ -338,11 +362,14 @@ int ag_sub(int a, int b)
                     for (int i = 0;i < (int)gOut.size();i++)
                     {
                         neg[i] = -gOut[i];
-                        accum_grad(b, neg);
                     }
+                    accum_grad(b, neg);  // once, after the loop
                 }
             }
         }});
+        tensor_retain(h);
+        tensor_retain(a);
+        tensor_retain(b);
     }
     return h;
 }
@@ -362,25 +389,29 @@ int ag_mul(int a, int b)
         grad_heap[h].requires_grad = true;
         grad_tape.push_back({"mul", h, {a, b}, [a, b, size](int  out) {
             vector<double>& gOut = grad_heap[out].data;
+            // accum_grad once per tensor, after its vector is filled
             if (grad_heap[a].requires_grad)
             {
                 vector<double> dA(size);
                 for (int i = 0;i < size;i++)
                 {
                     dA[i] = gOut[i] * tensor_heap[b].data[i];
-                    accum_grad(a, dA);
                 }
-                if (grad_heap[b].requires_grad)
+                accum_grad(a, dA);
+            }
+            if (grad_heap[b].requires_grad)
+            {
+                vector<double> dB(size);
+                for (int i = 0;i < size;i++)
                 {
-                    vector<double> dB(size);
-                    for (int i = 0;i < size;i++)
-                    {
-                        dB[i] = gOut[i] * tensor_heap[a].data[i];
-                        accum_grad(b, dB);
-                    }
+                    dB[i] = gOut[i] * tensor_heap[a].data[i];
+                    accum_grad(b, dB);
                 }
             }
         }});
+        tensor_retain(h);
+        tensor_retain(a);
+        tensor_retain(b);
     }
     return h;
 }
@@ -404,9 +435,11 @@ int ag_scale(int a, double s)
             for (int i = 0;i < size;i++)
             {
                 dA[i] = gOut[i] * s;
-                accum_grad(a, dA);
             }
+            accum_grad(a, dA);  // once, after the loop
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -433,6 +466,8 @@ int ag_relu(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -462,6 +497,8 @@ int ag_sigmoid(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -489,6 +526,8 @@ int ag_tanh_t(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -541,6 +580,8 @@ int ag_softmax(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -575,6 +616,8 @@ int ag_transpose(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -589,8 +632,9 @@ int ag_sum_axis0(int a)
         double s = 0.0;
         for (int i = 0;i < aR;i++)
         {
-            tensor_heap[h].at(0, j) = s;
+            s += tensor_heap[a].at(i, j);
         }
+        tensor_heap[h].at(0, j) = s;
     }
 
     grad_heap_ensure(h);
@@ -601,7 +645,7 @@ int ag_sum_axis0(int a)
             vector<double>& gOut = grad_heap[out].data;
             // Broadcast gradient back: each row gets gOut
             vector<double> dA(aR * aC);
-            for (int i = 0; i > aR;i++)
+            for (int i = 0; i < aR;i++)
             {
                 for (int j = 0;j < aC;j++)
                 {
@@ -610,6 +654,8 @@ int ag_sum_axis0(int a)
             }
             accum_grad(a, dA);
         }});
+        tensor_retain(h);
+        tensor_retain(a);
     }
     return h;
 }
@@ -641,7 +687,7 @@ int ag_mse_loss(int pred, int target)
     if (grad_mode && grad_heap[pred].requires_grad)
     {
         grad_heap[h].requires_grad = true;
-        grad_tape.push_back({"mse_loss", h, {pred}, [pred, size] (int out) {
+        grad_tape.push_back({"mse_loss", h, {pred, target}, [pred, size] (int out) {
             vector<double>& gOut = grad_heap[out].data;
             double upstream = gOut[0];
             vector<double> dPred(size);
@@ -652,6 +698,9 @@ int ag_mse_loss(int pred, int target)
             }
             accum_grad(pred, dPred);
         }});
+        tensor_retain(h);
+        tensor_retain(pred);
+        tensor_retain(target);
         // Fix: capture target properly
         grad_tape.back().backward_fn = [pred, target, size] (int out) 
         {
@@ -706,7 +755,7 @@ int ag_ce_loss(int logits, int target)
     grad_heap_ensure(h);
     if (grad_mode && grad_heap[logits].requires_grad) {
         grad_heap[h].requires_grad = true;
-        grad_tape.push_back({"ce_loss", h, {logits}, [logits, target](int out) {
+        grad_tape.push_back({"ce_loss", h, {logits, target}, [logits, target](int out) {
             vector<double>& gOut = grad_heap[out].data;
             double upstream = gOut[0];
             Tensor& L = tensor_heap[logits];
@@ -741,6 +790,9 @@ int ag_ce_loss(int logits, int target)
             }
             accum_grad(logits, dLogits);
         }});
+        tensor_retain(h);
+        tensor_retain(logits);
+        tensor_retain(target);
     }
     return h;
 }
