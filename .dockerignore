@@ -1,15 +1,16 @@
 .git
+.github
 **/node_modules
 **/dist
 **/.env
 **/.env.*
-**/compiler
-**/compiler.exe
-**/workspace
-**/_tmp
-**/_test_*
+compiler/build
+compiler/_test_*
+server/workspace
+server/_tmp
 **/*.pem
 **/*.key
 graphify-out
-Compiler PJ1
-Compiler PJ 2
+docs
+tools
+examples
