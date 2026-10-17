@@ -15,8 +15,10 @@ ifeq ($(OS),Windows_NT)
 EXE := .exe
 endif
 
-SRCS := src/compiler.cc \
-        src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/parser.cc \
+SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
+        src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/parser.cc src/frontend/imports.cc \
+        src/runtime/state.cc src/runtime/memory.cc src/runtime/tensor.cc src/runtime/interpreter.cc \
+        src/runtime/memoize.cc \
         src/codegen/bytecode.cc src/codegen/cuda.cc src/codegen/x86_asm.cc src/codegen/jit.cc \
         src/opt/constant_fold.cc src/opt/copy_propagation.cc src/opt/dead_code.cc \
         src/opt/licm.cc src/opt/inline.cc src/opt/tensor_release.cc \

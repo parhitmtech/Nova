@@ -501,13 +501,17 @@ npm run build     # production build → frontend/dist (served by the backend)
 NovaComp/
 ├── compiler/                   # the Nova language (C++17)
 │   ├── Makefile                # make / make test / make novavm → build/
-│   ├── include/                # compiler.h, lexer.h, bytecode.h, autograd.h, cuda_ffi.h, progress_bar.h …
+│   ├── include/                # compiler.h (IR, types), runtime.h, tensor_ops.h, optimizer.h, regalloc.h,
+│   │                           # codegen.h, integrations.h, lexer.h, bytecode.h, autograd.h …
 │   ├── src/
-│   │   ├── compiler.cc         # interpreter, optimizer, register allocation, x86/JIT/CUDA codegen, main
-│   │   ├── frontend/           # lexer.cc, inputbuf.cc, parser.cc
-│   │   ├── codegen/            # bytecode.cc (.nbc format), cuda_ffi.cc (not built yet)
-│   │   ├── runtime/            # autograd.cc (reverse-mode autograd)
-│   │   └── driver/             # novavm_main.cc (standalone bytecode VM)
+│   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc, novavm_main.cc (bytecode VM)
+│   │   ├── frontend/           # lexer.cc, inputbuf.cc, parser.cc, imports.cc
+│   │   ├── runtime/            # interpreter.cc, state.cc, memory.cc, tensor.cc, autograd.cc, memoize.cc
+│   │   ├── opt/                # constant_fold, copy_propagation, dead_code, licm, inline, tensor_release
+│   │   ├── regalloc/           # liveness.cc, coloring.cc (Chaitin-Briggs, spills)
+│   │   ├── codegen/            # x86_asm.cc, jit.cc, cuda.cc, bytecode.cc (.nbc), cuda_ffi.cc (not built)
+│   │   ├── ir/                 # dump.cc (--dump-ir)
+│   │   └── integrations/       # sol.cc (SOL cluster over SSH), hf.cc (HuggingFace)
 │   ├── stdlib/                 # Nova standard library (*.nova)
 │   ├── tests/                  # golden tests (*.nova + *.expected) and run.js
 │   └── benchmarks/             # Nova vs. C vs. Python
