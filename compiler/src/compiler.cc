@@ -1762,9 +1762,12 @@ void execute_program(struct InstructionNode* program)
                     if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 1)
                     {
                         // Field store: the field gives up its old tensor and takes its own reference
-                        // to the new one, if the value is a tensor.
-                        if (slot_owns(lhsIdx)) tensor_release(oldVal);
+                        // to the new one, if the value is a tensor. The source slot keeps its reference
+                        // (and is released by liveness), so the field must retain. Retain before
+                        // releasing so storing the same handle back into the field cannot free it.
                         bool isTensor = g_tensorSlots.count(srcIdx) > 0;
+                        if (isTensor) tensor_retain(result);
+                        if (slot_owns(lhsIdx)) tensor_release(oldVal);
                         set_owns(lhsIdx, isTensor);
                         pc = pc->next;
                         break;
@@ -1945,7 +1948,7 @@ void execute_program(struct InstructionNode* program)
                          && !jit_deoptimized.count(fhead)
                          && pc->call_inst.num_params <= 1)  // JIT only handles single-param functions
                 {
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(NOVA_NO_JIT)  // -DNOVA_NO_JIT: always interpret
                     jit_compiled[fhead] = jit_compile_function(fhead);
 
                     if (!jit_compiled[fhead])
@@ -6894,7 +6897,7 @@ int main(int argc, char* argv[])
     // normal single execution
     input_replay_index = -1;  // live stdin mode
 
-#ifdef _WIN32
+#if defined(_WIN32) && !defined(NOVA_NO_JIT)
     // Pre-compute colorings for all functions so JIT can reuse them
     for (auto& kv : functionTable)
     {

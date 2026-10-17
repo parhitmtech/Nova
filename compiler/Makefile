@@ -3,6 +3,7 @@
 ##   make novavm          build the standalone bytecode VM (build/novavm)
 ##   make test            build, then run the golden tests in tests/ (FILTER=name to narrow)
 ##   make CXX=clang++ CXXFLAGS="-O1 -g -fsanitize=address,undefined"   any compiler/flags
+##   make -B CXXFLAGS="-O2 -DNOVA_NO_JIT"   Windows: always interpret (the x86 JIT is Windows-only)
 ## libssh2 is optional: SOL/SSH support is enabled only when pkg-config finds it
 ## (apt-get install libssh2-1-dev).
 
