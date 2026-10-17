@@ -17,9 +17,10 @@ endif
 
 SRCS := src/compiler.cc \
         src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/parser.cc \
-        src/codegen/bytecode.cc src/codegen/cuda.cc \
+        src/codegen/bytecode.cc src/codegen/cuda.cc src/codegen/x86_asm.cc src/codegen/jit.cc \
         src/opt/constant_fold.cc src/opt/copy_propagation.cc src/opt/dead_code.cc \
-        src/opt/licm.cc src/opt/inline.cc \
+        src/opt/licm.cc src/opt/inline.cc src/opt/tensor_release.cc \
+        src/regalloc/liveness.cc src/regalloc/coloring.cc \
         src/ir/dump.cc \
         src/integrations/sol.cc src/integrations/hf.cc \
         src/runtime/autograd.cc

@@ -386,6 +386,5 @@ extern std::map<std::string, std::vector<VarType>> functionParamTypes;
  
 struct InstructionNode* parse_generate_intermediate_representation();
 void execute_program(struct InstructionNode* head);
-void generate_x86(struct InstructionNode* program, const std::string& outputFile);
 
 #endif /* _COMPILER_H_ */
