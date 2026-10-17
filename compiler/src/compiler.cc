@@ -30,7 +30,9 @@
 #include "regalloc.h"
 #include "codegen.h"
 #include "integrations.h"
-
+#ifndef _WIN32
+#include <unistd.h>  // sleep() while polling SOL jobs
+#endif
 
 using namespace std;
 
