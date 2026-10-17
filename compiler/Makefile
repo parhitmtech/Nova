@@ -16,7 +16,10 @@ EXE := .exe
 endif
 
 SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
-        src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/parser.cc src/frontend/imports.cc \
+        src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/imports.cc \
+        src/frontend/parser.cc src/frontend/parser_state.cc src/frontend/parser_util.cc \
+        src/frontend/parser_classes.cc src/frontend/parser_builtins.cc \
+        src/frontend/parser_statements.cc src/frontend/parser_expressions.cc \
         src/runtime/state.cc src/runtime/memory.cc src/runtime/tensor.cc src/runtime/interpreter.cc \
         src/runtime/memoize.cc \
         src/codegen/bytecode.cc src/codegen/cuda.cc src/codegen/x86_asm.cc src/codegen/jit.cc \
@@ -26,7 +29,7 @@ SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
         src/ir/dump.cc \
         src/integrations/sol.cc src/integrations/hf.cc \
         src/runtime/autograd.cc
-HDRS := $(wildcard include/*.h)
+HDRS := $(wildcard include/*.h src/*/*.h)
 
 BUILD  := build
 BIN    := $(BUILD)/nova$(EXE)

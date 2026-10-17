@@ -505,7 +505,7 @@ NovaComp/
 │   │                           # codegen.h, integrations.h, lexer.h, bytecode.h, autograd.h …
 │   ├── src/
 │   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc, novavm_main.cc (bytecode VM)
-│   │   ├── frontend/           # lexer.cc, inputbuf.cc, parser.cc, imports.cc
+│   │   ├── frontend/           # lexer, inputbuf, imports; parser.cc + parser_{state,util,classes,builtins,statements,expressions}.cc
 │   │   ├── runtime/            # interpreter.cc, state.cc, memory.cc, tensor.cc, autograd.cc, memoize.cc
 │   │   ├── opt/                # constant_fold, copy_propagation, dead_code, licm, inline, tensor_release
 │   │   ├── regalloc/           # liveness.cc, coloring.cc (Chaitin-Briggs, spills)
