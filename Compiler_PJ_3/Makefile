@@ -3,7 +3,8 @@
 
 CXX		 := g++
 CXXFLAGS := -O2 -std=c++17
-LDLIBS	 := -lssh2
+# libssh2 is optional: compiler.cc only enables SOL/SSH support when <libssh2.h> is found.
+LDLIBS	 := $(shell pkg-config --libs libssh2 2>/dev/null)
 
 SRCS	 := compiler.cc lexer.cc inputbuf.cc parser2.cc bytecode.cc autograd.cc
 BIN		 := compiler
