@@ -514,10 +514,16 @@ NovaComp/
 │
 ├── server/                     # Node.js + Express backend
 │   ├── src/
-│   │   ├── server.js           # Express app, routes, WebSockets
+│   │   ├── server.js           # entry point: HTTP server, WebSockets, listen
+│   │   ├── app.js              # Express middleware, rate limits, auth gates, routers (in order)
+│   │   ├── config.js           # env settings and execution limits
 │   │   ├── paths.js            # every filesystem location (env-overridable)
-│   │   ├── services/           # execution.js (sandboxed runs), security.js
-│   │   └── agent/              # bedrock-client.js, system-prompt.js (NovaBot)
+│   │   ├── routes/             # auth, run, fs, files, gpu, share, agent, health
+│   │   ├── ws/                 # index.js (upgrade routing), repl.js, terminal.js
+│   │   ├── middleware/auth.js  # requireAuth (JWT)
+│   │   ├── services/           # compiler-runner, execution (sandbox), security, aws, sol, agent-store, agent-tools
+│   │   ├── agent/              # bedrock-client.js, system-prompt.js (NovaBot)
+│   │   └── lib/logger.js       # structured JSON logs
 │   ├── public/landing.html
 │   ├── test/                   # node:test suites
 │   ├── scripts/test-worker.js  # Docker worker smoke test
