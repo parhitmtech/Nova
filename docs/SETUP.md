@@ -4,12 +4,12 @@ NovaComp now requires authenticated execution and isolates each user's local wor
 
 ## Local development
 
-Use Node 22.12 or newer and a C++17 compiler. The project no longer tracks installed dependencies or compiled binaries.
+Use Node 22.12 or newer, `make`, and a C++17 compiler. The project no longer tracks installed dependencies or compiled binaries. The repository has three parts: `compiler/` (the Nova compiler, built with `make` into `compiler/build/nova`), `server/` (the Node backend) and `frontend/` (the React app).
 
 ```sh
-cd Compiler_PJ_3
+make -C compiler                # builds compiler/build/nova
+cd server
 npm ci
-npm run build:compiler
 cp .env.example .env
 ```
 
@@ -21,10 +21,10 @@ Build the execution image from the repository root:
 docker build --target worker -t novacomp-worker:local .
 ```
 
-Start the backend with `npm start` from `Compiler_PJ_3`, then start the frontend:
+Start the backend with `npm start` from `server/`. It finds the compiler at `compiler/build/nova` and the stdlib under `compiler/`; override with `NOVA_COMPILER_PATH` and `NOVA_HOME`. Then start the frontend:
 
 ```sh
-cd novacomp-frontend
+cd frontend
 npm ci
 VITE_API_URL= npm run dev
 ```
@@ -37,13 +37,13 @@ For trusted local programs only, set `NOVA_EXECUTION_MODE=local`. Production rej
 
 The worker has no network, a read-only root filesystem, no capabilities, no new privileges, and a non-root UID. Each job receives only its own temporary directory, one CPU, 256MB RAM, 32 processes, a 16MB maximum file size, and a bounded temporary filesystem. Program output is capped at 256KB. Web execution is limited to 30 seconds; `// @ml` cannot increase this. At most five compiler workers run per backend process. A stopped stream kills the process group and removes its container.
 
-Every web-triggered compiler path uses `execution.js`. Backend AWS/JWT/SSH credentials are not copied into worker environments. Program-emitted file markers may upload only regular, non-symlink files inside that job's directory, with bounded file size and count.
+Every web-triggered compiler path uses `server/src/services/execution.js`. Backend AWS/JWT/SSH credentials are not copied into worker environments. Program-emitted file markers may upload only regular, non-symlink files inside that job's directory, with bounded file size and count.
 
 GPU and provider execution remain disabled in the secure production configuration. The existing GPU adapter is available only with **both** `NOVA_ENABLE_GPU=true` and explicit trusted local mode in a nonproduction environment; SOL support also requires its optional SSH dependencies and credentials. A separate authenticated provider worker is needed before exposing GPU jobs publicly. Shared debug and Git endpoints report unavailable until they have isolated user sessions.
 
 ## Production builds
 
-Build the frontend with `npm run build` and place `novacomp-frontend/dist` into `Compiler_PJ_3/dist` when running Node directly on a Linux host with Docker. Serve only that build; backend source and workspace directories are private.
+Build the frontend with `npm run build`. When running Node directly on a Linux host with Docker, the server serves `frontend/dist` by default (set `NOVA_STATIC_DIR` to serve a build from elsewhere). Serve only that build; backend source and workspace directories are private.
 
 `docker build --target server -t novacomp-server:local .` also produces a non-root server image containing the frontend and Docker client. When using it, mount the jobs directory at the **same absolute path on the host and in the server** (`/var/lib/novacomp/jobs`) because the host daemon resolves worker bind mounts. Give it UID 1000 ownership. Configure socket access for the server's user, or use a dedicated worker host. Docker daemon access is a privileged operator capability; use a dedicated execution host with minimal AWS privileges rather than sharing it with unrelated workloads. Never mount the daemon socket or credentials into program workers.
 
@@ -54,12 +54,13 @@ The local signing secret was rotated during this change. Rotating the live deplo
 ## Tests
 
 ```sh
-cd Compiler_PJ_3
-npm run build:compiler
-npm test                 # real HTTP/WebSocket security + execution + language tests
+make -C compiler test     # build + golden language tests (compiler/tests/*.nova)
+
+cd server
+npm test                 # real HTTP/WebSocket security + execution tests
 npm run test:worker      # real production Docker worker smoke test
 
-cd ../novacomp-frontend
+cd ../frontend
 npm run lint
 npm run build
 npx playwright install chromium   # once, if no local Chrome is available

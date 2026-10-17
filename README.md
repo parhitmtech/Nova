@@ -111,7 +111,7 @@ All API calls go to `VITE_API_URL` (set in `.env`, baked in at build time by Vit
 
 **Stack:** Node.js · Express 5 · JWT · bcryptjs · AWS SDK v3 · ssh2 · node-pty · WebSocket
 
-### 4.1 Server Entry Point (`Compiler_PJ_3/server.js`)
+### 4.1 Server Entry Point (`server/src/server.js`)
 
 The server runs on **port 3001** and serves:
 - Static files from `/dist` (the built React app)
@@ -178,7 +178,7 @@ Browser POST /run-stream
         ├── Optional JWT auth (for file uploads)
         ├── Generate pre-signed S3 URL (if authenticated, for model upload)
         ├── Write source to temp file
-        ├── Spawn: ./compiler <tempfile>
+        ├── Spawn: compiler/build/nova <tempfile>
         │         env: NOVA_MODEL_UPLOAD_URL, NOVA_MODEL_S3_KEY
         │
         ├── Stream stdout → SSE chunks to browser
@@ -272,7 +272,7 @@ This memory is injected into the system prompt on every subsequent request, maki
 | `list_user_files` | List all files in the user's workspace |
 | `explain_error` | Analyze a Nova compiler/runtime error and suggest a fix |
 
-### 5.5 Bedrock Client (`bedrock_client.js`)
+### 5.5 Bedrock Client (`server/src/agent/bedrock-client.js`)
 
 Wraps `@aws-sdk/client-bedrock-runtime` to match the Anthropic SDK interface:
 - `createMessage()` — non-streaming, used for the tool-use loop
@@ -294,7 +294,7 @@ Nova source code
    Lexer (lexer.cc)              → tokens
       │
       ▼
-   Parser (parser2.cc)           → AST (InstructionNode tree)
+   Parser (parser.cc)            → AST (InstructionNode tree)
       │
       ├── Constant Folding
       ├── Dead Code Elimination (DCE)
@@ -338,7 +338,7 @@ The most architecturally complex feature.
 
 ```
 Developer's machine (Windows)
-   .\Start-SolTunnel.ps1
+   tools\sol-tunnel\Start-SolTunnel.ps1
    → ssh -NR 2223:login.sol.rc.asu.edu:22 ubuntu@<EC2-IP>
                         │
                         └── EC2 port 2223 → SOL login node port 22
@@ -452,37 +452,45 @@ History + memory saved back to DynamoDB
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 22.12+ and `make`
 - g++ with libssh2 (`sudo apt-get install libssh2-1-dev`)
 - AWS credentials configured (or EC2 IAM role with S3, DynamoDB, Bedrock access)
 - SSH key for SOL at `/home/ubuntu/.ssh/sol_key`
 
+### Compiler
+
+```bash
+make -C compiler          # → compiler/build/nova (links libssh2 only if installed)
+make -C compiler test     # golden language tests in compiler/tests/
+make -C compiler novavm   # optional standalone bytecode VM
+```
+
 ### Backend
 
 ```bash
-cd Compiler_PJ_3
-npm install
-g++ -O2 -o compiler compiler.cc lexer.cc inputbuf.cc parser2.cc bytecode.cc autograd.cc -lssh2
-node server.js
+cd server
+npm ci
+cp .env.example .env      # then fill in the values
+npm start                 # uses ../compiler/build/nova and ../compiler/stdlib
 ```
 
 ### Frontend
 
 ```bash
-cd novacomp-frontend
-npm install
+cd frontend
+npm ci
 npm run dev       # development
-npm run build     # production build → dist/
+npm run build     # production build → frontend/dist (served by the backend)
 ```
 
 ### SOL Tunnel
 
 ```powershell
 # Start (runs as hidden background process, auto-reconnects)
-.\Start-SolTunnel.ps1
+.\tools\sol-tunnel\Start-SolTunnel.ps1
 
 # Stop
-.\Stop-SolTunnel.ps1
+.\tools\sol-tunnel\Stop-SolTunnel.ps1
 ```
 
 ---
@@ -491,25 +499,36 @@ npm run build     # production build → dist/
 
 ```
 NovaComp/
-├── Start-SolTunnel.ps1         # SOL tunnel manager (Windows background process)
-├── Stop-SolTunnel.ps1
+├── compiler/                   # the Nova language (C++17)
+│   ├── Makefile                # make / make test / make novavm → build/
+│   ├── include/                # compiler.h, lexer.h, bytecode.h, autograd.h, cuda_ffi.h, progress_bar.h …
+│   ├── src/
+│   │   ├── compiler.cc         # interpreter, optimizer, register allocation, x86/JIT/CUDA codegen, main
+│   │   ├── frontend/           # lexer.cc, inputbuf.cc, parser.cc
+│   │   ├── codegen/            # bytecode.cc (.nbc format), cuda_ffi.cc (not built yet)
+│   │   ├── runtime/            # autograd.cc (reverse-mode autograd)
+│   │   └── driver/             # novavm_main.cc (standalone bytecode VM)
+│   ├── stdlib/                 # Nova standard library (*.nova)
+│   ├── tests/                  # golden tests (*.nova + *.expected) and run.js
+│   └── benchmarks/             # Nova vs. C vs. Python
 │
-├── Compiler_PJ_3/
-│   ├── compiler.cc             # Nova compiler (lexer → parser → codegen → JIT)
-│   ├── compiler.h
-│   ├── parser2.cc
-│   ├── lexer.cc / lexer.h
-│   ├── bytecode.cc / .h        # Bytecode VM + .nbc format
-│   ├── autograd.cc / .h        # Reverse-mode autograd engine
-│   ├── Cuda_ffi.cc / .h        # CUDA runtime FFI layer
-│   ├── server.js               # Express backend
-│   ├── bedrock_client.js       # AWS Bedrock wrapper (createMessage, streamMessage)
-│   ├── nova_system_prompt.js   # NovaBot system prompt + tool schemas
-│   ├── package.json
-│   ├── .env                    # AWS config, JWT secret, SOL config, Bedrock model ID
-│   └── dist/                   # Built React app (served as static files)
+├── server/                     # Node.js + Express backend
+│   ├── src/
+│   │   ├── server.js           # Express app, routes, WebSockets
+│   │   ├── paths.js            # every filesystem location (env-overridable)
+│   │   ├── services/           # execution.js (sandboxed runs), security.js
+│   │   └── agent/              # bedrock-client.js, system-prompt.js (NovaBot)
+│   ├── public/landing.html
+│   ├── test/                   # node:test suites
+│   ├── scripts/test-worker.js  # Docker worker smoke test
+│   └── .env.example            # AWS config, JWT secret, SOL config, Bedrock model ID
 │
-└── novacomp-frontend/
+├── examples/                   # Nova example programs + generate_mnist_data.py
+├── tools/sol-tunnel/           # Start/Stop-SolTunnel.ps1, sol_tunnel.py
+├── docs/                       # SETUP.md, REVIEW.md
+├── Dockerfile                  # worker + server images
+│
+└── frontend/                   # React + Vite app
     ├── src/
     │   ├── pages/
     │   │   ├── IDEPage.tsx     # Main IDE (editor, file browser, NovaBot, auto-save)
