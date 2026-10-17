@@ -42,7 +42,7 @@ string reserved[] = {
     "EQUAL", "COLON", "COMMA", "SEMICOLON",
     "LBRAC", "RBRAC", "LPAREN", "RPAREN", "LBRACE", "RBRACE",
     // comparison
-    "NOTEQUAL", "GREATER", "LESS",
+    "NOTEQUAL", "GREATER", "LESS", "EQEQ",
     // arrow (new)
     "ARROW",
     // literals + misc
@@ -349,7 +349,18 @@ Token LexicalAnalyzer::GetTokenMain()
             }
         }
         case '*':   tmp.token_type = MULT;      return tmp;
-        case '=':   tmp.token_type = EQUAL;     return tmp;
+        case '=':
+        {   
+            // "==" is equality in a condition; a single "=" is assignment
+            input.GetChar(c);
+            if (c == '=') {
+                tmp.token_type = EQEQ;
+            } else {
+                if (!input.EndOfInput()) input.UngetChar(c);
+                tmp.token_type = EQUAL;
+            }
+            return tmp;
+        }
         case ':':   tmp.token_type = COLON;     return tmp;
         case ',':   tmp.token_type = COMMA;     return tmp;
         case ';':   tmp.token_type = SEMICOLON; return tmp;

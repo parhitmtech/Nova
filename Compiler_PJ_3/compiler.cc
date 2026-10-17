@@ -342,9 +342,11 @@ map<InstructionNode*, map<vector<int>, vector<int>>> memo_cache;
 struct CallFrame {
     struct InstructionNode* returnAddress;
     int dest_index;
+    VarType dest_type = TYPE_UNKNOWN;
     int slot_base;
     vector<int> savedSlots;
     vector<int> allRetSlots;
+    vector<VarType> allRetTypes;
     bool is_memoizable = false;
     InstructionNode* memo_func = nullptr;
     vector<int> memo_key;
@@ -426,14 +428,141 @@ int alloc_double_slot()
 // Tensor heap
 std::vector<Tensor> tensor_heap;
 
-int alloc_tensor(int rows, int cols)
+void tensor_set_shape(Tensor& t, const std::vector<int>& shape)
+{
+    t.shape = shape;
+    int n = (int)shape.size();
+    t.strides.assign(n, 1);
+    for (int i = n - 2; i >= 0; i--) t.strides[i] = t.strides[i+1] * shape[i + 1];
+    //2-D view: last dimension is cols, everything before it folds into rows
+    t.cols = (n == 0) ? 1 : shape[n - 1];
+    t.rows = 1;
+    for (int i = 0; i < n - 1; i++) t.rows *= shape[i];
+}
+
+int alloc_tensor_nd(const std::vector<int>& shape)
 {
     Tensor t;
-    t.rows = rows;
-    t.cols = cols;
-    t.data.assign(rows * cols, 0.0);
+    tensor_set_shape(t, shape);
+    size_t numel = 1;
+    for (int d : shape) numel *= (size_t)d;
+    t.data.assign(numel, 0.0);
+    t.refCount = 1;  // owned by whichever mem[] slot recieves this handle
+    t.freed = false;
     tensor_heap.push_back(std::move(t));
     return (int)tensor_heap.size() - 1;
+}
+
+int alloc_tensor(int rows, int cols)
+{
+    return alloc_tensor_nd({rows, cols});
+}
+
+int alloc_tensor_like(int src)
+{
+    // copy the shape first: allocating can move tensor_heap
+    std::vector<int> shape = tensor_heap[src].shape;
+    return alloc_tensor_nd(shape);
+}
+
+// Runtime shape errors stop the program with the line number, like the freed-handle errors do.
+[[noreturn]] static void tensor_shape_error(int line, const std::string& msg)
+{
+    fprintf(stderr, "Runtime error at line %d: %s\n", line, msg.c_str());
+    exit(1);
+}
+
+// Flat offset of an N-D index, with rank and bounds checks.
+static size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int line)
+{
+    if (n != T.ndim())
+    {
+        tensor_shape_error(line, std::string(op) + ": a rank-" + std::to_string(T.ndim()) + 
+                           " tensor needs " + std::to_string(T.ndim()) + " indices, got " + std::to_string(n));
+        size_t off = 0;
+        for (int k = 0; k < n; k++)
+        {
+            if (idx[k] < 0 || idx[k] >= T.shape[k])
+            {
+                tensor_shape_error(line, std::string(op) + ": index " + std::to_string(idx[k]) + 
+                                   " out of range for dimension " + std::to_string(k) + 
+                                   " (size " + std::to_string(T.shape[k]) + ")");
+            }
+            off += (size_t)idx[k] * T.strides[k];
+        }
+        return off;
+    }
+}
+
+// Ops that still work on the 2_D view only refuse N-D input instead of silently treating it as a 
+// flattened matrix.
+static void require_2d(int h, const char* op, int line)
+{
+    if (tensor_heap[h].ndim() > 2)
+    {
+        tensor_shape_error(line, std::string(op) + " supports 1-D and 2-D tensors only (got rank " + 
+                           std::to_string(tensor_heap[h].ndim()) + "); use tensor_reshape first");
+    }
+}
+
+static int ten_reshape(int a, const std::vector<int>& shape)
+{
+    int h = alloc_tensor_nd(shape);
+    tensor_heap[h].data = tensor_heap[a].data;  // same elements, same order
+    return h;
+}
+
+bool tensor_is_live(int h)
+{
+    return h >= 0 && h < (int)tensor_heap.size() && !tensor_heap[h].freed;
+}
+
+// A second mem[] slot now also aliases this handle (plain reassignment, or a tensor passed into a function
+// call as an argument). Must be paired with an eventual tensor_release() for that same new alias, or the tensor leaks.
+void tensor_retain(int h)
+{
+    if (!tensor_is_live(h)) return;
+    tensor_heap[h].refCount++;
+}
+
+// One fewer mem[] slot holds this handle (compiler-inserted, at the slot's last use per liveness 
+// analysis). At refcoutn 0, the backing data is freed immediately; the tensor_heap entry itself is
+// kept (index stability) but marked freed so any further access is a loud, detectable error instead
+// of silent corruption.
+void tensor_release(int h)
+{
+    if (!tensor_is_live(h)) return; // already freed, or not a tracked handle
+    tensor_heap[h].refCount--;
+    if (tensor_heap[h].refCount <= 0)
+    {
+        tensor_heap[h].data.clear();
+        tensor_heap[h].data.shrink_to_fit();
+        tensor_heap[h].shape.clear();
+        tensor_heap[h].shape.shrink_to_fit();
+        tensor_heap[h].strides.clear();
+        tensor_heap[h].strides.shrink_to_fit();
+        tensor_heap[h].freed = true;
+        // Free its gradient buffer too, Otherwise every intermediate tensor of every 
+        // training step keeps its gradient forever 
+        if (h < (int)grad_heap.size())
+        {
+            grad_heap[h].data.clear();
+            grad_heap[h].data.shrink_to_fit();
+            grad_heap[h].active = false;
+        }
+    }
+}
+
+// Which mem[] object slots (instance fields, method self copies) currently own a reference to the
+// tensor they hold. Only used for ASSIGNs with own_kind 1 or 2 (see compiler.h). Starts all false, so
+// a field's initial 0 is never mistaken for an owned handle 0.
+static std::vector<char> g_memOwns;
+static bool slot_owns(int i) { return i >= 0 && i < (int)g_memOwns.size() && g_memOwns[i]; }
+static void set_owns(int i, bool v)
+{
+    if (i < 0) return;
+    if (i >= (int)g_memOwns.size()) g_memOwns.resize(i + 1, 0);
+    g_memOwns[i] = v ? 1 : 0;
 }
 
 static std::mt19937 rng(42);
@@ -445,19 +574,19 @@ struct ProgressBar {
 
 static vector<ProgressBar> progress_heap;
 
-static int ten_zeros(int r, int c) { return alloc_tensor(r, c); }
+static int ten_zeros(const std::vector<int>& shape) { return alloc_tensor_nd(shape); }
 
-static int ten_ones(int r, int c)
+static int ten_ones(const std::vector<int>& shape)
 {
-    int h = alloc_tensor(r, c);
+    int h = alloc_tensor_nd(shape);
     for (auto& v : tensor_heap[h].data) v = 1.0;
     return h;
 }
 
-static int ten_randn(int r, int c)
+static int ten_randn(const std::vector<int>& shape)
 {
     std::normal_distribution<double> dist(0.0, 1.0);
-    int h = alloc_tensor(r, c);
+    int h = alloc_tensor_nd(shape);
     for (auto& v : tensor_heap[h].data) v = dist(rng);
     return h;
 }
@@ -1059,6 +1188,7 @@ void detect_memoizable_functions()
     // nodes appearing after a conditional early-return are not missed.
     for (auto& kv : functionTable)
     {
+        const string& funcName = kv.first;
         InstructionNode* head = kv.second;
         bool is_pure = true;
         for (InstructionNode* n = head; n != nullptr; n = n->next)
@@ -1070,7 +1200,21 @@ void detect_memoizable_functions()
                 break;
             }
         }
+        // memo cache is int-only: float/double/tensor returns or params would truncate
+        if (is_pure)
+        {
+            VarType rt = functionReturnType.count(funcName) ? functionReturnType[funcName] : TYPE_UNKNOWN;
+            if (rt == TYPE_FLOAT || rt == TYPE_DOUBLE || rt == TYPE_TENSOR) is_pure = false;
+        }
+        if (is_pure && functionParamTypes.count(funcName))
+        {
+            for (VarType pt : functionParamTypes[funcName])
+            {
+                if (pt == TYPE_FLOAT || pt == TYPE_DOUBLE || pt == TYPE_TENSOR) { is_pure = false; break; }
+            }
+        }
         if (is_pure) pure_functions.insert(head);
+
     }
 
     for (auto& kv : functionTable)
@@ -1520,7 +1664,7 @@ void execute_program(struct InstructionNode* program)
             exit(1);
         }
 
-        switch (pc->type)
+        switch (pc->type)  // main instruction dispatch switch
         {
             case NOOP:
                 pc = pc->next;
@@ -1607,7 +1751,46 @@ void execute_program(struct InstructionNode* program)
                         result = op1;
                         break;
                 }
-                mem[pc->assign_inst.left_hand_side_index] = result;
+
+                //mem[pc->assign_inst.left_hand_side_index] = result;
+                
+                {
+                    int lhsIdx = pc->assign_inst.left_hand_side_index;
+                    int srcIdx = pc->assign_inst.operand1_index;
+                    int oldVal = mem[lhsIdx];
+                    mem[lhsIdx] = result;
+                    if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 1)
+                    {
+                        // Field store: the field gives up its old tensor and takes its own reference
+                        // to the new one, if the value is a tensor.
+                        if (slot_owns(lhsIdx)) tensor_release(oldVal);
+                        bool isTensor = g_tensorSlots.count(srcIdx) > 0;
+                        set_owns(lhsIdx, isTensor);
+                        pc = pc->next;
+                        break;
+                    }
+                    if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 2)
+                    {
+                        // Field move (method copy-in / copy-back): the reference
+                        // moves with the value; the refcount does not change
+                        if (slot_owns(lhsIdx) && oldVal != result) tensor_release(oldVal);
+                        set_owns(lhsIdx, slot_owns(srcIdx));
+                        set_owns(srcIdx, false);
+                        pc = pc->next;
+                        break;
+                    }
+                }
+
+                // A plain copy ("op == OPERATOR_NONE") of a tensor-tainted slot creates a second,
+                // simultaneously-live alias of the same tensor_heap entry -- the source slot keeps
+                // its value too, it isn't consumed. Without a retain here, the two aliases would share
+                // one refcount, and the first of them to go dead (per the compiler's liveness-based TENSOR_RELEASE)
+                // insertion) would free the handle out from under the other. An arithmetic op (+, -, *, /) never
+                // applies to a tensor handle, so only OPERATOR_NONE needs this.
+                if (pc->assign_inst.op == OPERATOR_NONE && g_tensorSlots.count(pc->assign_inst.left_hand_side_index))
+                {
+                    tensor_retain(mem[pc->assign_inst.left_hand_side_index]);
+                }
                 pc = pc->next;
                 break;
 
@@ -1617,19 +1800,56 @@ void execute_program(struct InstructionNode* program)
                     debug("Error: pc->cjmp_inst->target is null.\n");
                     exit(1);
                 }
-                op1 = mem[pc->cjmp_inst.operand1_index];
-                op2 = mem[pc->cjmp_inst.operand2_index];
-                switch (pc->cjmp_inst.condition_op)
+                // float/double operands live in fmem[]/dmem[], not mem[]. This used to always read mem[]
+                // regardless of type, so comparing a flaot/double variable in a condition silently comparing
+                // the wrong memory (and for doubles, whose slot indices run past mem[]'s size, could read out of
+                // bounds). operand_type is set by the parser per comparison.
                 {
-                    case CONDITION_GREATER:
-                        pc = (op1 > op2) ? pc->next : pc->cjmp_inst.target;
-                        break;
-                    case CONDITION_LESS:
-                        pc = (op1 < op2) ? pc->next : pc->cjmp_inst.target;
-                        break;
-                    case CONDITION_NOTEQUAL:
-                        pc = (op1 != op2) ? pc->next : pc->cjmp_inst.target;
-                        break;
+                    double d1, d2;
+                    switch (pc->cjmp_inst.operand_type)
+                    {
+                        case TYPE_DOUBLE:
+                        {
+                            d1 = dmem[pc->cjmp_inst.operand1_index];
+                            d2 = dmem[pc->cjmp_inst.operand2_index];
+                            break;
+                        }
+                        case TYPE_FLOAT:
+                        {
+                            d1 = (double)fmem[pc->cjmp_inst.operand1_index];
+                            d2 = (double)fmem[pc->cjmp_inst.operand2_index];
+                            break;
+                        }
+                        default:
+                        {
+                            d1 = (double)mem[pc->cjmp_inst.operand1_index];
+                            d2 = (double)mem[pc->cjmp_inst.operand2_index];
+                            break;
+                        }
+                    }
+                    switch (pc->cjmp_inst.condition_op)
+                    {
+                        case CONDITION_GREATER:
+                        {
+                            pc = (d1 > d2) ? pc->next : pc->cjmp_inst.target;
+                            break;
+                        }
+                        case CONDITION_LESS:
+                        {
+                            pc = (d1 < d2) ? pc->next : pc->cjmp_inst.target;
+                            break;
+                        }
+                        case CONDITION_NOTEQUAL:
+                        {
+                            pc = (d1 != d2) ? pc->next : pc->cjmp_inst.target;
+                            break;
+                        }
+                        case CONDITION_EQUAL:
+                        {
+                            pc = (d1 == d2) ? pc->next : pc->cjmp_inst.target;
+                            break;
+                        }
+                    }
                 }
                 break;
 
@@ -1739,6 +1959,7 @@ void execute_program(struct InstructionNode* program)
                 CallFrame frame;
                 frame.returnAddress  = pc->next;
                 frame.dest_index     = pc->call_inst.ret_val_index;
+                frame.dest_type      = pc->call_inst.ret_type;
                 frame.slot_base      = pc->call_inst.func_slot_base;
                 frame.is_memoizable  = is_memo;
                 frame.memo_func      = is_memo ? fhead : nullptr;
@@ -1750,6 +1971,13 @@ void execute_program(struct InstructionNode* program)
                         pc->call_inst.all_ret_slots,
                         pc->call_inst.all_ret_slots + pc->call_inst.num_ret_slots
                     );
+                    if (pc->call_inst.ret_slot_types)
+                    {
+                        frame.allRetTypes = vector<VarType>(
+                            pc->call_inst.ret_slot_types,
+                            pc->call_inst.ret_slot_types + pc->call_inst.num_ret_slots
+                        );
+                    }
                 }
 
                 int base  = pc->call_inst.func_slot_base;
@@ -1771,6 +1999,12 @@ void execute_program(struct InstructionNode* program)
                     if (pt == TYPE_FLOAT) fmem[pSlot] = (float)val;
                     else if (pt == TYPE_DOUBLE) dmem[pSlot] = val;
                     else mem[pSlot]  = (int)val;
+                    // Binding a tensor-handle argument into a param slot creates a second
+                    // simultaneous alias (caller's aSLot, callee's pSlot) to the same tensor_heap 
+                    // entry -- unlike RET, whc=ich is a transfer, not a duplicate. Retain here so the 
+                    // two sides' independent TENSOR_RELEASE insertions (see insert_tensor_releases) each
+                    // own one reference instead of double-freeing a single one.
+                    if (g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
                 }
 
                 callStack.push(frame);
@@ -1799,36 +2033,87 @@ void execute_program(struct InstructionNode* program)
                 // mem[frame.dest_index] = ret_val;
 
                 // capture all return values before restore
-                vector<int> capturedRetVals;
-                for (int slot : frame.allRetSlots)
-                {
-                    capturedRetVals.push_back(mem[slot]);
-                }
+                // vector<int> capturedRetVals;
+                // for (int slot : frame.allRetSlots)
+                // {
+                //     capturedRetVals.push_back(mem[slot]);
+                // }
                 // if single return, fall back to ret_inst
-                if (capturedRetVals.empty())
-                {
-                    capturedRetVals.push_back(mem[pc->ret_inst.ret_val_index]);
-                }
+                // if (capturedRetVals.empty())
+                // {
+                //     capturedRetVals.push_back(mem[pc->ret_inst.ret_val_index]);
+                // }
 
                 // Populate memo cache for pure recursive functions on first computation
-                if (frame.is_memoizable && frame.memo_func)
-                {
-                    memo_cache[frame.memo_func][frame.memo_key] = capturedRetVals;
-                }
+                // if (frame.is_memoizable && frame.memo_func)
+                // {
+                //     memo_cache[frame.memo_func][frame.memo_key] = capturedRetVals;
+                // }
 
                 // restore function-local slots
+                // for (int i = 0;i < (int)frame.savedSlots.size();i++)
+                // {
+                //     mem[frame.slot_base + i] = frame.savedSlots[i];
+                // }
+
+                // write all return values back
+                // for (int i = 0;i < (int)capturedRetVals.size() && i < (int)frame.allRetSlots.size();i++)
+                // {
+                //     mem[frame.allRetSlots[i]] = capturedRetVals[i];
+                // }
+                // //backward compatibility - also to dst_index
+                // mem[frame.dest_index] = capturedRetVals[0];
+
+                // Return slots can liev in mem[], fmem[], or dmem[]. Read and write each through 
+                // its own array. Old code assumed mem[] for all. double is the common carry type
+                // for all three
+                vector<double> capturedRetVals;
+                for (int i = 0;i < (int)frame.allRetSlots.size();i++)
+                {
+                    int slot = frame.allRetSlots[i];
+                    VarType rt = (i < (int)frame.allRetTypes.size()) ? frame.allRetTypes[i] : TYPE_UNKNOWN;
+                    double v = (rt == TYPE_FLOAT) ? (double)fmem[slot] :
+                                (rt == TYPE_DOUBLE) ? dmem[slot] : (double)mem[slot];
+                    capturedRetVals.push_back(v);
+                }
+                // single return: ues the RET node's own slot and type
+                if (capturedRetVals.empty())
+                {
+                    int slot = pc->ret_inst.ret_val_index;
+                    VarType rt = pc->ret_inst.ret_type;
+                    double v = (rt == TYPE_FLOAT) ? (double)fmem[slot] :
+                               (rt == TYPE_DOUBLE) ? dmem[slot] : (double)mem[slot];
+                    capturedRetVals.push_back(v);
+                }
+
+                // memo cache stays int-only (safe: edit 2 keeps non-int functions out)
+                if (frame.is_memoizable && frame.memo_func)
+                {
+                    vector<int> intRetVals;
+                    for (double v : capturedRetVals) intRetVals.push_back((int)v);
+                    memo_cache[frame.memo_func][frame.memo_key] = intRetVals;
+                }
+
+                // restore function-local slots (mem[] only, unchanged)
                 for (int i = 0;i < (int)frame.savedSlots.size();i++)
                 {
                     mem[frame.slot_base + i] = frame.savedSlots[i];
                 }
 
-                // write all return values back
+                // write all return values back, each through its own array
                 for (int i = 0;i < (int)capturedRetVals.size() && i < (int)frame.allRetSlots.size();i++)
                 {
-                    mem[frame.allRetSlots[i]] = capturedRetVals[i];
+                    int slot = frame.allRetSlots[i];
+                    VarType rt = (i < (int)frame.allRetTypes.size()) ? frame.allRetTypes[i] : TYPE_UNKNOWN;
+                    if (rt == TYPE_FLOAT) fmem[slot] = (float)capturedRetVals[i];
+                    else if (rt == TYPE_DOUBLE) dmem[slot] = capturedRetVals[i];
+                    else mem[slot] = (int)capturedRetVals[i];
                 }
-                //backward compatibility - also to dst_index
-                mem[frame.dest_index] = capturedRetVals[0];
+
+                // also write dest_index, through its own array
+                if (frame.dest_type == TYPE_FLOAT) fmem[frame.dest_index] = (float)capturedRetVals[0];
+                else if (frame.dest_type == TYPE_DOUBLE) dmem[frame.dest_index] = capturedRetVals[0];
+                else mem[frame.dest_index] = (int)capturedRetVals[0];
 
                 // free all function-local slots EXCEPT dest_index
                 // dest_index must survive until the callers ASSIGN copies to it
@@ -1926,6 +2211,7 @@ void execute_program(struct InstructionNode* program)
                     case CONDITION_GREATER: pass = (left > right); break;
                     case CONDITION_LESS: pass = (left < right); break;
                     case CONDITION_NOTEQUAL: pass = (left != right); break;
+                    case CONDITION_EQUAL: pass = (left == right); break;
                 }
                 pc = pass ? pc->next : pc->scmp_inst.target;
                 break;
@@ -2053,17 +2339,17 @@ void execute_program(struct InstructionNode* program)
                     }
                     case TEN_ZEROS:
                     {
-                        res = ten_zeros(mem[a[0]], mem[a[1]]);
+                        res = ten_zeros({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_ONES:
                     {
-                        res = ten_ones(mem[a[0]], mem[a[1]]);
+                        res = ten_ones({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_RANDN:
                     {
-                        res = ten_randn(mem[a[0]], mem[a[1]]);
+                        res = ten_randn({mem[a[0]], mem[a[1]]});
                         break;
                     }
                     case TEN_XAVIER:
@@ -2073,13 +2359,32 @@ void execute_program(struct InstructionNode* program)
                     }
                     case TEN_GET:
                     {
-                        // tensor_get returns a double - store in dmem, but result_slot in a mem[] index
-                        // we store it as int (truncated) for now; full float support added later
-                        res = (int)tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]);
+                        // Returns a double: push to dmem and return the dslot index, same convention
+                        // as TEN_SUM/TEN_MEAN/TEN_MAX below. Previously this truncated the value to int,
+                        // silently dropping the fraction.
+                        if (!tensor_is_live(mem[a[0]]))
+                        {
+                            fprintf(stderr, "Runtime error at line%d: tensor_get on a freed tensor handle (%d) - "
+                                            "this means the compiler's tensor-free pass release it too early; "
+                                            "pleae report this as bug.\n", pc->line_no, mem[a[0]]);
+                            exit(1);
+                        }
+                        double v = tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]);
+                        int dslot = (int)dmem.size();
+                        dmem.push_back(v);
+                        next_double_available++;
+                        res = dslot;
                         break;
                     }
                     case TEN_SET:
                     {
+                        if (!tensor_is_live(mem[a[0]]))
+                        {
+                            fprintf(stderr, "Runtime error at line %d: tensor_set on a freed handle (%d) - "
+                                            "this means the compiler's tensor-free pass released it too early; "
+                                            "please report this as a bug.\n", pc->line_no, mem[a[0]]);
+                            exit(1);
+                        }
                         tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]) = getScalar(3);
                         res = 0;
                         break;
@@ -2250,11 +2555,15 @@ void execute_program(struct InstructionNode* program)
                         }
                         else
                         {
+                            // Always return a 1x1 tensor handle, matching ag_mse_loss, 
+                            // so mse_loss's result type doesn't depend on grad_mode.
+                            // (Previously this branch returned a dmemdslot instead, which the parser
+                            // typed identically to the tensor-handle brnahc - a real type mismatch 
+                            // depending on runtime state.)
                             double loss = ten_mse_loss(mem[a[0]], mem[a[1]]);
-                            int dslot = (int)dmem.size();
-                            dmem.push_back(loss);
-                            next_double_available++;
-                            res = dslot;
+                            int h= alloc_tensor(1, 1);
+                            tensor_heap[h].at(0, 0) = loss;
+                            res = h;
                         }
                         break;
                     }
@@ -2268,11 +2577,11 @@ void execute_program(struct InstructionNode* program)
                         }
                         else
                         {
+                            // same fix as ten_mse_loss, always a 1x1 tensor handle
                             double loss = ten_ce_loss(mem[a[0]], mem[a[1]]);
-                            int dslot = (int)dmem.size();
-                            dmem.push_back(loss);
-                            next_double_available++;
-                            res = dslot;
+                            int h = alloc_tensor(1, 1);
+                            tensor_heap[h].at(0, 0) = loss;
+                            res = h;
                         }
                         break;
                     }
@@ -2333,8 +2642,69 @@ void execute_program(struct InstructionNode* program)
                         res = grad_step(mem[a[0]], getScalar(1));
                         break;
                     }
+                    case TEN_RANK:
+                    case TEN_DIM:
+                    {
+                        int th = mem[a[0]];
+                        if (!tensor_is_live(th))
+                        {
+                            fprintf(stderr, "Runtime error at line %d: %s on a freed or invalid tendor handle (%d)\n",
+                                    pc->line_no, tc.op == TEN_RANK ? "tensor_rank" : "tensor_dim", th);
+                            exit(1);
+                        }
+                        Tensor& T = tensor_heap[th];
+                        if (tc.op == TEN_RANK) { res = T.ndim(); break; }
+                        int d = mem[a[1]];
+                        if (d < 0 || d >= T.ndim())
+                        {
+                            fprintf(stderr, "Runtime error at line %d: tensor_dim: dimension %d out of range for a rank-%d tensor\n",
+                                    pc->line_no, d, T.ndim());
+                            exit(1);
+                        }
+                        res = T.shape[d];
+                        break;
+                    }
+                    case TEN_LIVE_COUNT:
+                    {
+                        // number of tensors not yet freed; lets a test assert "no leak"
+                        int live = 0;
+                        for (auto& t : tensor_heap) if (!t.freed) live++;
+                        res = live;
+                        break;
+                    }
                 }
-                if (tc.result_slot >= 0) mem[tc.result_slot] = res;
+                if (tc.result_slot >= 0)
+                {
+                    // TEN_SUM/TEN_MEAN/TEN_MAX/TEN_GET push their value to a freshdmem slot and leave 
+                    // its index in `res`; the parser allocated result_slot as a double slot 
+                    // (alloc_double_slot) for these ops, so copy the value across. Everything else stores
+                    // a tensor handle, int result directly in mem[] as before.
+                    switch (tc.op)
+                    {
+                        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET:
+                        {
+                            dmem[tc.result_slot] = dmem[res];
+                            break;
+                        }
+                        default:
+                        {
+                            mem[tc.result_slot] = res;
+                            break;
+                        }
+                    }
+                }
+                pc = pc->next;
+                break;
+            }
+
+            case TENSOR_RELEASE:
+            {
+                // Compiler-inserted (see insert_tensor_releases()): this slot's tensor handle is dead 
+                // from here on (per liveness) - release this alias. tensor_release() silently no-ops if mem[slot]
+                // isn't a live handle; that should never happen given how insertion points are chosen 
+                // (see the big comment above insert_tensor_releases()), but the no-op is kept as a defensive fallback rather
+                // than a hard error, since a false positive here would halt an otherwise-correct program.
+                tensor_release(mem[pc->tensor_release_inst.slot]);
                 pc = pc->next;
                 break;
             }
@@ -3763,7 +4133,8 @@ void dump_ir(struct InstructionNode* program)
             {
                 const char* condStr =
                     pc->cjmp_inst.condition_op == CONDITION_GREATER ? ">"  :
-                    pc->cjmp_inst.condition_op == CONDITION_LESS    ? "<"  : "<>";
+                    pc->cjmp_inst.condition_op == CONDITION_LESS ? "<" :
+                    pc->cjmp_inst.condition_op == CONDITION_EQUAL ? "==" : "<>";
                 printf("CJMP        if mem[%d] %s mem[%d]  pass->next  fail->node@%p\n",
                     pc->cjmp_inst.operand1_index, condStr,
                     pc->cjmp_inst.operand2_index, (void*)pc->cjmp_inst.target);
@@ -3800,10 +4171,41 @@ void dump_ir(struct InstructionNode* program)
             {
                 const char* condStr =
                     pc->scmp_inst.condition_op == CONDITION_GREATER ? ">"  :
-                    pc->scmp_inst.condition_op == CONDITION_LESS    ? "<"  : "<>";
+                    pc->scmp_inst.condition_op == CONDITION_LESS ? "<" :
+                    pc->scmp_inst.condition_op == CONDITION_EQUAL ? "==" : "<>";
                 printf("SCMP        if strMem[mem[%d]] %s strMem[mem[%d]]  pass->next  fail->node@%p\n",
                     pc->scmp_inst.operand1_index, condStr,
                     pc->scmp_inst.operand2_index, (void*)pc->scmp_inst.target);
+                break;
+            }
+            case TENSOR_CALL:
+            {
+                printf("TENSOR_CALL op=%d result->mem[%d] args=[", pc->tensor_call_inst.op,
+                    pc->tensor_call_inst.result_slot);
+                for (int i = 0;i < pc->tensor_call_inst.num_args; i++)
+                    printf("%s%d", i ? "," : "", pc->tensor_call_inst.arg_slots[i]);
+                printf("]\n");
+                break;
+            }
+            case TENSOR_RELEASE:
+            {
+                printf("TENSOR_RELEASE mem[%d]\n", pc->tensor_release_inst.slot);
+                break;
+            }
+            case ASSIGN_D:
+            {
+                printf("ASSIGN_D  dmem[%d] <- dmem[%d] op=%d dmem[%d]\n",   
+                    pc->assign_d_inst.left_hand_side_index,
+                    pc->assign_d_inst.operand1_index,
+                    (int)pc->assign_d_inst.op,
+                    pc->assign_d_inst.operand2_index);
+                break;
+            }
+            case CAST:
+            {
+                printf("CAST        %d(type%d) -> %d(type%d)\n",
+                    pc->cast_inst.src_index, (int)pc->cast_inst.src_type,
+                    pc->cast_inst.dst_index, (int)pc->cast_inst.dst_type);
                 break;
             }
             default: printf("UNKNOWN     type=%d\n", pc->type); break;
@@ -3839,6 +4241,30 @@ static std::string reg_or_slot(int idx)
 
 // ── Liveness Analysis ─────────────────────────────────────────────────────────
 
+// mem[], fmem[], and dmem[] are the three independent, seperately-numbered slot spaces. A TENSOR_CALL's 
+// result_slot is NOT always a mem[] index: ops in TENSOR_DOUBLE_OPS (parser2.cc) allocate their result from
+// dmem[] via alloc_double_slot() instead of alloc_slot, e.g. tensor_get()'s result is a scalar double,
+// not a tensor handle. Treating that dmem[] index as a mem[] "def" here is wrong on its own terms 
+// (register allocation only colors mem[] slots) and actively dangerous for the tensor-free pass
+// (get_tensor_release_sites below, which shares this same list): a dmem[] index can numerically 
+// collide with an unrelated, genuinely tensor-tained mem[] slot, and get_tensor_release_sites would then 
+// place a tensor-tainted mem[] slot, and get_tensor_release_sites would then place a TENSOR_RELEASE
+// at the dmem value's last use instead of the real tensor slot's
+static bool tensor_call_result_is_mem_slot(TensorOp op)
+{
+    switch (op) 
+    {
+        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET:
+        {
+            return false;  // dmem[] result
+        }
+        default:
+        {
+            return true;
+        }
+    }
+} 
+
 // Get all slots DEFINED (written) by an instruction
 static void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
 {
@@ -3861,6 +4287,11 @@ static void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
         }
         case CALL:
         {
+            // ret_val_index/all_ret_slots/param_slots are mem[]-space only when the corresponding
+            // return/param is int-typed (or untyped, which the interpreter's own param-binding loop
+            // also defaults to mem[] -- see its pt == TYPE_UNKNOWN fallback). A float or double one lives
+            // in fmem[]/dmem[] instead, a seperately-numbered space, so including it here risks the same
+            // kind of cross-space slot-number collision described in tensor_call_result_is_mem_slot() above.
             defs.insert(n->call_inst.ret_val_index);
             if (n->call_inst.all_ret_slots)
             {
@@ -3872,6 +4303,8 @@ static void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
             // param slots are written by CALL
             for (int i = 0;i < n->call_inst.num_params;i++)
             {
+                VarType pt = n->call_inst.param_types ? n->call_inst.param_types[i] : TYPE_UNKNOWN;
+                if (pt == TYPE_FLOAT || pt == TYPE_DOUBLE) continue;
                 defs.insert(n->call_inst.param_slots[i]);
             }
             break;
@@ -3888,7 +4321,8 @@ static void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
         }
         case TENSOR_CALL:
         {
-            if (n->tensor_call_inst.result_slot >= 0)
+            if (n->tensor_call_inst.result_slot >= 0 &&
+                tensor_call_result_is_mem_slot(n->tensor_call_inst.op))
             {
                 defs.insert(n->tensor_call_inst.result_slot);
             }
@@ -3914,13 +4348,21 @@ static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
         }
         case OUT:
         {
-            uses.insert(n->output_inst.var_index);
+            // a float/double value lives in fmem[]/dmem[], not mem[]
+            if ((n->output_inst.value_type != TYPE_FLOAT) && (n->output_inst.value_type != TYPE_DOUBLE))
+            {
+                uses.insert(n->output_inst.var_index);
+            }
             break;
         }
         case CJMP:
         {
-            uses.insert(n->cjmp_inst.operand1_index);
-            uses.insert(n->cjmp_inst.operand2_index);
+            // a float/double comparison reads fmem[]/dmem[], not mem[]
+            if (n->cjmp_inst.operand_type != TYPE_FLOAT && n->cjmp_inst.operand_type != TYPE_DOUBLE)
+            {
+                uses.insert(n->cjmp_inst.operand1_index);
+                uses.insert(n->cjmp_inst.operand2_index);
+            }
             break;
         }
         case SCMP:
@@ -3950,15 +4392,22 @@ static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
         }
         case CALL:
         {
+            // Same mem[]/fmem[]/dmem[] space caveat as CALL's defs case above.
             for (int i = 0;i < n->call_inst.num_params;i++)
             {
+                VarType at = n->call_inst.arg_types ? n->call_inst.arg_types[i] : TYPE_UNKNOWN;
+                if (at == TYPE_FLOAT || at == TYPE_DOUBLE) continue;
                 uses.insert(n->call_inst.arg_val_slots[i]);
             }
             break;
         }
         case RET:
         {
-            uses.insert(n->ret_inst.ret_val_index);
+            // a float/double return slot lives in fmem[]/dmem[], not mem[]
+            if (n->ret_inst.ret_type != TYPE_FLOAT && n->ret_inst.ret_type != TYPE_DOUBLE)
+            {
+                uses.insert(n->ret_inst.ret_val_index);
+            }
             break;
         }
         case ALLOC:
@@ -3974,10 +4423,22 @@ static void get_uses(struct InstructionNode* n, std::unordered_set<int>& uses)
         }
         case TENSOR_CALL:
         {
+            // See tensor_call_result_is_mem_slot()'s comment above get_defs;
+            //arg_slots mixes mem[]/fmem[]/dmem indices per arg_types[i]
+            // (e.g. TEN_SET's value argument), so a non-mem[]-space arg must be skipped here too,
+            // or it can be numerically mistaken for an unrelated mem[] slot by every consumer of
+            // this liveness result.
             for (int i = 0;i < n->tensor_call_inst.num_args;i++)
             {
+                VarType at = n->tensor_call_inst.arg_types[i];
+                if (at == TYPE_FLOAT || at == TYPE_DOUBLE) continue;
                 uses.insert(n->tensor_call_inst.arg_slots[i]);
             }
+            break;
+        }
+        case TENSOR_RELEASE:
+        {
+            uses.insert(n->tensor_release_inst.slot);
             break;
         }
         default: break;
@@ -4081,6 +4542,393 @@ LivenessResult compute_liveness(struct InstructionNode* program)
 }
 
 void dump_liveness(struct InstructionNode*, const LivenessResult&) {}
+
+// ── Compiler-inserted tensor frees ──────────────────────────────────────────
+//
+// Nova types tensor handles as plain TYPE_INT (see the tensorToInt coercions
+// in parser2.cc), so g_tensorSlots — populated during parsing — is the only
+// record of which mem[] slots actually hold a tensor handle. Two things
+// follow from that:
+//
+//  1. We can never treat an arbitrary int slot as a tensor slot; every check
+//     below is gated on g_tensorSlots membership.
+//  2. A slot's tensor-ness can be discovered after the code that would
+//     need to propagate it has already been parsed — e.g. a function is
+//     defined, then later called with a tensor argument. propagate_tensor_slots()
+//     below runs a small fixed-point pass over the whole program, post-parse,
+//     to catch that.
+//
+// Tensor handles alias freely (int b = a; makes two slots reference the same
+// tensor_heap entry), so frees can't be placed by liveness alone — that's
+// unsound the moment two slots hold the same handle. Instead tensor_heap
+// entries are refcounted (compiler.h / alloc_tensor / tensor_retain /
+// tensor_release), and liveness is used only to pick where to insert a
+// release for each individual slot's own alias, via insert_tensor_releases()
+// below. See get_tensor_release_sites() for the two deliberate exceptions
+// (a CALL's parameter slots, a RET's own return slot) that keep a function
+// call's two sides from releasing a handle out from under each other.
+//
+// Scope: this does not track tensor handles stored inside arrays, structs, or
+// read/printed via OUT — none of the current test suite does that, and
+// extending to cover it is a separate piece of work, not silently unsound by
+// omission (an untracked slot is just never auto-freed, same as today).
+
+static void propogate_tensor_slots(const std::vector<struct InstructionNode*>& allBodies,
+                                   std::set<struct InstructionNode*>& taintedParamFunctions)
+{
+    bool changed = true;
+    while (changed)
+    {
+        changed = false;
+        for (auto bodyHead : allBodies)
+        {
+            for (struct InstructionNode* n = bodyHead; n != nullptr; n = n->next)
+            {
+                if (n->type == ASSIGN && n->assign_inst.op ==  OPERATOR_NONE)
+                {
+                    if (g_tensorSlots.count(n->assign_inst.operand1_index) && 
+                        !g_tensorSlots.count(n->assign_inst.left_hand_side_index))
+                    {
+                        g_tensorSlots.insert(n->assign_inst.left_hand_side_index);
+                        changed = true;
+                    }
+                }
+                else if (n->type == CALL)
+                {
+                    // Same mem[]/fmem[]/dmem[] space caveat as get_tensor_release_sites' CALL case:
+                    // only an int-typed (or untyped, defaulting to mem[]) param can possibly be a tensor 
+                    // slot, so float/double params are skipped rather than cross-checked against g_tensorSlots.
+                    for (int i = 0; i < n->call_inst.num_params; i++)
+                    {
+                        VarType pt = n->call_inst.param_types ? n->call_inst.param_types[i] : TYPE_UNKNOWN;
+                        if (pt == TYPE_FLOAT || pt == TYPE_DOUBLE) continue;
+                        int argSlot = n->call_inst.arg_val_slots[i];
+                        int paramSlot = n->call_inst.param_slots[i];
+                        if (g_tensorSlots.count(argSlot) && !g_tensorSlots.count(paramSlot))
+                        {
+                            g_tensorSlots.insert(paramSlot);
+                            taintedParamFunctions.insert(n->call_inst.function_head);
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Variant of get_defs/get_uses (above) scoped to tensor-release placement —
+// not a general-purpose liveness helper, and deliberately different from
+// get_defs/get_uses in two ways:
+//  - A CALL's parameter slots are not treated as defs here. They belong to
+//    the callee's own liveness domain (computed separately, per function),
+//    not the caller's; releasing them using the caller's notion of "dead"
+//    would release the callee's copy using a stale value, since the callee
+//    has already run (and its own RET/body already handled that slot) by
+//    the time control returns to the instruction after CALL.
+//  - A RET's own return slot is not treated as a use here. Returning a
+//    tensor transfers ownership to the caller rather than ending its life;
+//    the caller's own CALL-node def of its destination slot is where that
+//    handle's remaining life is tracked, via the same uniform rule
+static void get_tensor_release_sites(struct InstructionNode* n,
+                                        std::unordered_set<int>& defs,
+                                        std::unordered_set<int>& uses)
+{
+    switch (n->type)
+    {
+        case ASSIGN:
+        {
+            defs.insert(n->assign_inst.left_hand_side_index);
+            uses.insert(n->assign_inst.operand1_index);
+            if (n->assign_inst.op != OPERATOR_NONE)
+            {
+                uses.insert(n->assign_inst.operand2_index);
+            }
+            break;
+        }
+        case TENSOR_CALL:
+        {
+            // result_slot is a mem[] handle/scalar slot only for ops outside
+            // TENSOR_DOUBLE_OPS -- see tensor_call_result_is_mem_slot() above
+            // (e.g. tensor_get()'s result is a dmem[] scalar, not a handle).
+            // arg_slots is likewise NOT uniformly mem[]-space: TEN_SET's
+            // value argument (getScalar(3) in execute_program) can be a
+            // fmem[]/dmem[] index instead, per arg_types[i]. mem[], fmem[]
+            // and dmem[] are independent, separately-numbered spaces, so
+            // either one must be skipped unless confirmed mem[]-space, or it
+            // can collide by raw number with an unrelated, actually-tensor-
+            // tainted mem[] slot.
+            if (n->tensor_call_inst.result_slot >= 0 && 
+                tensor_call_result_is_mem_slot(n->tensor_call_inst.op))
+            {
+                defs.insert(n->tensor_call_inst.result_slot);
+            }
+            for (int i = 0;i < n->tensor_call_inst.num_args; i++)
+            {
+                VarType at = n->tensor_call_inst.arg_types[i];
+                if (at == TYPE_FLOAT || at == TYPE_DOUBLE) continue;
+                uses.insert(n->tensor_call_inst.arg_slots[i]);
+            }
+            break;
+        }
+        case CALL:
+        {
+            // mem[], fmem[] and dmem[] are three independent slot spaces,
+            // each numbered from its own counter -- so "slot 3" in fmem[] or
+            // dmem[] has nothing to do with "slot 3" in mem[], and g_tensorSlots
+            // (which only ever stores mem[]-space indices) must not be
+            // consulted using a slot number taken from the wrong space.
+            // CALL's param_slots/arg_val_slots carry a parallel param_types/
+            // arg_types array precisely because a call can bind any mix of
+            // the three; TYPE_UNKNOWN (no type info) defaults to mem[], same
+            // as the interpreter's own fallback in its param-binding loop.
+            defs.insert(n->call_inst.ret_val_index);
+            if (n->call_inst.all_ret_slots)
+            {
+                for (int i = 0;i < n->call_inst.num_ret_slots; i++)
+                {
+                    defs.insert(n->call_inst.all_ret_slots[i]);
+                }
+            }
+            for (int i = 0;i < n->call_inst.num_params; i++)
+            {
+                VarType pt = n->call_inst.param_types ? n->call_inst.param_types[i] : TYPE_UNKNOWN;
+                if (pt == TYPE_FLOAT || pt == TYPE_DOUBLE) continue;
+                uses.insert(n->call_inst.arg_val_slots[i]);
+            }
+            break;
+        }
+        case CJMP:
+        {
+            if (n->cjmp_inst.operand_type != TYPE_FLOAT && n->cjmp_inst.operand_type != TYPE_DOUBLE)
+            {
+                uses.insert(n->cjmp_inst.operand1_index);
+                uses.insert(n->cjmp_inst.operand2_index);
+            }
+            break;
+        }
+        // RET deliberately has no case: its return slot(s) must not be released here 
+        default: break;
+    }
+}
+
+// Object slots hold object state and are never released by liveness; see g_fieldSlots / g_selfSlots
+// in parser2.cc and own_kind in compiler.h
+static bool is_object_slot(int s)
+{
+    return g_fieldSlots.count(s)  || g_selfSlots.count(s);
+}
+
+static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
+{
+    if (bodyHead == nullptr || g_tensorSlots.empty()) return ;
+    LivenessResult lr = compute_liveness(bodyHead);
+
+    // Snapshot nodes before splicing new ones in.
+    std::vector<struct InstructionNode*> nodes;
+    for (struct InstructionNode* n = bodyHead; n != nullptr; n = n->next)
+    {
+        nodes.push_back(n);
+    }
+    // Branch edges: the per-node rule only releases right after a last def/use. If the last
+    // use is inside one arm of an if, the path that skips the arm never releases it (one leak per
+    // run of that path).
+    // Only release on an edge a slot that is definitely written on every path to the branch: a
+    // never-written slot still holds mem[]'s initial 0, and handle 0 is a real tensor. Forward "must"
+    // analysis: assigned-in(n) = intersection over preds; assigned-out = in + defs(n).
+    std::unordered_map<struct InstructionNode*, std::vector<struct InstructionNode*>> preds;
+    for (auto n : nodes)
+    {
+        std::vector<struct InstructionNode*> succs;
+        get_successors(n, succs);
+        for (auto sx : succs) preds[sx].push_back(n);
+    }
+    std::unordered_map<struct InstructionNode*, std::unordered_set<int>> assignedOut;
+    std::unordered_set<struct InstructionNode*> computed;
+    bool daChanged = true;
+    while (daChanged)
+    {
+        daChanged = false;
+        for (auto n : nodes)
+        {
+            std::unordered_set<int> in;
+            if (n != bodyHead)
+            {
+                bool first = true;
+                for (auto p : preds[n])
+                {
+                    if (!computed.count(p)) continue;  // not visited yet = "everything"
+                    if (first) { in = assignedOut[p]; first = false; }
+                    else 
+                    {
+                        std::unordered_set<int> keep;
+                        for (int x : in) if (assignedOut[p].count(x)) keep.insert(x);
+                        in.swap(keep);
+                    }
+                }
+            }
+            std::unordered_set<int> d, u;
+            get_tensor_release_sites(n, d, u);
+            for (int x : d) in.insert(x);
+            if (!computed.count(n) || in != assignedOut[n])
+            {
+                assignedOut[n] = in;
+                computed.insert(n);
+                daChanged = true;
+            }
+        }
+    }
+
+    // Plan edge releases from the original successors (applied at the end).
+    struct EdgePlan { struct InstructionNode* cjmp; struct InstructionNode* fallnext;
+                      struct InstructionNode* jumpTarget;
+                      std::vector<int> fallRel, jumpRel; };
+    std::vector<EdgePlan> edgePlans;
+    for (auto n : nodes)
+    {
+        if (n->type != CJMP || n->next == nullptr || n->cjmp_inst.target == nullptr) continue;
+        EdgePlan ep{n, n->next, n->cjmp_inst.target, {}, {}};
+        const auto& out = lr.live_out[n];
+        const auto& inFall = lr.live_in[n->next];
+        const auto& inJump = lr.live_in[n->cjmp_inst.target];
+        const auto& assigned = assignedOut[n];
+        for (int s : out)
+        {
+            if (!g_tensorSlots.count(s) || is_object_slot(s) || !assigned.count(s)) continue;
+            if (!inFall.count(s)) ep.fallRel.push_back(s);  // dies on fall-through
+            if (!inJump.count(s)) ep.jumpRel.push_back(s);  // dies on the jump
+        }
+        if (!ep.fallRel.empty() || !ep.jumpRel.empty()) edgePlans.push_back(ep);
+    }
+
+    // Per-node rule (unchanged): release right after a slot's last def/use.
+    for (auto n : nodes)
+    {
+        std::unordered_set<int> defs, uses;
+        get_tensor_release_sites(n, defs, uses);
+        const auto& liveOut = lr.live_out[n];
+
+        std::vector<int> toRelease;
+        for (int s : defs)
+        {
+            if (g_tensorSlots.count(s) && !is_object_slot(s) && !liveOut.count(s))
+            {
+                toRelease.push_back(s);
+            }
+        }
+        for (int s : uses)
+        {
+            if (g_tensorSlots.count(s) && !is_object_slot(s) && !liveOut.count(s) && 
+                std::find(toRelease.begin(), toRelease.end(), s) == toRelease.end())
+            {
+                toRelease.push_back(s);
+            }
+        }
+        for (int s : toRelease)
+        {
+            struct InstructionNode* rel = new InstructionNode();
+            rel->line_no = n->line_no;
+            rel->type = TENSOR_RELEASE;
+            rel->tensor_release_inst.slot = s;
+            rel->next = n->next;
+            n->next = rel;
+            n = rel;  // chain further releases at this same point after it
+        }
+    }
+
+    // Apply edge releases.
+    //   before: CJMP(target=T) -> N
+    //   after: CJMP(target=TR) -> [fall releases] -> JMP N -> TR:[jump releases] -> JMP T -> N
+    auto mkRelease = [](int slot, int line) {
+        struct InstructionNode* r = new InstructionNode();
+        r->line_no = line; r->type = TENSOR_RELEASE; r->tensor_release_inst.slot = slot;
+        return r;
+    };
+    auto mkJmp = [](struct InstructionNode* target, int line) {
+        struct InstructionNode* j = new InstructionNode();
+        j->line_no = line; j->type = JMP; j->jmp_inst.target = target;
+        return j;
+    };
+    for (auto& ep : edgePlans)
+    {
+        struct InstructionNode* c = ep.cjmp;
+        int line = c->line_no;
+        struct InstructionNode* tail = c;  // end of the fall-through chain
+        struct InstructionNode* after = c->next;  // keep whatever follows the CJMP
+        for (int s : ep.fallRel) { auto r = mkRelease(s, line); tail->next = r; tail = r; }
+        if (!ep.jumpRel.empty())
+        {
+            auto skip = mkJmp(ep.fallnext, line);  // fall-through hops over the detour
+            tail->next = skip; tail = skip;
+            struct InstructionNode* first = nullptr;
+            for (int s : ep.jumpRel)
+            {
+                auto r = mkRelease(s, line);
+                if (!first) first = r;
+                tail->next = r; tail = r;
+            }
+            auto back = mkJmp(ep.jumpTarget, line);
+            tail->next = back; tail = back;
+            c->cjmp_inst.target = first;  // the jump now goes through the detour
+        }
+        tail->next = after;
+    }
+}
+
+// Entry point: run after parsing (and after any --optimize passes) completes,
+// so this sees the final IR that will actually execute. Also strips any
+// function whose parameter was found to be tensor-tainted out of
+// pure_functions, so it can never be selected for memoization — the memo
+// cache keys on raw argument values, and a tensor handle is reused (by
+// value) once freed, so memoizing a call keyed on a handle that may later be
+// released and reassigned would be a stale-cache-hit bug waiting to happen.
+void insert_tensor_releases(struct InstructionNode* program)
+{
+    std::vector<struct InstructionNode*> allBodies;
+    std::set<struct InstructionNode*> seen;
+    for (auto& kv : functionTable)
+    {
+        if (kv.second != nullptr && seen.insert(kv.second).second) allBodies.push_back(kv.second);
+    }
+    // class-method bodies too (they used to get no tensor frees at all)
+    for (auto& ckv : classMethodTable)
+    {
+        for (auto& mkv : ckv.second)
+        {
+            if (mkv.second != nullptr && seen.insert(mkv.second).second) allBodies.push_back(mkv.second);
+        }
+    }
+    allBodies.push_back(program);
+
+    std::set<struct InstructionNode*> taintedParamFunctions;
+    propogate_tensor_slots(allBodies, taintedParamFunctions);
+
+    // Mark ASSIGNs that write object state (see own_kind in compiler.h):
+    // self <- field and field <- self are the method copy-in / copy-back
+    // (move); any other write into a field or self slot is a store.
+    for (auto bodyHead : allBodies)
+    {
+        for (struct InstructionNode* n = bodyHead; n != nullptr; n = n->next)
+        {
+            if (n->type != ASSIGN || n->assign_inst.op != OPERATOR_NONE) continue;
+            int lhs = n->assign_inst.left_hand_side_index;
+            int src = n->assign_inst.operand1_index;
+            bool move = (g_selfSlots.count(lhs) && g_fieldSlots.count(src)) || 
+                        (g_fieldSlots.count(lhs) && g_selfSlots.count(src));
+            if (move) n->assign_inst.own_kind = 2;
+            else if (is_object_slot(lhs)) n->assign_inst.own_kind = 1;
+        }
+    }
+
+    for (auto fhead : taintedParamFunctions)
+    {
+        pure_functions.erase(fhead);
+    }
+    for (auto bodyHead : allBodies)
+    {
+        insert_tensor_releases_in_body(bodyHead);
+    }
+}
 
 // ── Interference Graph ────────────────────────────────────────────────────────
 
@@ -4716,6 +5564,9 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                     case CONDITION_NOTEQUAL:
                         fprintf(out, "    je   .L%d\n", targetLabel);
                         break;
+                    case CONDITION_EQUAL:
+                        fprintf(out, "    jne  .L%d\n", targetLabel);
+                        break;
                 }
                 break;
             }
@@ -5107,6 +5958,13 @@ static void* jit_compile_function(struct InstructionNode* head)
                 {
                     size_t patch = emit_jge_placeholder(buf);
                     patchList.push_back({patch, pc->cjmp_inst.target});
+                }
+                else 
+                {
+                    // Only "<" has a jump emitter here. Other comparisons used to emit no jump 
+                    // at all (the branch was silently always taken); give up and let the interpreter
+                    // run this function.
+                    return nullptr;
                 }
                 break;
             }
@@ -5906,6 +6764,12 @@ int main(int argc, char* argv[])
     // Identify pure + recursive functions for automatic memoization
     detect_memoizable_functions();
 
+    // Compiler-inserted tensor frees (liveness-based, refcounted).
+    // Runs after detect_memoizable_functions() so it can strip any tensor-tainted-parameter
+    // function back out of pure_functions, and after the --optimize block so it sees the IR that will
+    // actually run.
+    insert_tensor_releases(program);
+
     // CUDA codegen — output .cu file and exit (does not execute the program)
     if (flag_emit_cuda)
     {
@@ -5988,7 +6852,14 @@ int main(int argc, char* argv[])
 
     // IR dump 
     if (flag_dump_ir)
+    {
         dump_ir(program);
+        for (auto& kv : functionTable)
+        {
+            printf("\n-- function IR: %s --\n", kv.first.c_str());
+            dump_ir(kv.second);
+        }
+    }
 
     // benchmark mode 
     if (flag_benchmark)
@@ -6056,15 +6927,16 @@ int main(int argc, char* argv[])
     }
 #endif
 
-    // Temp Test: corrupt one compiled function to force deopt
-    for (auto& kv : jit_compiled)
-    {
-        kv.second = (void*)0xDEADBEEF;  // bad pointer -> SEH will catch it 
-        break;
-    }
-
     execute_program(program);
     fflush(stdout);
+
+    if (getenv("NOVA_TENSOR_STATS"))
+    {
+        int live = 0, freed = 0;
+        for (auto& t : tensor_heap) (t.freed ? freed : live)++;
+        fprintf(stderr, "[tensor-stats] heap_size=%zu live=%d freed=%d\n", 
+                tensor_heap.size(), live, freed);
+    }
 
     return 0;
 }
