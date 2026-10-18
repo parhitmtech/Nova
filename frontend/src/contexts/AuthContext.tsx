@@ -1,15 +1,7 @@
 /* eslint-disable react-refresh/only-export-components -- this module exposes the provider and its context hook */
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
+import { readSession, type Session, type User } from '../lib/session'
 
-interface User {
-  email: string
-  userId: string
-}
-interface Session {
-  token: string
-  user: User
-  expiresAt: number
-}
 interface AuthContextType {
   token: string | null
   user: User | null
@@ -17,28 +9,6 @@ interface AuthContextType {
   logout: () => void
 }
 const AuthContext = createContext<AuthContextType | null>(null)
-
-function readSession(token: string | null): Session | null {
-  if (!token) return null
-  try {
-    const part = token.split('.')[1]
-    if (!part) return null // not a JWT
-    const payload = part.replace(/-/g, '+').replace(/_/g, '/')
-    const decoded = JSON.parse(
-      new TextDecoder().decode(Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))),
-    )
-    if (
-      typeof decoded.exp !== 'number' ||
-      decoded.exp * 1000 <= Date.now() ||
-      typeof decoded.userId !== 'string' ||
-      typeof decoded.email !== 'string'
-    )
-      return null
-    return { token, user: { email: decoded.email, userId: decoded.userId }, expiresAt: decoded.exp * 1000 }
-  } catch {
-    return null
-  }
-}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(() =>
