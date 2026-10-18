@@ -22,6 +22,12 @@ function toolLabel(name: string, status: 'running' | 'done'): string {
   return map[name]?.[status === 'running' ? 0 : 1] ?? name
 }
 
+// Replace the last message (the one being streamed); no-op on an empty list.
+function updateLast(messages: ChatMessage[], update: (last: ChatMessage) => ChatMessage): ChatMessage[] {
+  const last = messages[messages.length - 1]
+  return last ? [...messages.slice(0, -1), update(last)] : messages
+}
+
 const WELCOME: ChatMessage = {
   role: 'assistant',
   content:
@@ -91,14 +97,7 @@ export default function NovaBot({
       currentFile,
       recentOutput,
       (text) => {
-        setMessages((prev) => {
-          const next = [...prev]
-          next[next.length - 1] = {
-            ...next[next.length - 1],
-            content: next[next.length - 1].content + text,
-          }
-          return next
-        })
+        setMessages((prev) => updateLast(prev, (last) => ({ ...last, content: last.content + text })))
       },
       () => {
         setIsLoading(false)
@@ -106,11 +105,7 @@ export default function NovaBot({
         abortRef.current = null
       },
       (err) => {
-        setMessages((prev) => {
-          const next = [...prev]
-          next[next.length - 1] = { ...next[next.length - 1], content: `Error: ${err}` }
-          return next
-        })
+        setMessages((prev) => updateLast(prev, (last) => ({ ...last, content: `Error: ${err}` })))
         setIsLoading(false)
         setToolEvents([])
         abortRef.current = null

@@ -27,7 +27,8 @@ const FORK_KEY = 'novacomp_fork'
 
 const initialDocument = (): DocumentState => {
   const fork = sessionStorage.getItem(FORK_KEY)
-  return { name: '', code: fork ?? EXAMPLES[0].code, saved: fork ? '' : EXAMPLES[0].code, binary: false }
+  const starter = EXAMPLES[0]?.code ?? ''
+  return { name: '', code: fork ?? starter, saved: fork ? '' : starter, binary: false }
 }
 
 // The open document and the user's files: loading, saving (serialized through one queue),

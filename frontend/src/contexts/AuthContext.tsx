@@ -21,7 +21,9 @@ const AuthContext = createContext<AuthContextType | null>(null)
 function readSession(token: string | null): Session | null {
   if (!token) return null
   try {
-    const payload = token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')
+    const part = token.split('.')[1]
+    if (!part) return null // not a JWT
+    const payload = part.replace(/-/g, '+').replace(/_/g, '/')
     const decoded = JSON.parse(
       new TextDecoder().decode(Uint8Array.from(atob(payload), (char) => char.charCodeAt(0))),
     )
