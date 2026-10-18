@@ -80,16 +80,24 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
         pc = pc->next;
     }
 
+    // Functions in label order (= first call in program order). funcLabelMap is keyed by node
+    // address, so iterating it would make the output order depend on where malloc put each function.
+    vector<pair<int, struct InstructionNode*>> funcOrder;
+    for (auto& kv : funcLabelMap) funcOrder.push_back({kv.second, kv.first});
+    sort(funcOrder.begin(), funcOrder.end(),
+         [](const pair<int, struct InstructionNode*>& a, const pair<int, struct InstructionNode*>& b) {
+             return a.first < b.first;
+         });
+
     // ── Stack frame size (for main / spilled slots) ───────────────────────────
     int frameSize = (next_available + 1) * 8;
     if (frameSize % 16 != 0) frameSize += 16 - (frameSize % 16);
 
     // ── Compute per-function colorings ────────────────────────────────────────
     map<struct InstructionNode*, ColoringResult> funcColorings;
-    for (auto& kv : funcLabelMap)
+    for (auto& f : funcOrder)
     {
-        struct InstructionNode* fhead = kv.first;
-        int fLabel = kv.second;  // ← get label here
+        struct InstructionNode* fhead = f.second;
         LivenessResult flr = compute_liveness(fhead);
         InterferenceGraph fig = build_interference_graph(fhead, flr);
         unordered_set<int> lacSlots = find_live_across_calls(fhead, flr);
@@ -103,9 +111,9 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
     }
 
     // Insert spill code for functions that have spilled slots
-    for (auto& kv : funcLabelMap)
+    for (auto& f : funcOrder)
     {
-        struct InstructionNode* fhead = kv.first;
+        struct InstructionNode* fhead = f.second;
         if (funcColorings.count(fhead) && !funcColorings[fhead].spilled.empty())
         {
             // Re-run liveness after spill insertion
@@ -115,8 +123,9 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
             unordered_set<int> lac2 = find_live_across_calls(fhead, flr2);
             unordered_set<int> const2 = find_constant_slots(fhead);
             funcColorings[fhead] = color_graph(fig2, lac2, const2);
-            // Update funcLabelMap to point to new head
-            funcLabelMap[fhead] = kv.second;
+            // Emit the spill-augmented body under the same label (calls still name the old head)
+            funcLabelMap[fhead] = f.first;
+            f.second = fhead;
         }
     }
 
@@ -412,10 +421,10 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
         "rbx", "r12", "r13", "r14", "r15"
     };
 
-    for (auto& kv : funcLabelMap)
+    for (auto& f : funcOrder)
     {
-        struct InstructionNode* head = kv.first;
-        int funcLabel = kv.second;
+        struct InstructionNode* head = f.second;
+        int funcLabel = f.first;
 
         // Switch to this function's coloring
         g_coloring = funcColorings.count(head) ? &funcColorings[head] : coloring;
