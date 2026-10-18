@@ -535,8 +535,9 @@ NovaComp/
 │
 ├── examples/                   # Nova example programs + generate_mnist_data.py
 ├── tools/sol-tunnel/           # Start/Stop-SolTunnel.ps1, sol_tunnel.py
-├── docs/                       # SETUP.md, REVIEW.md
+├── docs/                       # SETUP.md, DEPLOY.md, REVIEW.md
 ├── Dockerfile                  # worker + server images
+├── deploy/                     # compose.prod.yml + deploy.sh for the EC2 host (docs/DEPLOY.md)
 │
 └── frontend/                   # React + Vite app
     ├── src/
