@@ -1,0 +1,164 @@
+/* IDE shell: header, brand, command trigger, toolbar, buttons, body grid. */
+.ide-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #0c101b;
+  overflow: hidden;
+  font-size: 13px;
+}
+.workspace-header {
+  height: 74px;
+  min-height: 74px;
+  padding: 0 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  background: #111725;
+  border-bottom: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  gap: 11px;
+  align-items: center;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.6px;
+}
+.brand-symbol {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 37px;
+  height: 37px;
+  border: 1px solid #6663c36b;
+  border-radius: 11px;
+  color: #c4c1ff;
+  background: linear-gradient(145deg, #373567, #191d34);
+  box-shadow: 0 0 25px #665bef12;
+}
+.brand-light {
+  font-weight: 400;
+  color: #a8b4cc;
+}
+.brand small {
+  display: block;
+  font-size: 8px;
+  letter-spacing: 1.8px;
+  color: #8996b1;
+  margin-top: 4px;
+}
+.command-trigger {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 340px;
+  padding: 10px 12px;
+  background: #0c1220;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.command-trigger kbd {
+  margin-left: auto;
+}
+.header-actions,
+.toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.avatar {
+  display: flex;
+  width: 29px;
+  height: 29px;
+  border-radius: 50%;
+  align-items: center;
+  justify-content: center;
+  background: #353756;
+  border: 1px solid #535785;
+  color: #d0d0ff;
+  font-size: 11px;
+}
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: #9ba8c1;
+  flex-shrink: 0;
+}
+.icon-button:hover,
+.icon-button.active {
+  color: #c5c2ff;
+  background: #282c47;
+}
+.workspace-toolbar {
+  min-height: 53px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 15px;
+  gap: 10px;
+  background: #101622;
+  border-bottom: 1px solid var(--border);
+}
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #8490a8;
+  font-size: 11px;
+  min-width: 0;
+}
+.breadcrumb strong {
+  font-weight: 500;
+  color: #c7d2e7;
+  max-width: 190px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 32px;
+  padding: 7px 11px;
+  border: 1px solid #313d55;
+  background: #1a2233;
+  color: #d1d9eb;
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.button.primary {
+  background: #7770df;
+  border-color: #9690f6;
+  color: #fff;
+  box-shadow: 0 2px 9px #726be52a;
+}
+.button.primary kbd {
+  border-color: #ffffff3b;
+  color: #f1efff;
+  background: #ffffff10;
+}
+.button.danger {
+  background: #43212d;
+  color: #ffc1cc;
+  border-color: #8d4659;
+}
+.workspace-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}

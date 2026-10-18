@@ -1,0 +1,143 @@
+/* Editor area: tabs, save indicator, editor surface, execution options, stdin. */
+.editor-workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+  min-height: 0;
+}
+.editor-tabs {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 41px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: #101622;
+  padding-right: 15px;
+  gap: 10px;
+}
+.editor-tab {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 18px;
+  border-top: 2px solid #9791e9;
+  background: #0d1117;
+  border-right: 1px solid var(--border);
+  color: #c9cde9;
+  font-size: 11px;
+  max-width: 50%;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.editor-tab svg {
+  color: #a29de9;
+  flex-shrink: 0;
+}
+.save-indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: #98a8c2;
+  white-space: nowrap;
+}
+.save-indicator.saved {
+  color: #91b9ae;
+}
+.save-indicator.failed {
+  color: #f5a6b1;
+}
+.editor-surface {
+  flex: 1;
+  min-height: 120px;
+  position: relative;
+  background: #0d1117;
+}
+.editor-loading,
+.binary-state {
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: #9aa7bf;
+}
+.binary-state {
+  flex-direction: column;
+  text-align: center;
+  padding: 30px;
+}
+.binary-state h2 {
+  font-size: 20px;
+  color: #d1daee;
+}
+.binary-state p {
+  max-width: 420px;
+  font-size: 13px;
+}
+.switching-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  background: #0c101bcc;
+  z-index: 5;
+}
+.execution-options {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 15px;
+  background: #101622;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.execution-options > div {
+  display: flex;
+  gap: 12px;
+}
+.text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: none;
+  border: 0;
+  padding: 4px 0;
+  font-size: 10px;
+  color: #95a4bf;
+}
+.text-button.active {
+  color: #bbb7ff;
+}
+.text-button.gpu {
+  color: #bbb0ec;
+}
+.stdin-panel {
+  padding: 10px 16px;
+  background: #111725;
+  border-bottom: 1px solid var(--border);
+}
+.stdin-panel label {
+  display: block;
+  font-size: 10px;
+  color: #9dacbf;
+  margin-bottom: 6px;
+}
+.stdin-panel textarea {
+  display: block;
+  background: #0b111e;
+  border: 1px solid #34405a;
+  border-radius: 5px;
+  color: #dae1f2;
+  width: 100%;
+  padding: 8px;
+  font-family: monospace;
+  font-size: 12px;
+  resize: vertical;
+  max-height: 100px;
+}
