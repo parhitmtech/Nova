@@ -15,7 +15,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     vector<int>     argIndices;
     vector<VarType> argTypes;
 
-    while (token.token_type != RPAREN) {
+    while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
         int argIdx = parse_expression(head, tracker);
         argIndices.push_back(argIdx);
         argTypes.push_back(lastExprType);

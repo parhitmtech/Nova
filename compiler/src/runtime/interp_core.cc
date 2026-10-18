@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstdarg>
 #include <cctype>
 #include <cstring>
@@ -103,7 +104,7 @@ InstructionNode* exec_out(InstructionNode* pc)
 
 InstructionNode* exec_assign(InstructionNode* pc)
 {
-    int op1, op2, result;  // scratch, as in the original dispatch loop
+    int op1 = 0, op2 = 0, result = 0;  // scratch, as in the original dispatch loop
     do {
             switch (pc->assign_inst.op)
             {
@@ -125,7 +126,13 @@ InstructionNode* exec_assign(InstructionNode* pc)
                 case OPERATOR_DIV:
                     op1 = mem[pc->assign_inst.operand1_index];
                     op2 = mem[pc->assign_inst.operand2_index];
-                    result = op1 / op2;
+                    // Both would otherwise kill the process with SIGFPE and no message.
+                    if (op2 == 0)
+                    {
+                        fprintf(stderr, "Runtime error at line %d: integer division by zero\n", pc->line_no);
+                        exit(1);
+                    }
+                    result = (op1 == INT_MIN && op2 == -1) ? INT_MIN : op1 / op2;  // wraps, like the hardware would
                     break;
                 case OPERATOR_NONE:
                     op1 = mem[pc->assign_inst.operand1_index];
@@ -363,7 +370,7 @@ InstructionNode* exec_scmp(InstructionNode* pc)
 InstructionNode* exec_assign_f(InstructionNode* pc)
 {
     do {
-            float op1f, op2f, resultf;
+            float resultf = 0.0f;
             switch (pc->assign_f_inst.op)
             {
                 case OPERATOR_PLUS: 
@@ -407,7 +414,7 @@ InstructionNode* exec_assign_d(InstructionNode* pc)
             //     pc->assign_d_inst.operand1_index,
             //     (int)pc->assign_d_inst.op,
             //     (int)dmem.size());
-            double op1d, op2d, resultd;
+            double resultd = 0.0;
             switch (pc->assign_d_inst.op)
             {
                 case OPERATOR_PLUS:

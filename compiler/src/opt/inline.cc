@@ -161,7 +161,6 @@ int inline_functions(struct InstructionNode*& program)
         // Step 3: build slot remapping
         int base = pc->call_inst.func_slot_base;
         int count = pc->call_inst.func_slot_count;
-        int retValIdx = pc->call_inst.ret_val_index;
 
         map<int, int>slotMap;
         for (int i = 0;i < count;i++)

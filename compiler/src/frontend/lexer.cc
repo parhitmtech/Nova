@@ -262,7 +262,7 @@ Token LexicalAnalyzer::ScanIdOrKeyword()
 Token LexicalAnalyzer::GetToken()
 {
     Token token;
-    if (index == tokenList.size()) {
+    if (index == (int)tokenList.size()) {
         token.lexeme = "";
         token.line_no = line_no;
         token.token_type = END_OF_FILE;
@@ -387,10 +387,16 @@ Token LexicalAnalyzer::GetTokenMain()
             tmp.lexeme = "";
             char ch;
             input.GetChar(ch);
-            while (!input.EndOfInput() && ch != '"')
+            while (!input.EndOfInput() && ch != '"' && ch != '\n')
             {
                 tmp.lexeme += ch;
                 input.GetChar(ch);
+            }
+            if (ch != '"')
+            {
+                // Without this the rest of the line (or file) silently became part of the string.
+                fprintf(stderr, "Error at line %d: unterminated string literal\n", line_no);
+                exit(1);
             }
             tmp.token_type = STRING;
             return tmp;

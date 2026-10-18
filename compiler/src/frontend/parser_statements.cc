@@ -167,7 +167,6 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
 
         token = lexer.GetToken();  // variable name
         string vname = token.lexeme;
-        int vline = token.line_no;
 
         int vs = (vt == TYPE_FLOAT) ? alloc_float_slot() : 
                  (vt == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
@@ -227,7 +226,7 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     token = lexer.GetToken();  // first arg or ')'
     vector<int> argIndices;
     vector<VarType> argTypes;
-    while (token.token_type != RPAREN)
+    while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
     {
         int ai = parse_expression(head, tracker);
         argIndices.push_back(ai);
@@ -973,11 +972,6 @@ void parse_assignment_for_statement(struct InstructionNode*& head, struct Instru
 
 void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tracker, struct InstructionNode* noOpNode)
 {
-    auto set_target = [](struct InstructionNode* node, struct InstructionNode* target) 
-    {
-        if (node->type == SCMP) node->scmp_inst.target = target;
-        else                    node->cjmp_inst.target = target;
-    };
     if (token.token_type == NOT) 
     {
         token = lexer.GetToken();
@@ -1158,7 +1152,7 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     parse_condition(head, tracker, condFailNode);
     if (had_paren) token = lexer.GetToken();  // consume ')'
     token = lexer.GetToken();
-    while (token.token_type != RBRACE) 
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
     { 
         parse_statement(head, tracker); token = lexer.GetToken(); 
     }
@@ -1182,7 +1176,7 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     else if (peeked.token_type == ELSE) 
     {
         token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
-        while (token.token_type != RBRACE) 
+        while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
         { 
             parse_statement(head, tracker); token = lexer.GetToken(); 
         }
@@ -1207,7 +1201,7 @@ void parse_while_statement(struct InstructionNode*& head, struct InstructionNode
     parse_condition(head, tracker, noOpNode);
     if (had_paren) token = lexer.GetToken();
     token = lexer.GetToken();
-    while (token.token_type != RBRACE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
     struct InstructionNode* jmpNode = new InstructionNode();
     jmpNode->line_no = token.line_no;
     jmpNode->type = JMP; jmpNode->jmp_inst.target = condStart;
@@ -1230,7 +1224,7 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
     token = lexer.GetToken();  // consume '{'
     token = lexer.GetToken();  // first token inside body
 
-    while (token.token_type != RBRACE)
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
     {
         parse_statement(head, tracker);
         token = lexer.GetToken();
@@ -1289,7 +1283,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     if (token.token_type == ID && symbolTable.count(token.lexeme)) {
         parse_assignment_for_statement(updateNode, updateTracker);
         token = lexer.GetToken(); token = lexer.GetToken();
-        while (token.token_type != RBRACE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+        while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
         struct InstructionNode* jmpNode = new InstructionNode();
         jmpNode->line_no = token.line_no;
         jmpNode->type = JMP; jmpNode->jmp_inst.target = forConditionNode;
@@ -1332,11 +1326,12 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
                 mem[s] = stoi(token.lexeme);
                 caseNode->cjmp_inst.operand2_index = s;
                 caseNode->cjmp_inst.condition_op = CONDITION_NOTEQUAL;
-                if (lastCaseNode) lastCaseNode->next = caseNode; lastCaseNode = caseNode;
+                if (lastCaseNode) lastCaseNode->next = caseNode;
+                lastCaseNode = caseNode;
                 if (head == nullptr) { head = tracker = caseNode; } else { tracker->next = caseNode; tracker = caseNode; }
                 token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
                 struct InstructionNode* bodyHead = nullptr, *bodyTracker = nullptr;
-                while (token.token_type != RBRACE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
+                while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
                 caseNode->cjmp_inst.target = bodyHead;
                 struct InstructionNode* jmpNode = new InstructionNode();
                 jmpNode->line_no = token.line_no;
@@ -1349,11 +1344,12 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
             struct InstructionNode* defaultNode = new InstructionNode();
             defaultNode->line_no = token.line_no; 
             defaultNode->type = JMP;
-            if (lastCaseNode) lastCaseNode->next = defaultNode; lastCaseNode = defaultNode;
+            if (lastCaseNode) lastCaseNode->next = defaultNode;
+            lastCaseNode = defaultNode;
             if (head == nullptr) { head = tracker = defaultNode; } else { tracker->next = defaultNode; tracker = defaultNode; }
             token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
             struct InstructionNode* bodyHead = nullptr, *bodyTracker = nullptr;
-            while (token.token_type != RBRACE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
+            while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
             defaultNode->jmp_inst.target = bodyHead;
             struct InstructionNode* jmpNode = new InstructionNode();
             jmpNode->line_no = token.line_no;

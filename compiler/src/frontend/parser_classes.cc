@@ -221,7 +221,7 @@ void parse_class_definition()
 
             token = lexer.GetToken();  // '('
             token = lexer.GetToken();  // first param or ')'
-            while (token.token_type != RPAREN)
+            while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
             {
                 VarType pType = TYPE_UNKNOWN;
                 if (token.token_type == INT_TYPE) { pType = TYPE_INT; token = lexer.GetToken(); }
@@ -310,7 +310,7 @@ void parse_class_definition()
             struct InstructionNode* mhead = nullptr;
             struct InstructionNode* mtracker = nullptr;
 
-            while (token.token_type != RBRACE)
+            while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
             {
                 if (token.token_type == RETURN)
                 {
@@ -493,7 +493,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
         token = lexer.GetToken();  // past '('
         vector<int> argIndices;
         vector<VarType> argTypes;
-        while (token.token_type != RPAREN)
+        while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
         {
             int argIdx = parse_expression(head, tracker);
             argIndices.push_back(argIdx);
@@ -816,7 +816,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     // parse arguments
     vector<int>     argIndices;
     vector<VarType> argTypes;
-    while (token.token_type != RPAREN)
+    while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
     {
         int argIdx = parse_expression(head, tracker);
         argIndices.push_back(argIdx);

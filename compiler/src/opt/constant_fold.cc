@@ -7,6 +7,7 @@
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
+#include <climits>
 #include <cstring>
 #include <string>
 #include <map>
@@ -127,7 +128,7 @@ int fold_pass(struct InstructionNode* program)
                     case OPERATOR_MINUS: result = op1 - op2; break;
                     case OPERATOR_MULT:  result = op1 * op2; break;
                     case OPERATOR_DIV:
-                        if (op2 == 0) { pc = pc->next; continue; }
+                        if (op2 == 0 || (op1 == INT_MIN && op2 == -1)) { pc = pc->next; continue; }  // leave to run time
                         result = op1 / op2; break;
                     default: pc = pc->next; continue;
                 }
@@ -188,7 +189,6 @@ int algebraic_simplify(struct InstructionNode* program)
         {
             int op1 = pc->assign_inst.operand1_index;
             int op2 = pc->assign_inst.operand2_index;
-            int dst = pc->assign_inst.left_hand_side_index;
 
             bool op1_const = (op1 < n && constant_slots[op1]);
             bool op2_const = (op2 < n && constant_slots[op2]);

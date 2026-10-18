@@ -43,7 +43,7 @@ static void* jit_alloc_exec(size_t size)
                              MEM_COMMIT_RESERVE, PAGE_EXEC_RW);
     return mem;
 }
-static void jit_free_exec(void* mem, size_t)
+[[maybe_unused]] static void jit_free_exec(void* mem, size_t)  // JIT pages live for the whole run
 {
     VirtualFree(mem, 0, MEM_RELEASE_FLAG);
 }

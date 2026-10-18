@@ -67,7 +67,7 @@ jobs:
         run: make CXX="$CXX" CXXFLAGS="$CXXFLAGS"
         env:
           CXX: ${{ matrix.cxx }}
-          CXXFLAGS: -O2 -Wall -Wextra
+          CXXFLAGS: -O2 -Wall -Wextra -Werror  # keep the build warning-free
       - name: Build bytecode VM
         run: make novavm CXX="$CXX"
         env:

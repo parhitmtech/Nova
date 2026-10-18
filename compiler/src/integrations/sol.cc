@@ -39,7 +39,7 @@ using namespace std;
 // SOL connection settings (key path and username can come from the environment).
 static string sol_key_path = "";
 static string sol_host     = "localhost";
-static int    sol_port     = 2223;
+[[maybe_unused]] static int sol_port = 2223;  // used only by the libssh2 build
 static string sol_username = getenv("SOL_USERNAME") ? getenv("SOL_USERNAME") : "";
 
 // ── SOL cluster helpers ───────────────────────────────────────────────────────

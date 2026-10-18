@@ -8,6 +8,7 @@
 //   foo.nova          — source file
 //   foo.expected      — expected stdout, one value per line
 //   foo.input         — (optional) stdin inputs, one value per line
+//   foo.error         — instead of .expected: the program must fail, and stderr must contain each line
 //
 
 const { spawn }   = require("child_process");
@@ -67,8 +68,8 @@ function runCompiler(source, inputs) {
     child.on("close", code => {
       clearTimeout(timer);
       cleanup(tmpFile, tmpDir);
-      if (code !== 0 || stderr.trim()) resolve({ ok: false, reason: "COMPILER_ERROR", detail: stderr.trim() || `Compiler exited with status ${code}` });
-      else               resolve({ ok: true,  output: stdout });
+      if (code !== 0 || stderr.trim()) resolve({ ok: false, reason: "COMPILER_ERROR", detail: stderr.trim() || `Compiler exited with status ${code}`, code, stderr });
+      else               resolve({ ok: true,  output: stdout, code, stderr });
     });
   });
 }
@@ -112,9 +113,29 @@ let passed = 0, failed = 0, skipped = 0;
     const srcPath  = path.join(TESTS_DIR, file);
     const expPath  = path.join(TESTS_DIR, base + ".expected");
     const inpPath  = path.join(TESTS_DIR, base + ".input");
+    const errPath  = path.join(TESTS_DIR, base + ".error");
+
+    // Error test: the program must fail (non-zero exit) and stderr must contain every line of .error.
+    if (fs.existsSync(errPath)) {
+      const wanted = fs.readFileSync(errPath, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const inputs = fs.existsSync(inpPath) ? fs.readFileSync(inpPath, "utf8") : "";
+      const result = await runCompiler(fs.readFileSync(srcPath, "utf8"), inputs);
+      const missing = result.reason === "TIMEOUT" ? ["(timed out)"]
+        : result.code === 0 ? ["(exited with status 0)"]
+        : wanted.filter(w => !(result.stderr || "").includes(w));
+      if (missing.length === 0) {
+        console.log(`  ${GREEN}PASS${RESET}  ${base}  (expected error)`);
+        passed++;
+      } else {
+        console.log(`  ${RED}FAIL${RESET}  ${base}`);
+        for (const m of missing) console.log(`        ${RED}→ stderr lacks: ${m}${RESET}`);
+        failed++;
+      }
+      continue;
+    }
 
     if (!fs.existsSync(expPath)) {
-      console.log(`  ${YELLOW}SKIP${RESET}  ${base}  (no .expected file)`);
+      console.log(`  ${YELLOW}SKIP${RESET}  ${base}  (no .expected or .error file)`);
       skipped++;
       continue;
     }

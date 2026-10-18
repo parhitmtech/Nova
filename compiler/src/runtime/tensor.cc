@@ -92,21 +92,21 @@ size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int
 {
     if (n != T.ndim())
     {
-        tensor_shape_error(line, std::string(op) + ": a rank-" + std::to_string(T.ndim()) + 
+        tensor_shape_error(line, std::string(op) + ": a rank-" + std::to_string(T.ndim()) +
                            " tensor needs " + std::to_string(T.ndim()) + " indices, got " + std::to_string(n));
-        size_t off = 0;
-        for (int k = 0; k < n; k++)
-        {
-            if (idx[k] < 0 || idx[k] >= T.shape[k])
-            {
-                tensor_shape_error(line, std::string(op) + ": index " + std::to_string(idx[k]) + 
-                                   " out of range for dimension " + std::to_string(k) + 
-                                   " (size " + std::to_string(T.shape[k]) + ")");
-            }
-            off += (size_t)idx[k] * T.strides[k];
-        }
-        return off;
     }
+    size_t off = 0;
+    for (int k = 0; k < n; k++)
+    {
+        if (idx[k] < 0 || idx[k] >= T.shape[k])
+        {
+            tensor_shape_error(line, std::string(op) + ": index " + std::to_string(idx[k]) +
+                               " out of range for dimension " + std::to_string(k) +
+                               " (size " + std::to_string(T.shape[k]) + ")");
+        }
+        off += (size_t)idx[k] * T.strides[k];
+    }
+    return off;
 }
 
 // Ops that still work on the 2_D view only refuse N-D input instead of silently treating it as a 

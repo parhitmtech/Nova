@@ -20,7 +20,7 @@ void parse_function_definition()
     map<string, int>     savedDoubleSymbolTable = doubleSymbolTable;
 
     token = lexer.GetToken(); token = lexer.GetToken();
-    while (token.token_type != RPAREN) {
+    while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
         VarType paramType = TYPE_UNKNOWN;
         if      (token.token_type == INT_TYPE)    { paramType = TYPE_INT;    token = lexer.GetToken(); }
         else if (token.token_type == BOOL_TYPE)   { paramType = TYPE_BOOL;   token = lexer.GetToken(); }
@@ -103,7 +103,7 @@ void parse_function_definition()
     currentFuncRetTypes = retTypes;
     functionTable[funcName] = nullptr;
 
-    while (token.token_type != RBRACE) 
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
     {
         if (token.token_type == RETURN) 
         {
@@ -284,16 +284,13 @@ struct InstructionNode* parse_repl_input(const std::string& s)
 
 struct InstructionNode* parse_generate_intermediate_representation()
 {
-    // if (!check_balanced_parens()) 
-    // {
-    //     for (const string& err : errorList) fprintf(stderr, "%s\n", err.c_str());
-    //     exit(1);
-    // }
-    // fprintf(stderr, "PARSE START\n");
-    // fflush(stderr);
+    // Report unclosed / mismatched brackets (e.g. a truncated file) before parsing, with their line.
+    if (!check_balanced_parens())
+    {
+        for (const string& err : errorList) fprintf(stderr, "%s\n", err.c_str());
+        exit(1);
+    }
     token = lexer.GetToken();
-    // fprintf(stderr, "FIRST TOKEN: %d '%s'\n", token.token_type, token.lexeme.c_str());
-    // fflush(stderr);
     while (token.token_type == STRUCT || token.token_type == DEF || token.token_type == CLASS)
     {
         if (token.token_type == STRUCT) parse_struct_definition();

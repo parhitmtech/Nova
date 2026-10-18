@@ -414,7 +414,12 @@ struct InstructionNode* insert_spill_code(struct InstructionNode* program, const
                 {
                     pc->call_inst.arg_val_slots[i] = rewrite(pc->call_inst.arg_val_slots[i]);
                 }
-                pc->call_inst.ret_val_index;
+                // The result is a def: write it to the temp, which the SPILL_STORE inserted after
+                // this node copies back. (Leaving it unrewritten let that store overwrite the
+                // result with the stale temp.)
+                pc->call_inst.ret_val_index = rewrite(pc->call_inst.ret_val_index);
+                for (int i = 0; pc->call_inst.all_ret_slots && i < pc->call_inst.num_ret_slots; i++)
+                    pc->call_inst.all_ret_slots[i] = rewrite(pc->call_inst.all_ret_slots[i]);
                 break;
             }
             case RET:

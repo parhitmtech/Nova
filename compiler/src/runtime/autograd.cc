@@ -27,19 +27,6 @@ void grad_heap_ensure(int h)
     }
 }
 
-// Deep copy tensor data into a fresh tensor_heap entry and return its handle
-static int snapshot_tensor(int h)
-{
-    // Copy the shape first: alloc_tensor_nd() can grow tensor_heap and move it, so a reference 
-    // taken before the call would dangle afterwards.
-
-    // Tensor& src = tensor_heap[h];
-    std::vector<int> shape = tensor_heap[h].shape;
-    int nh = alloc_tensor_nd(shape);
-    tensor_heap[nh].data = tensor_heap[h].data;
-    return nh;
-}
-
 // Accumulate g into grad_heap[h], creating it if needed
 static void accum_grad(int h, const vector<double>& g)
 {
@@ -49,30 +36,6 @@ static void accum_grad(int h, const vector<double>& g)
     grad_heap[h].accumulate(g);
 }
 
-// Same but add scalar * existing tensor data
-static void accum_grad_scaled(int h, const vector<double>& g, double scale)
-{
-    grad_heap_ensure(h);
-    Tensor& t = tensor_heap[h];
-    grad_heap[h].ensure(t.rows, t.cols);
-    for (int i = 0;i < (int)g.size();i++)
-    {
-        grad_heap[h].data[i] += scale * g[i];
-    }
-}
-
-// Retrieve grad of output tensor; returns vector of 1s if no grad yet (seed)
-static vector<double> get_grad(int h)
-{
-    grad_heap_ensure(h);
-    if (grad_heap[h].active)
-    {
-        return grad_heap[h].data;
-    }
-    // seed:ones (used for loss node)
-    Tensor& t = tensor_heap[h];
-    return vector<double>(t.rows * t.cols, 1.0);
-}
 
 // Public API
 
@@ -177,7 +140,7 @@ void backward(int loss_handle)
 int ag_matmul(int a, int b)
 {
     // Forward
-    int aR = tensor_heap[a].rows, aC = tensor_heap[a].cols;
+    int aR = tensor_heap[a].rows;
     int bC = tensor_heap[b].cols;
     int h = alloc_tensor(aR, bC);
     for (int i = 0;i < aR;i++)
@@ -679,7 +642,6 @@ int ag_mse_loss(int pred, int target)
     int h = alloc_tensor(1, 1);
     tensor_heap[h].at(0, 0) = loss;
     // Also push to dmem for OUT compatibility
-    int dslot = (int)dmem.size();
     dmem.push_back(loss);
     next_double_available++;
 
@@ -748,7 +710,6 @@ int ag_ce_loss(int logits, int target)
 
     int h = alloc_tensor(1, 1);
     tensor_heap[h].at(0, 0) = loss;
-    int dslot = (int)dmem.size();
     dmem.push_back(loss);
     next_double_available++;
 

@@ -260,7 +260,6 @@ int parse_sol_call(const string& method,
     // For finetune the job handle is an output slot; for others it's an input slot
     bool returnsJob    = (op == SOL_OP_FINETUNE);
     bool returnsString = (op == SOL_OP_PREDICT);
-    bool isVoid        = (op == SOL_OP_WAIT || op == SOL_OP_SAVE || op == SOL_OP_SET_KEY);
 
     int job_out_slot   = returnsJob    ? alloc_slot() : -1;
     int result_slot    = returnsString ? alloc_slot() : -1;

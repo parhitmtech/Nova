@@ -1,0 +1,5 @@
+// An extra closing brace is reported.
+main() {
+    print(1) ;
+}
+}

@@ -1,0 +1,5 @@
+// tensor_reshape rejects a shape with a different element count.
+main() {
+    int a = tensor_ones(3, 4) ;
+    int b = tensor_reshape(a, 5, 2) ;
+}

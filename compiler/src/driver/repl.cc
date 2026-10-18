@@ -50,7 +50,6 @@ void run_repl()
 
     string accumulated = "";  // full input collected so far
     int brace_depth = 0;  // tracks open {} to detect multi-line input
-    bool in_def = false;  // true when inside a def block
 
     while (true)
     {
@@ -152,6 +151,5 @@ void run_repl()
         // reset for next input
         accumulated = "";
         brace_depth = 0;
-        in_def = false;
     }
 }

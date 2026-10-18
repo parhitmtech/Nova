@@ -1,4 +1,6 @@
-#define NOVA_NOVM_BUILD  // suppress compiler.cc's main()
+#ifndef NOVA_NOVM_BUILD  // the Makefile passes -DNOVA_NOVM_BUILD; this keeps a manual build working
+#define NOVA_NOVM_BUILD  // compile main.cc without its main()
+#endif
 #include "bytecode.h"
 #include "compiler.h"
 #include <cstdio>
