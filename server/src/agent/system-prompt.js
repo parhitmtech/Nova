@@ -28,35 +28,31 @@ Nova compiles to native code via LLVM, with a CUDA backend for tensor operations
 Type casting: \`int(x)\`, \`float(x)\`, \`double(x)\`
 
 \`\`\`nova
-ignite
-{
-    int a = 5 ;
-    float b = float(a) ;
-    double c = double(b) ;
-    int d = int(c) ;
-    print(d) ;
-}
+ignite:
+    int a = 5
+    float b = float(a)
+    double c = double(b)
+    int d = int(c)
+    print(d)
 \`\`\`
 
 ---
 
 ## Basic Syntax Rules
 
-- Every statement ends with a **space then semicolon**: \`print(x) ;\`
-- Comments: \`// line comment\` or \`# line comment\`
-- Entry point: an \`ignite { ... }\` block, after all definitions (one per file). A file without one may define \`def main()\` instead. When a file is imported, its \`ignite\` block does not run.
-- Functions: \`def name(params) -> returnType { ... }\`
-- Curly braces on same or next line — both work
-- No semicolons after \`}\`
+- Blocks are written like Python: a line ending in \`:\` opens a block, and the block is the lines indented under it (spaces only, no tabs). No braces.
+- A statement ends at the end of its line: **no semicolons**. A line continues while a \`(\` or \`[\` is open.
+- A block with one statement can stay on one line: \`if (x > 0): print(x)\`. An empty block is \`pass\`.
+- Comments: \`# line comment\` (\`//\` is not a comment)
+- Entry point: an \`ignite:\` block, after all definitions (one per file). A file without one may define \`def main()\` instead. When a file is imported, its \`ignite\` block does not run.
+- Functions: \`def name(params) -> returnType:\` followed by the indented body
 - \`print(expr)\` takes exactly **one argument** and always adds a newline
 - \`input()\` reads one integer from stdin, returns int
 
 \`\`\`nova
-// Hello World
-ignite
-{
-    print("Hello, Nova!") ;
-}
+# Hello World
+ignite:
+    print("Hello, Nova!")
 \`\`\`
 
 ---
@@ -72,23 +68,21 @@ ignite
 | Assignment | \`=\` \`+=\` \`-=\` \`*=\` \`/=\` | \`x *= a + b\` means \`x = x * (a + b)\` |
 | String     | \`+\`                  | String concatenation               |
 
-**Important:** conditions of \`if\`, \`elif\`, \`while\`, \`do ... while\` and \`switch\` must be in parentheses: \`if (x <= 5) {\`. A condition can be any expression: comparisons and \`and\`/\`or\`/\`not\` produce a bool that can be grouped (\`if ((a < b) or (c > d))\`), stored (\`bool ok = x > 0 ;\`) or returned; any number is true when non-zero. Comparisons cannot be chained: write \`a < b and b < c\`, not \`a < b < c\`.
+**Important:** conditions of \`if\`, \`elif\`, \`while\`, \`do ... while\` and \`switch\` must be in parentheses: \`if (x <= 5):\`. A condition can be any expression: comparisons and \`and\`/\`or\`/\`not\` produce a bool that can be grouped (\`if ((a < b) or (c > d))\`), stored (\`bool ok = x > 0\`) or returned; any number is true when non-zero. Comparisons cannot be chained: write \`a < b and b < c\`, not \`a < b < c\`.
 
 ---
 
 ## Variables
 
 \`\`\`nova
-ignite
-{
-    int x = 10 ;
-    float y = 3.14 ;
-    double z = 2.718281 ;
-    string s = "Nova" ;
-    print(x) ;
-    print(y) ;
-    print(s) ;
-}
+ignite:
+    int x = 10
+    float y = 3.14
+    double z = 2.718281
+    string s = "Nova"
+    print(x)
+    print(y)
+    print(s)
 \`\`\`
 
 ---
@@ -96,11 +90,9 @@ ignite
 ## I/O
 
 \`\`\`nova
-ignite
-{
-    int n = input() ;   // reads integer from stdin
-    print(n) ;
-}
+ignite:
+    int n = input()  # reads integer from stdin
+    print(n)
 \`\`\`
 
 \`input()\` always returns int. \`print()\` accepts int, float, double, or string.
@@ -112,77 +104,58 @@ ignite
 ### if / elif / else
 
 \`\`\`nova
-ignite
-{
-    int x = 7 ;
-    if (x > 10) {
-        print(1) ;
-    }
-    elif (x > 5) {
-        print(2) ;
-    }
-    else {
-        print(3) ;
-    }
-}
+ignite:
+    int x = 7
+    if (x > 10):
+        print(1)
+    elif (x > 5):
+        print(2)
+    else:
+        print(3)
 \`\`\`
 
 ### while loop
 
 \`\`\`nova
-ignite
-{
-    int i = 0 ;
-    while (i < 10) {
-        print(i) ;
-        i = i + 1 ;
-    }
-}
+ignite:
+    int i = 0
+    while (i < 10):
+        print(i)
+        i = i + 1
 \`\`\`
 
 ### for loop (C-style, 3-part)
 
 \`\`\`nova
-ignite
-{
-    int i ;
-    for(i = 0 ; i < 10 ; i = i + 1) {
-        print(i) ;
-    }
-}
+ignite:
+    int i
+    for(i = 0 ; i < 10 ; i = i + 1):
+        print(i)
 \`\`\`
 
 ### do-while loop
 
 \`\`\`nova
-ignite
-{
-    int i = 0 ;
-    do {
-        print(i) ;
-        i = i + 1 ;
-    } while (i < 5) ;
-}
+ignite:
+    int i = 0
+    do:
+        print(i)
+        i = i + 1
+    while (i < 5)
 \`\`\`
 
 ### switch / case / default
 
 \`\`\`nova
-ignite
-{
-    int x = 2 ;
-    switch(x) {
-        case 1: {
-            print(10) ;
-        }
-        case 2: {
-            print(20) ;
-        }
-        default: {
-            print(0) ;
-        }
-    }
-}
+ignite:
+    int x = 2
+    switch(x):
+        case 1:
+            print(10)
+        case 2:
+            print(20)
+        default:
+            print(0)
 \`\`\`
 
 - Case values must be integer literals
@@ -195,30 +168,24 @@ ignite
 ### Single return value
 
 \`\`\`nova
-def square(int n) -> int {
-    return n * n ;
-}
+def square(int n) -> int:
+    return n * n
 
-ignite
-{
-    int r = square(5) ;
-    print(r) ;
-}
+ignite:
+    int r = square(5)
+    print(r)
 \`\`\`
 
 ### Multiple return values
 
 \`\`\`nova
-def minmax(int a, int b) -> int, int {
-    return a, b ;
-}
+def minmax(int a, int b) -> int, int:
+    return a, b
 
-ignite
-{
-    int lo, int hi = minmax(3, 9) ;
-    print(lo) ;
-    print(hi) ;
-}
+ignite:
+    int lo, int hi = minmax(3, 9)
+    print(lo)
+    print(hi)
 \`\`\`
 
 Multi-return types are listed with commas after \`->\`. Assignment unpacks with typed variables separated by commas.
@@ -233,17 +200,13 @@ Pure recursive functions are **automatically memoized** by the compiler — no a
 - Does no dynamic allocation
 
 \`\`\`nova
-def fib(int n) -> int {
-    if (n < 2) {
-        return n ;
-    }
-    return fib(n - 1) + fib(n - 2) ;
-}
+def fib(int n) -> int:
+    if (n < 2):
+        return n
+    return fib(n - 1) + fib(n - 2)
 
-ignite
-{
-    print(fib(40)) ;   // fast — auto-memoized
-}
+ignite:
+    print(fib(40))  # fast — auto-memoized
 \`\`\`
 
 ---
@@ -253,39 +216,31 @@ ignite
 Arrays are heap-allocated with \`array(n)\` and accessed with \`[]\` indexing. Size can be a variable or literal.
 
 \`\`\`nova
-ignite
-{
-    int nums = array(6) ;
-    int i = 0 ;
-    while (i < 6) {
-        nums[i] = i * 2 ;
-        i = i + 1 ;
-    }
-    i = 0 ;
-    while (i < 6) {
-        print(nums[i]) ;
-        i = i + 1 ;
-    }
-}
+ignite:
+    int nums = array(6)
+    int i = 0
+    while (i < 6):
+        nums[i] = i * 2
+        i = i + 1
+    i = 0
+    while (i < 6):
+        print(nums[i])
+        i = i + 1
 \`\`\`
 
 Dynamic size from variable:
 
 \`\`\`nova
-def fill(int n) -> int {
-    int arr = array(n) ;
-    int i = 0 ;
-    while (i < n) {
-        arr[i] = i * i ;
-        i = i + 1 ;
-    }
-    return arr[n - 1] ;
-}
+def fill(int n) -> int:
+    int arr = array(n)
+    int i = 0
+    while (i < n):
+        arr[i] = i * i
+        i = i + 1
+    return arr[n - 1]
 
-ignite
-{
-    print(fill(10)) ;
-}
+ignite:
+    print(fill(10))
 \`\`\`
 
 - Arrays are bounds-checked at runtime
@@ -299,27 +254,23 @@ ignite
 Lightweight value types for grouping fields.
 
 \`\`\`nova
-struct Point {
-    int x ;
-    int y ;
-}
+struct Point:
+    int x
+    int y
 
-def distance(Point a, Point b) -> int {
-    int dx = a.x - b.x ;
-    int dy = a.y - b.y ;
-    return dx * dx + dy * dy ;
-}
+def distance(Point a, Point b) -> int:
+    int dx = a.x - b.x
+    int dy = a.y - b.y
+    return dx * dx + dy * dy
 
-ignite
-{
-    Point p ;
-    p.x = 3 ;
-    p.y = 4 ;
-    Point q ;
-    q.x = 0 ;
-    q.y = 0 ;
-    print(distance(p, q)) ;
-}
+ignite:
+    Point p
+    p.x = 3
+    p.y = 4
+    Point q
+    q.x = 0
+    q.y = 0
+    print(distance(p, q))
 \`\`\`
 
 - Declare with \`StructName varName ;\` then assign fields
@@ -333,35 +284,27 @@ ignite
 Full object-oriented programming with inheritance.
 
 \`\`\`nova
-class Animal {
-    int age ;
+class Animal:
+    int age
 
-    def init(int a) {
-        self.age = a ;
-    }
+    def init(int a):
+        self.age = a
 
-    def speak() -> int {
-        return 0 ;
-    }
-}
+    def speak() -> int:
+        return 0
 
-class Dog extends Animal {
-    def init(int a) {
-        self.age = a ;
-    }
+class Dog extends Animal:
+    def init(int a):
+        self.age = a
 
-    def speak() -> int {
-        return 1 ;
-    }
-}
+    def speak() -> int:
+        return 1
 
-ignite
-{
-    Dog d ;
-    d.init(3) ;
-    print(d.speak()) ;
-    print(d.age) ;
-}
+ignite:
+    Dog d
+    d.init(3)
+    print(d.speak())
+    print(d.age)
 \`\`\`
 
 - Constructor must be named \`init\`
@@ -379,7 +322,7 @@ Tensors are 2D matrices (rows × cols). All tensor ops run on GPU when available
 ### Import
 
 \`\`\`nova
-import <novatorch.nn> ;
+import <novatorch.nn>
 \`\`\`
 
 Or just use tensor built-ins directly without an import.
@@ -387,12 +330,12 @@ Or just use tensor built-ins directly without an import.
 ### Creating Tensors
 
 \`\`\`nova
-tensor A[32] ;                   // 32×32 matrix (shorthand)
-tensor B = tensor(4, 8) ;        // 4×8 matrix, uninitialized
-tensor Z = tensor_zeros(4, 4) ;  // all zeros
-tensor O = tensor_ones(4, 4) ;   // all ones
-tensor R = tensor_randn(4, 4) ;  // random normal distribution
-tensor X = tensor_xavier(4, 4) ; // Xavier initialization (for weights)
+tensor A[32]  # 32×32 matrix (shorthand)
+tensor B = tensor(4, 8)  # 4×8 matrix, uninitialized
+tensor Z = tensor_zeros(4, 4)  # all zeros
+tensor O = tensor_ones(4, 4)  # all ones
+tensor R = tensor_randn(4, 4)  # random normal distribution
+tensor X = tensor_xavier(4, 4)  # Xavier initialization (for weights)
 \`\`\`
 
 Note: \`tensor A[32] ;\` is shorthand for a 32×32 matrix.
@@ -400,136 +343,132 @@ Note: \`tensor A[32] ;\` is shorthand for a 32×32 matrix.
 ### Accessing and Modifying Tensors
 
 \`\`\`nova
-double v = tensor_get(A, 0, 1) ;   // get element at row 0, col 1
-tensor_set(A, 0, 1, 3.14) ;        // set element at row 0, col 1
-int r = tensor_rows(A) ;            // number of rows
-int c = tensor_cols(A) ;            // number of cols
-tensor row = tensor_get_row(A, 2) ; // extract row 2
-tensor_set_row(A, 2, row) ;         // set row 2
-tensor S = tensor_slice_rows(A, 1, 4) ; // rows 1..3 (exclusive end)
-tensor_print(A) ;                   // print tensor contents
+double v = tensor_get(A, 0, 1)  # get element at row 0, col 1
+tensor_set(A, 0, 1, 3.14)  # set element at row 0, col 1
+int r = tensor_rows(A)  # number of rows
+int c = tensor_cols(A)  # number of cols
+tensor row = tensor_get_row(A, 2)  # extract row 2
+tensor_set_row(A, 2, row)  # set row 2
+tensor S = tensor_slice_rows(A, 1, 4)  # rows 1..3 (exclusive end)
+tensor_print(A)  # print tensor contents
 \`\`\`
 
 ### Tensor Arithmetic
 
 \`\`\`nova
-tensor C = matmul(A, B) ;        // matrix multiplication
-tensor D = tensor_add(A, B) ;    // element-wise addition
-tensor E = tensor_sub(A, B) ;    // element-wise subtraction
-tensor F = tensor_mul(A, B) ;    // element-wise (Hadamard) product
-tensor G = tensor_scale(A, 2.0) ; // scalar multiplication
-tensor H = tensor_T(A) ;         // transpose
+tensor C = matmul(A, B)  # matrix multiplication
+tensor D = tensor_add(A, B)  # element-wise addition
+tensor E = tensor_sub(A, B)  # element-wise subtraction
+tensor F = tensor_mul(A, B)  # element-wise (Hadamard) product
+tensor G = tensor_scale(A, 2.0)  # scalar multiplication
+tensor H = tensor_T(A)  # transpose
 \`\`\`
 
 ### Reduction / Statistics
 
 \`\`\`nova
-double s = tensor_sum(A) ;          // sum of all elements
-double m = tensor_mean(A) ;         // mean of all elements
-double mx = tensor_max(A) ;         // max element
-tensor rs = tensor_sum_rows(A) ;    // row-wise sum → 1×N tensor
-tensor cl = tensor_clip(A, 0.0, 1.0) ; // clamp all values to [0, 1]
+double s = tensor_sum(A)  # sum of all elements
+double m = tensor_mean(A)  # mean of all elements
+double mx = tensor_max(A)  # max element
+tensor rs = tensor_sum_rows(A)  # row-wise sum → 1×N tensor
+tensor cl = tensor_clip(A, 0.0, 1.0)  # clamp all values to [0, 1]
 \`\`\`
 
 ### Activation Functions
 
 \`\`\`nova
-tensor R = relu(A) ;        // ReLU: max(0, x)
-tensor Si = sigmoid(A) ;    // sigmoid: 1/(1+e^-x)
-tensor T = tanh_t(A) ;      // tanh  (NOTE: spelled tanh_t, not tanh)
-tensor Sm = softmax(A) ;    // row-wise softmax
+tensor R = relu(A)  # ReLU: max(0, x)
+tensor Si = sigmoid(A)  # sigmoid: 1/(1+e^-x)
+tensor T = tanh_t(A)  # tanh  (NOTE: spelled tanh_t, not tanh)
+tensor Sm = softmax(A)  # row-wise softmax
 \`\`\`
 
 ### Activation Gradients
 
 \`\`\`nova
-tensor rg = relu_grad(A) ;     // gradient of ReLU
-tensor sg = sigmoid_grad(A) ;  // gradient of sigmoid
+tensor rg = relu_grad(A)  # gradient of ReLU
+tensor sg = sigmoid_grad(A)  # gradient of sigmoid
 \`\`\`
 
 ### Loss Functions
 
 \`\`\`nova
-double loss1 = mse_loss(pred, target) ;         // mean squared error
-double loss2 = cross_entropy_loss(logits, y) ;  // cross-entropy
+double loss1 = mse_loss(pred, target)  # mean squared error
+double loss2 = cross_entropy_loss(logits, y)  # cross-entropy
 \`\`\`
 
 ### Loss Gradients
 
 \`\`\`nova
-tensor g1 = mse_grad(pred, target) ;           // MSE gradient
-tensor g2 = bce_grad(pred, target) ;           // binary cross-entropy gradient
-tensor g3 = cross_entropy_grad(logits, y) ;    // CE gradient
+tensor g1 = mse_grad(pred, target)  # MSE gradient
+tensor g2 = bce_grad(pred, target)  # binary cross-entropy gradient
+tensor g3 = cross_entropy_grad(logits, y)  # CE gradient
 \`\`\`
 
 ### Autograd
 
 \`\`\`nova
-requires_grad(W) ;          // mark W for gradient tracking
-backward(loss_val) ;        // compute gradients (pass scalar double)
-tensor g = tensor_grad(W) ; // retrieve gradient of W
-zero_grad(W) ;              // zero out W's gradients before next step
-tensor W2 = grad_step(W, 0.01) ; // W = W - lr * grad(W)
+requires_grad(W)  # mark W for gradient tracking
+backward(loss_val)  # compute gradients (pass scalar double)
+tensor g = tensor_grad(W)  # retrieve gradient of W
+zero_grad(W)  # zero out W's gradients before next step
+tensor W2 = grad_step(W, 0.01)  # W = W - lr * grad(W)
 \`\`\`
 
 ### Progress Bar
 
 \`\`\`nova
-int pb = progress_bar(100, 40) ;  // total=100 iters, bar_width=40
-int i = 0 ;
-while (i < 100) {
-    // ... training step ...
-    progress_update(pb) ;
-    i = i + 1 ;
-}
-progress_done(pb) ;
+int pb = progress_bar(100, 40)  # total=100 iters, bar_width=40
+int i = 0
+while (i < 100):
+    # ... training step ...
+    progress_update(pb)
+    i = i + 1
+progress_done(pb)
 \`\`\`
 
 ### Load CSV
 
 \`\`\`nova
-tensor data = tensor_load_csv("data.csv") ;
+tensor data = tensor_load_csv("data.csv")
 \`\`\`
 
 ### Random Int
 
 \`\`\`nova
-int r = rand_int(10) ;       // random int in [0, 10)
+int r = rand_int(10)  # random int in [0, 10)
 \`\`\`
 
 ### Full Example: Neural Network Training
 
 \`\`\`nova
-ignite
-{
-    tensor X = tensor_randn(100, 4) ;
-    tensor y = tensor_zeros(100, 1) ;
-    tensor W = tensor_xavier(4, 1) ;
-    tensor b = tensor_zeros(1, 1) ;
+ignite:
+    tensor X = tensor_randn(100, 4)
+    tensor y = tensor_zeros(100, 1)
+    tensor W = tensor_xavier(4, 1)
+    tensor b = tensor_zeros(1, 1)
 
-    requires_grad(W) ;
-    requires_grad(b) ;
+    requires_grad(W)
+    requires_grad(b)
 
-    double lr = 0.01 ;
-    int epoch = 0 ;
-    while (epoch < 100) {
-        tensor pred = matmul(X, W) ;
-        pred = tensor_add(pred, b) ;
-        pred = sigmoid(pred) ;
+    double lr = 0.01
+    int epoch = 0
+    while (epoch < 100):
+        tensor pred = matmul(X, W)
+        pred = tensor_add(pred, b)
+        pred = sigmoid(pred)
 
-        double loss = mse_loss(pred, y) ;
-        tensor g = mse_grad(pred, y) ;
+        double loss = mse_loss(pred, y)
+        tensor g = mse_grad(pred, y)
 
-        backward(loss) ;
-        W = grad_step(W, lr) ;
-        b = grad_step(b, lr) ;
-        zero_grad(W) ;
-        zero_grad(b) ;
+        backward(loss)
+        W = grad_step(W, lr)
+        b = grad_step(b, lr)
+        zero_grad(W)
+        zero_grad(b)
 
-        epoch = epoch + 1 ;
-    }
-    print(tensor_get(W, 0, 0)) ;
-}
+        epoch = epoch + 1
+    print(tensor_get(W, 0, 0))
 \`\`\`
 
 ---
@@ -541,25 +480,23 @@ Run inference on any HuggingFace model without leaving Nova.
 \`\`\`nova
 import hf
 
-ignite
-{
-    hf.set_token("hf_xxxxx") ;
+ignite:
+    hf.set_token("hf_xxxxx")
 
-    // Text classification
-    string label = hf.classify("distilbert-base-uncased-finetuned-sst-2-english", "I love this!") ;
-    print(label) ;
+    # Text classification
+    string label = hf.classify("distilbert-base-uncased-finetuned-sst-2-english", "I love this!")
+    print(label)
 
-    // Text generation
-    string gen = hf.generate("gpt2", "The future of AI is", 50) ;
-    print(gen) ;
+    # Text generation
+    string gen = hf.generate("gpt2", "The future of AI is", 50)
+    print(gen)
 
-    // Generic inference (any model, any input)
-    string out = hf.infer("facebook/bart-large-mnli", "Hello world") ;
-    print(out) ;
+    # Generic inference (any model, any input)
+    string out = hf.infer("facebook/bart-large-mnli", "Hello world")
+    print(out)
 
-    // Load a dataset split (returns a handle string)
-    string data = hf.dataset("imdb", "train[:200]") ;
-}
+    # Load a dataset split (returns a handle string)
+    string data = hf.dataset("imdb", "train[:200]")
 \`\`\`
 
 | Function | Args | Returns |
@@ -580,28 +517,19 @@ Submit fine-tuning jobs to the SOL supercomputer — a high-performance GPU clus
 import hf
 import sol
 
-ignite
-{
-    hf.set_token("hf_xxxxx") ;
+ignite:
+    hf.set_token("hf_xxxxx")
 
-    string data = hf.dataset("imdb", "train[:200]") ;
+    string data = hf.dataset("imdb", "train[:200]")
 
-    string job = sol.finetune(
-        model = "distilbert-base-uncased",
-        task = "text-classification",
-        dataset = data,
-        epochs = 3,
-        lr = 0.00002,
-        batch_size = 8
-    ) ;
+    string job = sol.finetune( model = "distilbert-base-uncased", task = "text-classification", dataset = data, epochs = 3, lr = 0.00002, batch_size = 8 )
 
-    sol.wait(job) ;
+    sol.wait(job)
 
-    string result = sol.predict(job, "This movie was amazing!") ;
-    print(result) ;
+    string result = sol.predict(job, "This movie was amazing!")
+    print(result)
 
-    sol.save(job, "my_model") ;
-}
+    sol.save(job, "my_model")
 \`\`\`
 
 | Function | Args | Returns |
@@ -626,14 +554,14 @@ Supported tasks: \`"text-classification"\`, \`"summarization"\`, \`"question-ans
 ## Import Syntax
 
 \`\`\`nova
-import hf ;                   // HuggingFace API
-import sol ;                  // SOL HPC cluster
-import <novatorch.nn> ;       // Nova standard ML library
+import hf                     # HuggingFace API
+import sol                    # SOL HPC cluster
+import <novatorch.nn>         # Nova standard ML library
 \`\`\`
 
 Two forms:
-- \`import moduleName ;\` for hf, sol
-- \`import <module.submodule> ;\` for standard library paths
+- \`import moduleName\` for hf, sol
+- \`import <module.submodule>\` for standard library paths
 
 ---
 
@@ -641,9 +569,9 @@ Two forms:
 
 | Rule | Detail |
 |---|---|
-| Semicolons | Every statement: \`print(x) ;\` (space before \`;\`) |
-| Conditions | Always in parentheses: \`if (x != 0) {\`, \`while (i <= n) {\` |
-| Comments | \`//\` or \`#\` |
+| Blocks | \`:\` plus indentation (spaces); one statement per line, no \`;\` |
+| Conditions | Always in parentheses: \`if (x != 0):\`, \`while (i <= n):\` |
+| Comments | \`#\` only |
 | Tanh | \`tanh_t()\` not \`tanh()\` |
 | Print arity | Exactly one argument |
 | Input return | Always int |
@@ -651,9 +579,9 @@ Two forms:
 | Self | Lowercase \`self\` |
 | @ml | Just a comment — no effect on compilation |
 | Memoization | Automatic for pure recursive functions |
-| Arrays | \`int arr = array(n) ;\` then \`arr[i]\` |
-| Tensor shorthand | \`tensor A[32] ;\` = 32×32 matrix |
-| Multi-return assign | \`int a, double b = func() ;\` |
+| Arrays | \`int arr = array(n)\` then \`arr[i]\` |
+| Tensor shorthand | \`tensor A[32]\` = 32×32 matrix |
+| Multi-return assign | \`int a, double b = func()\` |
 
 ---
 
@@ -661,13 +589,16 @@ Two forms:
 
 | Error | Cause | Fix |
 |---|---|---|
-| \`unexpected token\` | Missing semicolon or \`;\` without space before it | Add space: \`x = 5 ;\` |
+| \`Nova does not use ';'\` | Ended a statement with \`;\` | Remove it: \`x = 5\` |
+| \`blocks are written with ':'\` | Used \`{ }\` for a block | Write \`if (x):\` and indent the body |
+| \`expected an indented block\` | Nothing indented under a \`:\` line | Indent the body, or write \`pass\` |
+| \`unexpected indentation\` / \`does not match any enclosing block\` | Inconsistent indentation | Indent each block's lines by the same amount |
 | \`undeclared variable\` | Variable used before declaration | Declare with type before use |
 | \`bad_alloc\` | Recursion too deep | Use iterative approach or reduce input |
 | \`CUDA codegen failed\` | Tensor op without proper setup | Check tensor dimensions match |
 | \`type mismatch\` | Assigning wrong type | Use explicit cast: \`float(x)\` |
 | No output on tensor | Used \`tanh\` instead of \`tanh_t\` | Replace with \`tanh_t()\` |
-| \`needs its condition in parentheses\` | Wrote \`if x < 5 {\` | Write \`if (x < 5) {\` |
+| \`needs its condition in parentheses\` | Wrote \`if x < 5:\` | Write \`if (x < 5):\` |
 | \`comparisons cannot be chained\` | Wrote \`a < b < c\` | Write \`a < b and b < c\` |
 | Class method not found | Called method not defined in class | Define method in class body |
 
@@ -693,7 +624,7 @@ const NOVA_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        code:   { type: 'string', description: 'Complete Nova source code to execute. Must include an ignite { ... } block (or def main()).' },
+        code:   { type: 'string', description: 'Complete Nova source code to execute. Must include an ignite: block (or def main()).' },
         inputs: { type: 'string', description: 'Optional stdin inputs for the program, newline separated.' },
       },
       required: ['code'],

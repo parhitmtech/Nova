@@ -1,8 +1,6 @@
-ignite
-{
-    int n = 32 ;
-    int A = tensor_randn(n, n) ;
-    int B = tensor_randn(n, n) ;
-    int C = matmul(A, B) ;
-    print("done") ;
-}
+ignite:
+    int n = 32
+    int A = tensor_randn(n, n)
+    int B = tensor_randn(n, n)
+    int C = matmul(A, B)
+    print("done")

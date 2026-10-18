@@ -3,25 +3,25 @@ export const EXAMPLES = [
     name: 'hello.nova',
     title: 'Hello, Nova',
     description: 'Your first program',
-    code: 'ignite {\n    print("Hello, Nova!") ;\n}\n',
+    code: 'ignite:\n    print("Hello, Nova!")\n',
   },
   {
     name: 'functions.nova',
     title: 'Functions',
     description: 'Types, parameters, and return values',
-    code: 'def add(int a, int b) -> int {\n    return a + b ;\n}\n\nignite {\n    print(add(3, 4)) ;\n}\n',
+    code: 'def add(int a, int b) -> int:\n    return a + b\n\nignite:\n    print(add(3, 4))\n',
   },
   {
     name: 'loops.nova',
     title: 'Loops',
     description: 'Add the numbers from 1 to 5',
-    code: 'ignite {\n    int sum = 0 ;\n    int i = 0 ;\n    for(i = 1 ; i < 6 ; i = i + 1) {\n        sum = sum + i ;\n    }\n    print(sum) ;\n}\n',
+    code: 'ignite:\n    int sum = 0\n    int i = 0\n    for (i = 1 ; i < 6 ; i += 1):\n        sum += i\n    print(sum)\n',
   },
   {
     name: 'input.nova',
     title: 'Standard input',
     description: 'Try input values 3 and 4',
-    code: 'ignite {\n    int a = input() ;\n    int b = input() ;\n    print(a + b) ;\n    print(a * b) ;\n}\n',
+    code: 'ignite:\n    int a = input()\n    int b = input()\n    print(a + b)\n    print(a * b)\n',
   },
 ]
 export const isBinaryFile = (name: string) => /\.(tar\.gz|gz|bin|pt|pth|nbc|zip)$/i.test(name)

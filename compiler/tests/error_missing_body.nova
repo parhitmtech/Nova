@@ -1,0 +1,4 @@
+# A ':' line needs an indented body (or 'pass').
+ignite:
+    if (1 < 2):
+    print(1)

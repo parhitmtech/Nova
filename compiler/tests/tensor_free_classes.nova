@@ -1,51 +1,44 @@
-// Regression test: tensors held by class fields and passed through methods are freed exactly once.
-// COvers a field store inside a method, a method that returns a field, a method that returns a new 
-// tensor, two instances of one class (they share the method's self slots), a method call uses as a 
-// method argument, and an int-returning tensor op (tensor_rows) inside a method. tensor_live_count()
-// must not grow with the number of iterations.
+# Regression test: tensors held by class fields and passed through methods are freed exactly once.
+# COvers a field store inside a method, a method that returns a field, a method that returns a new
+# tensor, two instances of one class (they share the method's self slots), a method call uses as a
+# method argument, and an int-returning tensor op (tensor_rows) inside a method. tensor_live_count()
+# must not grow with the number of iterations.
 import <novatorch.nn>
 
-class Holder {
-    int t ;
+class Holder:
+    int t
 
-    def init() {
-        self.t = 0 ;
-    }
+    def init():
+        self.t = 0
 
-    def set(int x) {
-        self.t = x ;
-    }
+    def set(int x):
+        self.t = x
 
-    def get() -> int {
-        return self.t ;
-    }
+    def get() -> int:
+        return self.t
 
-    def doubled() -> int {
-        return tensor_add(self.t, self.t) ;
-    }
-}
+    def doubled() -> int:
+        return tensor_add(self.t, self.t)
 
-ignite {
-    int base = tensor_ones(2, 2) ;
-    Holder a ;
-    Holder b ;
-    int i = 0 ;
-    while (i < 50) {
-        int x = tensor_add(base, base) ;
-        a.set(x) ;
-        b.set(a.doubled()) ;
-        i = i + 1 ;
-    }
-    print(tensor_get(a.get(), 0, 0)) ;
-    print(tensor_get(b.get(), 1, 1)) ;
-    // base + the tensor held by a + the tensor held by b
-    print(tensor_live_count()) ;
+ignite:
+    int base = tensor_ones(2, 2)
+    Holder a
+    Holder b
+    int i = 0
+    while (i < 50):
+        int x = tensor_add(base, base)
+        a.set(x)
+        b.set(a.doubled())
+        i = i + 1
+    print(tensor_get(a.get(), 0, 0))
+    print(tensor_get(b.get(), 1, 1))
+    # base + the tensor held by a + the tensor held by b
+    print(tensor_live_count())
 
-    // Tanh.backward calls tensor_rows/tensor_cols; their int results used to be "released" as if they 
-    // were tensor handles.
-    Tanh th ;
-    int y = th.forward(base) ;
-    int g = th.backward(base) ;
-    print(tensor_get(g, 0, 0)) ;
-    print(tensor_get(base, 0, 0)) ;
-}
+    # Tanh.backward calls tensor_rows/tensor_cols; their int results used to be "released" as if they
+    # were tensor handles.
+    Tanh th
+    int y = th.forward(base)
+    int g = th.backward(base)
+    print(tensor_get(g, 0, 0))
+    print(tensor_get(base, 0, 0))

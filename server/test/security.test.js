@@ -194,7 +194,7 @@ test('real local compiler streaming timeout and client cancellation clean up job
   process.env.NOVA_EXECUTION_MODE = 'local'; process.env.NODE_ENV = 'test';
   const tmpRoot = path.resolve(__dirname, '..', '_tmp');
   const before = fs.readdirSync(tmpRoot).sort();
-  const source = 'ignite { int x = 0 ; while (x < 2000000000) { x = x + 1 ; } }';
+  const source = 'ignite:\n    int x = 0\n    while (x < 2000000000): x = x + 1\n';
   try {
     const response = await request('/run-stream', { method: 'POST', body: { source } });
     assert.equal(response.status, 200);

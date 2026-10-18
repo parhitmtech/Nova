@@ -10,7 +10,7 @@ const { createExecutor } = require('../src/services/execution');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-worker-'));
   try {
     const source = path.join(dir, 'program.nova');
-    fs.writeFileSync(source, 'ignite { print(42) ; }\n');
+    fs.writeFileSync(source, 'ignite: print(42)\n');
     const executor = createExecutor({ mode: 'docker', nodeEnv: 'production' });
     const child = executor.spawnCompiler([source], { cwd: dir });
     let stdout = '', stderr = '';

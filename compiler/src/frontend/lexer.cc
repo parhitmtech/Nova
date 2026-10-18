@@ -50,6 +50,13 @@ string reserved[] = {
     "NUM", "FLOAT_LITERAL", "ID", "STRING", "ERROR"
 };
 
+// Layout and comment errors stop compilation with the line, like an unterminated string does.
+[[noreturn]] static void layout_error(int line, const string& msg)
+{
+    fprintf(stderr, "Error at line %d: %s\n", line, msg.c_str());
+    exit(1);
+}
+
 // FOR IF ELIF WHILE SWITCH CASE DEFAULT      (7)
 // INPUT ARRAY PRINT                          (3)
 // DEF RETURN ELSE                            (3)
@@ -86,6 +93,7 @@ void LexicalAnalyzer::Initialize()
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    ApplyLayout();
     DesugarCompoundAssignments();
     AddMainEntry();
 }
@@ -108,6 +116,7 @@ void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    ApplyLayout();
     DesugarCompoundAssignments();
     AddMainEntry();
 }
@@ -118,6 +127,9 @@ void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
     index = 0;
     line_no = 1;
     initialized = false;
+    atLineStart = true;
+    column = 0;
+    tabInIndent = false;
 
     tmp.lexeme = "";
     tmp.line_no = 1;
@@ -132,6 +144,7 @@ void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    ApplyLayout();
     DesugarCompoundAssignments();
     AddMainEntry();
 }
@@ -141,19 +154,146 @@ bool LexicalAnalyzer::SkipSpace()
     char c;
     bool space_encountered = false;
 
+    // Track where each line starts and how far it is indented: the layout pass needs it.
+    auto note = [&](char ch) {
+        if (ch == '\n') { line_no++; atLineStart = true; column = 0; tabInIndent = false; }
+        else if (ch == ' ') column++;
+        else if (ch == '\t') { column++; if (atLineStart) tabInIndent = true; }
+    };
+
     input.GetChar(c);
-    line_no += (c == '\n');
+    if (isspace(c)) note(c);
 
     while (!input.EndOfInput() && isspace(c)) {
         space_encountered = true;
         input.GetChar(c);
-        line_no += (c == '\n');
+        if (isspace(c)) note(c);
     }
 
     if (c != '\0' && !isspace(c)) {
         input.UngetChar(c);
     }
     return space_encountered;
+}
+
+// Nova's blocks are written with ':' and indentation, and statements end at the end of the line:
+//
+//     if (x > 0):                   if (x > 0) {
+//         y = 1          becomes        y = 1 ;
+//     else: y = 2                   } else { y = 2 ; }
+//
+// This pass rewrites the token list into the braces-and-semicolons form the parser reads:
+// a block ':' becomes '{', a return to a smaller indentation closes blocks with '}', and the end of
+// each line adds ';'. A line continues while a '(' or '[' is open. A 'case' / 'default' label keeps
+// its ':' (the parser expects "case 1: {"), and a line that is just 'pass' is an empty statement.
+void LexicalAnalyzer::ApplyLayout()
+{
+    vector<Token> out;
+    out.reserve(tokenList.size() + tokenList.size() / 2);
+    vector<int> indents = {0};  // indentation of each open block, outermost first
+    bool needBody = false;      // the previous line ended with ':' and its body must be indented
+    int headerLine = 0;
+
+    auto add = [&](TokenType type, const char* lexeme, int line) {
+        Token k;
+        k.token_type = type;
+        k.lexeme = lexeme;
+        k.line_no = line;
+        out.push_back(k);
+    };
+    auto is_pass = [&](size_t a, size_t b) {
+        return b - a == 1 && tokenList[a].token_type == ID && tokenList[a].lexeme == "pass";
+    };
+
+    size_t i = 0, n = tokenList.size();
+    while (i < n)
+    {
+        // One logical line: up to the next token that starts a line outside any ( ) or [ ].
+        size_t start = i, end = i;
+        int depth = 0, colon = -1;
+        vector<const Token*> open;  // unclosed '(' / '[' of this line
+        for (; end < n; end++)
+        {
+            const Token& t = tokenList[end];
+            if (end > start && depth == 0 && t.indent >= 0) break;
+            if (t.token_type == LPAREN || t.token_type == LBRAC) { depth++; open.push_back(&t); }
+            else if (t.token_type == RPAREN || t.token_type == RBRAC) { depth--; if (!open.empty()) open.pop_back(); }
+            else if (depth == 0 && t.token_type == SEMICOLON)
+                layout_error(t.line_no, "Nova does not use ';' to end statements: start a new line instead");
+            else if (t.token_type == LBRACE || t.token_type == RBRACE)
+                layout_error(t.line_no, "blocks are written with ':' and an indented body, not braces");
+            else if (depth == 0 && t.token_type == COLON && colon < 0)
+                colon = (int)end;
+        }
+        if (depth > 0 && !open.empty())  // the file ended inside ( ) or [ ]
+            layout_error(open.back()->line_no, string("unclosed '") + (open.back()->token_type == LPAREN ? "(" : "[") +
+                                               "' - missing closing bracket");
+        int line = tokenList[start].line_no;
+        int indent = tokenList[start].indent;
+
+        // Indentation: open the body of the previous ':' line, or close finished blocks.
+        if (needBody)
+        {
+            if (indent <= indents.back())
+                layout_error(line, "expected an indented block after the ':' on line " + to_string(headerLine));
+            indents.push_back(indent);
+            needBody = false;
+        }
+        else if (indent > indents.back())
+        {
+            layout_error(line, "unexpected indentation");
+        }
+        while (indent < indents.back())
+        {
+            indents.pop_back();
+            add(RBRACE, "}", line);
+        }
+        if (indent != indents.back())
+            layout_error(line, "this line's indentation does not match any enclosing block");
+
+        if (is_pass(start, end))
+        {
+            // empty statement
+        }
+        else if (colon < 0)
+        {
+            out.insert(out.end(), tokenList.begin() + start, tokenList.begin() + end);
+            add(SEMICOLON, ";", tokenList[end - 1].line_no);
+        }
+        else
+        {
+            TokenType first = tokenList[start].token_type;
+            bool label = (first == CASE || first == DEFAULT);
+            out.insert(out.end(), tokenList.begin() + start, tokenList.begin() + colon + (label ? 1 : 0));
+            add(LBRACE, "{", line);
+            if (colon + 1 == (int)end)
+            {
+                needBody = true;  // the body is on the following, indented lines
+                headerLine = line;
+            }
+            else if (!is_pass(colon + 1, end))
+            {
+                // a one-line body: if (x): y = 1
+                out.insert(out.end(), tokenList.begin() + colon + 1, tokenList.begin() + end);
+                add(SEMICOLON, ";", line);
+                add(RBRACE, "}", line);
+            }
+            else
+            {
+                add(RBRACE, "}", line);
+            }
+        }
+        i = end;
+    }
+    if (needBody)
+        layout_error(headerLine, "expected an indented block after the ':' on line " + to_string(headerLine));
+    int lastLine = n ? tokenList[n - 1].line_no : 1;
+    while (indents.size() > 1)
+    {
+        indents.pop_back();
+        add(RBRACE, "}", lastLine);
+    }
+    tokenList.swap(out);
 }
 
 // "target op= expr" becomes "target = target op (expr)" in the token list, before parsing. Every
@@ -422,6 +562,10 @@ Token LexicalAnalyzer::GetTokenMain()
     SkipSpace();
     tmp.lexeme = "";
     tmp.line_no = line_no;
+    tmp.indent = atLineStart ? column : -1;
+    if (atLineStart && tabInIndent && !input.EndOfInput())
+        layout_error(line_no, "indent with spaces, not tabs");
+    atLineStart = false;
     input.GetChar(c);
     switch (c) {
         case '+':   tmp.token_type = NextIs('=') ? PLUSEQ : PLUS;   return tmp;
@@ -441,13 +585,7 @@ Token LexicalAnalyzer::GetTokenMain()
             char next;
             input.GetChar(next);
             if (next == '/') {
-                // line comment — skip to end of line, then re-lex
-                char ch;
-                while (!input.EndOfInput()) {
-                    input.GetChar(ch);
-                    if (ch == '\n') { line_no++; break; }
-                }
-                return GetTokenMain();  // recurse to get the real next token
+                layout_error(line_no, "comments start with '#', not '//'");
             } else {
                 if (!input.EndOfInput()) input.UngetChar(next);
                 tmp.token_type = NextIs('=') ? DIVEQ : DIV;
@@ -511,11 +649,15 @@ Token LexicalAnalyzer::GetTokenMain()
 
         // ── Python-style comments: # ... ──────────────────────────────────────
         case '#': {
+            // comment to the end of the line; the next token starts a new line
             char ch;
             input.GetChar(ch);
             while (!input.EndOfInput() && ch != '\n')
                 input.GetChar(ch);
             line_no++;
+            atLineStart = true;
+            column = 0;
+            tabInIndent = false;
             return GetTokenMain();
         }
 

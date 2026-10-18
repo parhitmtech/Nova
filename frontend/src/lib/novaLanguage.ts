@@ -36,6 +36,8 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
       'extends',
       'self',
       'import',
+      'ignite',
+      'pass',
       'and',
       'or',
       'not',
@@ -78,10 +80,10 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
 
     tokenizer: {
       root: [
-        // Compiler directives like // @ml that enable GPU / ML execution paths
-        [/\/\/\s*@\w+/, 'annotation'],
+        // Compiler directives like # @ml that enable GPU / ML execution paths
+        [/#\s*@\w+/, 'annotation'],
         // Single-line comments
-        [/\/\/.*$/, 'comment'],
+        [/#.*$/, 'comment'],
         // Import angle-bracket paths: import <stdlib/something>
         [/<[^>]+>/, 'string'],
         // Double-quoted string literals
@@ -102,8 +104,8 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
             },
           },
         ],
-        // Brackets, semicolons, commas, dots
-        [/[{}()[\];,.]/, 'delimiter'],
+        // Brackets, colons, commas, dots
+        [/[()[\]:,.]/, 'delimiter'],
         // Arithmetic, comparison, bitwise, and assignment operators
         [/[=<>!+\-*/%&|^~]/, 'operator'],
         // Whitespace (ignored)
@@ -115,22 +117,27 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
   // Language configuration — enables bracket matching, auto-close, and
   // correct indent/dedent when the user types { or }.
   monaco.languages.setLanguageConfiguration('nova', {
-    comments: { lineComment: '//' },
+    comments: { lineComment: '#' },
     brackets: [
       ['(', ')'],
-      ['{', '}'],
       ['[', ']'],
     ],
     autoClosingPairs: [
       { open: '(', close: ')' },
-      { open: '{', close: '}' },
       { open: '[', close: ']' },
       { open: '"', close: '"' },
     ],
     indentationRules: {
-      increaseIndentPattern: /\{[^}]*$/, // indent after an opening brace
-      decreaseIndentPattern: /^\s*\}/, // dedent on a closing brace
+      // Blocks are a line ending in ':' plus an indented body (Python style)
+      increaseIndentPattern: /:\s*(#.*)?$/,
+      decreaseIndentPattern: /^\s*(else|elif|case|default)\b.*:\s*(#.*)?$/,
     },
+    onEnterRules: [
+      {
+        beforeText: /:\s*(#.*)?$/,
+        action: { indentAction: 1 }, // IndentAction.Indent
+      },
+    ],
   })
 
   // Custom dark theme that matches the rest of the NovaComp UI palette.

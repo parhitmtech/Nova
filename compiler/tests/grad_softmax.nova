@@ -1,50 +1,47 @@
-def dabs(double x) -> double {
-    if (x < 0.0) {
-        return 0.0 - x ;
-    }
-    return x ;
-}
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
 
-ignite {
-    double eps = 0.0001 ;
-    double tol = 0.001 ;
-    double maxdiff = 0.0 ;
-    double d = 0.0 ;
+ignite:
+    double eps = 0.0001
+    double tol = 0.001
+    double maxdiff = 0.0
+    double d = 0.0
 
-    // ── softmax ─────────────────────────────────────────────────────────────
-    int smA = tensor_zeros(1, 3) ;
-    tensor_set(smA, 0, 0, 1.0) ;
-    tensor_set(smA, 0, 1, 2.0) ;
-    tensor_set(smA, 0, 2, 0.5) ;
-    int smT = tensor_zeros(1, 3) ;
-    tensor_set(smT, 0, 0, 0.2) ;
-    tensor_set(smT, 0, 1, 0.3) ;
-    tensor_set(smT, 0, 2, 0.5) ;
+    # ── softmax ─────────────────────────────────────────────────────────────
+    int smA = tensor_zeros(1, 3)
+    tensor_set(smA, 0, 0, 1.0)
+    tensor_set(smA, 0, 1, 2.0)
+    tensor_set(smA, 0, 2, 0.5)
+    int smT = tensor_zeros(1, 3)
+    tensor_set(smT, 0, 0, 0.2)
+    tensor_set(smT, 0, 1, 0.3)
+    tensor_set(smT, 0, 2, 0.5)
 
-    requires_grad(smA) ;
-    int smY = softmax(smA) ;
-    int smL = mse_loss(smY, smT) ;
-    backward(smL) ;
-    int smG = tensor_grad(smA) ;
+    requires_grad(smA)
+    int smY = softmax(smA)
+    int smL = mse_loss(smY, smT)
+    backward(smL)
+    int smG = tensor_grad(smA)
 
-    maxdiff = 0.0 ;
-    int fi = 0 ;
-    while (fi < 3) {
-        double orig = tensor_get(smA, 0, fi) ;
-        tensor_set(smA, 0, fi, orig + eps) ;
-        int yP9 = softmax(smA) ;
-        int lP9 = mse_loss(yP9, smT) ;
-        double lossP = tensor_get(lP9, 0, 0) ;
-        tensor_set(smA, 0, fi, orig - eps) ;
-        int yM9 = softmax(smA) ;
-        int lM9 = mse_loss(yM9, smT) ;
-        double lossM = tensor_get(lM9, 0, 0) ;
-        tensor_set(smA, 0, fi, orig) ;
-        double numeric = (lossP - lossM) / (2.0 * eps) ;
-        double analytic = tensor_get(smG, 0, fi) ;
-        d = dabs(numeric - analytic) ;
-        if (d > maxdiff) { maxdiff = d ; }
-        fi = fi + 1 ;
-    }
-    if (maxdiff < tol) { print("PASS softmax") ; } else { print("FAIL softmax") ; }
-}
+    maxdiff = 0.0
+    int fi = 0
+    while (fi < 3):
+        double orig = tensor_get(smA, 0, fi)
+        tensor_set(smA, 0, fi, orig + eps)
+        int yP9 = softmax(smA)
+        int lP9 = mse_loss(yP9, smT)
+        double lossP = tensor_get(lP9, 0, 0)
+        tensor_set(smA, 0, fi, orig - eps)
+        int yM9 = softmax(smA)
+        int lM9 = mse_loss(yM9, smT)
+        double lossM = tensor_get(lM9, 0, 0)
+        tensor_set(smA, 0, fi, orig)
+        double numeric = (lossP - lossM) / (2.0 * eps)
+        double analytic = tensor_get(smG, 0, fi)
+        d = dabs(numeric - analytic)
+        if (d > maxdiff): maxdiff = d
+        fi = fi + 1
+    if (maxdiff < tol): print("PASS softmax")
+    else: print("FAIL softmax")

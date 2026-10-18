@@ -1,71 +1,60 @@
-// Regression test: double/float arithmetic computed inside functions.
-// Covers: typed RET/CALL return slots, float/double literal promotion in
-// + - * /, and float/double literals inside comparisons.
+# Regression test: double/float arithmetic computed inside functions.
+# Covers: typed RET/CALL return slots, float/double literal promotion in
+# + - * /, and float/double literals inside comparisons.
 
-def doubleIt(double v) -> double {
-    return v * 2.0 ;
-}
+def doubleIt(double v) -> double:
+    return v * 2.0
 
-def square(double v) -> double {
-    return v * v ;
-}
+def square(double v) -> double:
+    return v * v
 
-def litLeft(double v) -> double {
-    return 2.0 * v ;
-}
+def litLeft(double v) -> double:
+    return 2.0 * v
 
-def plusLit(double v) -> double {
-    return v + 1.5 ;
-}
+def plusLit(double v) -> double:
+    return v + 1.5
 
-def minusLit(double v) -> double {
-    return v - 0.5 ;
-}
+def minusLit(double v) -> double:
+    return v - 0.5
 
-def divLit(double v) -> double {
-    return v / 4.0 ;
-}
+def divLit(double v) -> double:
+    return v / 4.0
 
-def poly(double v) -> double {
-    return v * v + 2.0 * v + 1.0 ;
-}
+def poly(double v) -> double:
+    return v * v + 2.0 * v + 1.0
 
-def dabs(double v) -> double {
-    if (v < 0.0) {
-        return 0.0 - v ;
-    }
-    return v ;
-}
+def dabs(double v) -> double:
+    if (v < 0.0):
+        return 0.0 - v
+    return v
 
-def halfF(float x) -> float {
-    return x * 0.5 ;
-}
+def halfF(float x) -> float:
+    return x * 0.5
 
-ignite {
-    // arguments are variables: a bare decimal literal lexes as float and
-    // is (correctly) rejected for a double parameter
-    double a = 5.0 ;
-    double b = 3.0 ;
-    double c = 4.0 ;
-    double d = 2.0 ;
-    double e = 10.0 ;
-    double neg = 0.0 - 9.0 ;
-    float f = 5.0 ;
+ignite:
+    # arguments are variables: a bare decimal literal lexes as float and
+    # is (correctly) rejected for a double parameter
+    double a = 5.0
+    double b = 3.0
+    double c = 4.0
+    double d = 2.0
+    double e = 10.0
+    double neg = 0.0 - 9.0
+    float f = 5.0
 
-    print(doubleIt(a)) ;
-    print(square(b)) ;
-    print(litLeft(c)) ;
-    print(plusLit(d)) ;
-    print(minusLit(d)) ;
-    print(divLit(e)) ;
-    print(poly(b)) ;
-    print(dabs(neg)) ;
-    print(dabs(c)) ;
-    print(halfF(f)) ;
+    print(doubleIt(a))
+    print(square(b))
+    print(litLeft(c))
+    print(plusLit(d))
+    print(minusLit(d))
+    print(divLit(e))
+    print(poly(b))
+    print(dabs(neg))
+    print(dabs(c))
+    print(halfF(f))
 
-    // nested calls, and an int value must survive a double call untouched
-    int k = 7 ;
-    double r = doubleIt(square(d)) ;
-    print(r) ;
-    print(k) ;
-}
+    # nested calls, and an int value must survive a double call untouched
+    int k = 7
+    double r = doubleIt(square(d))
+    print(r)
+    print(k)

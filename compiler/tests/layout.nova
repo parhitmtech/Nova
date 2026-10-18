@@ -1,0 +1,78 @@
+# Syntax step 3: blocks by indentation. One-line bodies, 'pass', dedenting several levels at
+# once, a call continued across lines inside parentheses, comments and blank lines anywhere,
+# do-while, switch with one-line cases, and a class.
+class Box:
+    int value
+
+    def init(int v):
+        self.value = v
+
+    def nothing():
+        pass
+
+    def get() -> int: return self.value
+
+def sum3(int a, int b, int c) -> int:
+    return a + b + c
+
+def classify(int n) -> int:
+    if (n < 0): return -1
+    elif (n == 0): return 0
+    elif (n < 10):
+        return 1
+    else:
+        return 2
+
+ignite:
+    Box b
+    b.init(41)
+    b.nothing()
+    print(b.get() + 1)
+
+    # a call continued on the next lines (inside parentheses, indentation is free)
+    print(sum3(1,
+               2,
+        3))
+
+    print(classify(-5))
+    print(classify(0))
+    print(classify(7))
+    print(classify(99))
+
+    # nested blocks closing several levels at once
+    int total = 0
+    int i = 0
+    while (i < 3):
+        int j = 0
+        while (j < 3):
+            if (i == j):
+                total += 10
+            else:
+                if (i < j):
+                    total += 1
+            j += 1
+        i += 1
+    print(total)
+
+  # a comment's indentation does not matter
+    if (total > 0):  # a trailing comment after ':'
+
+        print(1)   # blank line above is fine
+    if (total < 0): pass
+    else: print(2)
+
+    int k = 0
+    do:
+        k += 2
+    while (k < 7)
+    print(k)
+
+    switch (k % 3):
+        case 0: print(30)
+        case 2: print(32)
+        default:
+            print(0)
+
+    for (i = 0 ; i < 4 ; i += 1):
+        if (i == 2): print(i)
+    print(i)

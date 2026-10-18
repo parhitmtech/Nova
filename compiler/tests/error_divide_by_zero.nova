@@ -1,6 +1,5 @@
-// Integer division by zero is a clear runtime error, not a crash.
-ignite {
-    int z = 0 ;
-    int a = 10 / z ;
-    print(a) ;
-}
+# Integer division by zero is a clear runtime error, not a crash.
+ignite:
+    int z = 0
+    int a = 10 / z
+    print(a)

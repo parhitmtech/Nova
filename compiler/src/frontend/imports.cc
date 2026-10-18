@@ -77,67 +77,36 @@ string get_stdlib_path()
     return path + "/stdlib";
 }
 
-// An imported file's 'ignite { ... }' block only runs when that file itself is the program, so it is
-// removed before the file is inlined. Strings and comments are skipped; newlines inside the block are
-// kept so the line count does not change.
+// An imported file's 'ignite:' block only runs when that file itself is the program, so it is
+// removed before the file is inlined: the 'ignite:' line (at column 0) and the indented, blank or
+// comment lines after it. The removed lines are left empty so the line count does not change.
 static string strip_ignite_blocks(const string& src)
 {
-    string out;
-    size_t i = 0, n = src.size();
-    auto is_ident = [](char c) { return isalnum((unsigned char)c) || c == '_'; };
-    while (i < n)
+    istringstream in(src);
+    string line, out;
+    bool inBlock = false;
+    while (getline(in, line))
     {
-        char c = src[i];
-        if (c == '"')  // string literal: copy as is
+        size_t first = line.find_first_not_of(" \t\r");
+        bool blankOrComment = (first == string::npos || line[first] == '#');
+        if (inBlock)
         {
-            size_t j = i + 1;
-            while (j < n && src[j] != '"' && src[j] != '\n') j += (src[j] == '\\') ? 2 : 1;
-            j = min(j + 1, n);
-            out.append(src, i, j - i);
-            i = j;
-            continue;
+            if (blankOrComment || first > 0) { out += "\n"; continue; }
+            inBlock = false;
         }
-        if (c == '#' || (c == '/' && i + 1 < n && src[i + 1] == '/'))  // comment: copy to end of line
+        if (first == 0 && line.compare(0, 6, "ignite") == 0)
         {
-            size_t j = src.find('\n', i);
-            if (j == string::npos) j = n;
-            out.append(src, i, j - i);
-            i = j;
-            continue;
-        }
-        if (src.compare(i, 6, "ignite") == 0 && (i == 0 || !is_ident(src[i - 1])) &&
-            (i + 6 >= n || !is_ident(src[i + 6])))
-        {
-            size_t j = i + 6;
-            while (j < n && isspace((unsigned char)src[j])) j++;
-            if (j < n && src[j] == '{')
+            size_t k = 6;
+            while (k < line.size() && line[k] == ' ') k++;
+            if (k < line.size() && line[k] == ':')
             {
-                // skip to the matching '}', keeping newlines
-                int depth = 0;
-                for (size_t k = i; k < j; k++) if (src[k] == '\n') out += '\n';
-                for (; j < n; j++)
-                {
-                    if (src[j] == '\n') out += '\n';
-                    if (src[j] == '"')  // braces inside strings do not count
-                    {
-                        j++;
-                        while (j < n && src[j] != '"' && src[j] != '\n') j += (src[j] == '\\') ? 2 : 1;
-                        continue;
-                    }
-                    if (src[j] == '#' || (src[j] == '/' && j + 1 < n && src[j + 1] == '/'))  // nor in comments
-                    {
-                        while (j + 1 < n && src[j + 1] != '\n') j++;
-                        continue;
-                    }
-                    if (src[j] == '{') depth++;
-                    else if (src[j] == '}' && --depth == 0) { j++; break; }
-                }
-                i = j;
+                size_t rest = line.find_first_not_of(" \t\r", k + 1);
+                inBlock = (rest == string::npos || line[rest] == '#');  // otherwise a one-line block
+                out += "\n";
                 continue;
             }
         }
-        out += c;
-        i++;
+        out += line + "\n";
     }
     return out;
 }

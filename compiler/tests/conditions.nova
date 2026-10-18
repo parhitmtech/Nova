@@ -1,72 +1,74 @@
-// Syntax step 1: conditions are ordinary expressions. Comparisons and and / or / not produce a
-// bool that can be grouped, stored, passed and returned, and any expression works as a condition
-// in if, elif, while, do-while, for and switch.
-def is_even(int n) -> bool {
-    return n % 2 == 0 ;
-}
+# Syntax step 1: conditions are ordinary expressions. Comparisons and and / or / not produce a
+# bool that can be grouped, stored, passed and returned, and any expression works as a condition
+# in if, elif, while, do-while, for and switch.
+def is_even(int n) -> bool:
+    return n % 2 == 0
 
-def noisy(int v) -> int {
-    print(v) ;
-    return v ;
-}
+def noisy(int v) -> int:
+    print(v)
+    return v
 
-ignite {
-    int a = 1 ;
-    int b = 2 ;
-    int c = 3 ;
+ignite:
+    int a = 1
+    int b = 2
+    int c = 3
 
-    // grouping and precedence (not binds looser than a comparison)
-    if ((a < b) or (c < a)) { print(1) ; } else { print(0) ; }
-    if (a < b and (b > c or c == 3)) { print(1) ; } else { print(0) ; }
-    if (not (a < b)) { print(1) ; } else { print(0) ; }
-    if (not a > b) { print(1) ; } else { print(0) ; }
+    # grouping and precedence (not binds looser than a comparison)
+    if ((a < b) or (c < a)): print(1)
+    else: print(0)
+    if (a < b and (b > c or c == 3)): print(1)
+    else: print(0)
+    if (not (a < b)): print(1)
+    else: print(0)
+    if (not a > b): print(1)
+    else: print(0)
 
-    // stored, passed and returned bools
-    bool small = (a + b < c) ;
-    print(small) ;
-    bool ok = a < b and b < c ;
-    if (ok) { print(1) ; } else { print(0) ; }
-    if (is_even(4) and not is_even(7)) { print(1) ; } else { print(0) ; }
+    # stored, passed and returned bools
+    bool small = (a + b < c)
+    print(small)
+    bool ok = a < b and b < c
+    if (ok): print(1)
+    else: print(0)
+    if (is_even(4) and not is_even(7)): print(1)
+    else: print(0)
 
-    // any number is a condition: non-zero is true
-    int n = 3 ;
-    if (n) { print(1) ; } else { print(0) ; }
-    if (n - 3) { print(1) ; } else { print(0) ; }
+    # any number is a condition: non-zero is true
+    int n = 3
+    if (n): print(1)
+    else: print(0)
+    if (n - 3): print(1)
+    else: print(0)
 
-    // short-circuit: the right side runs only when needed
-    if (noisy(0) and noisy(1)) { print(9) ; }
-    if (noisy(2) or noisy(3)) { print(9) ; }
+    # short-circuit: the right side runs only when needed
+    if (noisy(0) and noisy(1)): print(9)
+    if (noisy(2) or noisy(3)): print(9)
 
-    // elif
-    int g = 75 ;
-    if (g >= 90) { print(4) ; } elif (g >= 70 and g < 90) { print(3) ; } else { print(0) ; }
+    # elif
+    int g = 75
+    if (g >= 90): print(4)
+    elif (g >= 70 and g < 90): print(3)
+    else: print(0)
 
-    // loop conditions with calls, tensors and grouping
-    int t = tensor_zeros(1, 4) ;
-    int k = 0 ;
-    while (k < tensor_cols(t) and not (k == 2)) {
-        k += 1 ;
-    }
-    print(k) ;
-    int steps = 0 ;
-    do {
-        steps += 1 ;
-    } while (steps * steps < 10) ;
-    print(steps) ;
-    int total = 0 ;
-    int i = 0 ;
-    for(i = 0 ; (i < c * 2 and is_even(i)) or i == 1 ; i = i + 1) {
-        total += 1 ;
-    }
-    print(total) ;
+    # loop conditions with calls, tensors and grouping
+    int t = tensor_zeros(1, 4)
+    int k = 0
+    while (k < tensor_cols(t) and not (k == 2)):
+        k += 1
+    print(k)
+    int steps = 0
+    do:
+        steps += 1
+    while (steps * steps < 10)
+    print(steps)
+    int total = 0
+    int i = 0
+    for(i = 0 ; (i < c * 2 and is_even(i)) or i == 1 ; i = i + 1):
+        total += 1
+    print(total)
 
-    // switch on an expression
-    switch (a + b) {
-        case 3: {
-            print(30) ;
-        }
-        default: {
-            print(0) ;
-        }
-    }
-}
+    # switch on an expression
+    switch (a + b):
+        case 3:
+            print(30)
+        default:
+            print(0)

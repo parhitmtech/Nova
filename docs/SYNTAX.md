@@ -44,11 +44,16 @@ ignite:
 ## 2. Lexical structure
 
 - **Blocks by indentation.** A line ending in `:` opens a block; the block is the following lines
-  indented further. The lexer turns indentation changes into `INDENT` / `DEDENT` tokens. Indent with
-  spaces (tabs are an error, to avoid mixed widths).
+  indented further (any consistent amount; 4 spaces by convention). Indent with spaces: tabs are an
+  error, to avoid mixed widths. A block whose body is one statement can stay on its line:
+  `if (x > 0): print(x)`. An empty block is written `pass`.
 - **Newlines end statements.** No semicolons, except as separators inside a `for (...)` header. A
-  newline inside `( )` or `[ ]` does not end a statement, so long calls can wrap freely.
-- **Comments:** `# ...` to end of line.
+  newline inside `( )` or `[ ]` does not end a statement, so long calls can wrap freely, and the
+  continuation lines may be indented however you like.
+- **Comments:** `# ...` to end of line. A comment's indentation does not matter. (`//` is an error.)
+- **How it is implemented:** a layout pass in the lexer turns `:` into `{`, a return to a smaller
+  indentation into `}`, and each line end into `;`, so the parser reads the same token stream as
+  before. A `case` / `default` label keeps its `:`.
 - **Literals:** integers `42`, `10_000`; floats `0.5`, `1e-3`; strings `"..."` with `\n`, `\t`,
   `\"`, `\\`; booleans `true`, `false`.
 - **Identifiers:** letters, digits, `_`; not starting with a digit.
@@ -275,7 +280,8 @@ commit.
    comparisons and `and` / `or` / `not` are expressions, so any expression is a condition.
 2. Entry point (done): `ignite { ... }` replaces `main() { ... }`; `def main()` is also accepted; an
    imported file's `ignite` block does not run.
-3. Indentation: `INDENT` / `DEDENT`, `:` blocks, no braces, no semicolons, `#` comments only.
+3. Indentation (done): `:` blocks with indented bodies, one-line bodies, `pass`; no braces, no
+   semicolons, `#` comments only; the REPL reads a block until a blank line.
 4. `break` and `continue`.
 5. `Tensor` / `Tensor<dtype>` as a real type (no more `int` tensors).
 6. Tensor operators and methods: `+ - * / @` on tensors, `t[i, j]`, `t.T`, `t.shape`, short names.

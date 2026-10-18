@@ -1,56 +1,52 @@
-def dabs(double x) -> double {
-    if (x < 0.0) {
-        return 0.0 - x ;
-    }
-    return x ;
-}
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
 
-ignite {
-    double eps = 0.0001 ;
-    double tol = 0.001 ;
-    double maxdiff = 0.0 ;
-    double d = 0.0 ;
+ignite:
+    double eps = 0.0001
+    double tol = 0.001
+    double maxdiff = 0.0
+    double d = 0.0
 
-    // ── tanh ────────────────────────────────────────────────────────────────
-    int thA = tensor_zeros(2, 2) ;
-    tensor_set(thA, 0, 0, 1.5) ;
-    tensor_set(thA, 0, 1, (0.0 - 2.0)) ;
-    tensor_set(thA, 1, 0, 0.7) ;
-    tensor_set(thA, 1, 1, (0.0 - 0.3)) ;
-    int thT = tensor_zeros(2, 2) ;
-    tensor_set(thT, 0, 0, 0.1) ;
-    tensor_set(thT, 0, 1, (0.0 - 0.2)) ;
-    tensor_set(thT, 1, 0, 0.3) ;
-    tensor_set(thT, 1, 1, (0.0 - 0.4)) ;
+    # ── tanh ────────────────────────────────────────────────────────────────
+    int thA = tensor_zeros(2, 2)
+    tensor_set(thA, 0, 0, 1.5)
+    tensor_set(thA, 0, 1, (0.0 - 2.0))
+    tensor_set(thA, 1, 0, 0.7)
+    tensor_set(thA, 1, 1, (0.0 - 0.3))
+    int thT = tensor_zeros(2, 2)
+    tensor_set(thT, 0, 0, 0.1)
+    tensor_set(thT, 0, 1, (0.0 - 0.2))
+    tensor_set(thT, 1, 0, 0.3)
+    tensor_set(thT, 1, 1, (0.0 - 0.4))
 
-    requires_grad(thA) ;
-    int thY = tanh_t(thA) ;
-    int thL = mse_loss(thY, thT) ;
-    backward(thL) ;
-    int thG = tensor_grad(thA) ;
+    requires_grad(thA)
+    int thY = tanh_t(thA)
+    int thL = mse_loss(thY, thT)
+    backward(thL)
+    int thG = tensor_grad(thA)
 
-    maxdiff = 0.0 ;
-    int ti = 0 ;
-    while (ti < 2) {
-        int tj = 0 ;
-        while (tj < 2) {
-            double orig = tensor_get(thA, ti, tj) ;
-            tensor_set(thA, ti, tj, orig + eps) ;
-            int yP8 = tanh_t(thA) ;
-            int lP8 = mse_loss(yP8, thT) ;
-            double lossP = tensor_get(lP8, 0, 0) ;
-            tensor_set(thA, ti, tj, orig - eps) ;
-            int yM8 = tanh_t(thA) ;
-            int lM8 = mse_loss(yM8, thT) ;
-            double lossM = tensor_get(lM8, 0, 0) ;
-            tensor_set(thA, ti, tj, orig) ;
-            double numeric = (lossP - lossM) / (2.0 * eps) ;
-            double analytic = tensor_get(thG, ti, tj) ;
-            d = dabs(numeric - analytic) ;
-            if (d > maxdiff) { maxdiff = d ; }
-            tj = tj + 1 ;
-        }
-        ti = ti + 1 ;
-    }
-    if (maxdiff < tol) { print("PASS tanh") ; } else { print("FAIL tanh") ; }
-}
+    maxdiff = 0.0
+    int ti = 0
+    while (ti < 2):
+        int tj = 0
+        while (tj < 2):
+            double orig = tensor_get(thA, ti, tj)
+            tensor_set(thA, ti, tj, orig + eps)
+            int yP8 = tanh_t(thA)
+            int lP8 = mse_loss(yP8, thT)
+            double lossP = tensor_get(lP8, 0, 0)
+            tensor_set(thA, ti, tj, orig - eps)
+            int yM8 = tanh_t(thA)
+            int lM8 = mse_loss(yM8, thT)
+            double lossM = tensor_get(lM8, 0, 0)
+            tensor_set(thA, ti, tj, orig)
+            double numeric = (lossP - lossM) / (2.0 * eps)
+            double analytic = tensor_get(thG, ti, tj)
+            d = dabs(numeric - analytic)
+            if (d > maxdiff): maxdiff = d
+            tj = tj + 1
+        ti = ti + 1
+    if (maxdiff < tol): print("PASS tanh")
+    else: print("FAIL tanh")

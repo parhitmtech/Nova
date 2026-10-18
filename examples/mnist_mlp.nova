@@ -1,50 +1,48 @@
-// M0 demo: an MNIST-shaped MLP (784 -> 64 -> 10) trained with autograd for 10,000 minibatch steps.
-// Memory must stay flat for the whole run.
-//
-// Data: synthetic, MNIST-shaped (300 samples x 784 features, 10 classes).
-// Generate it first, from this folder: python generate_mnist_data.py 
-// Run:     NOVA_TENSOR_STATS=1 ./compiler examples/mnist_mlp.nova
-// Expect: loss falls from ~2.31 to under 0.001 (the synthetic classes are easy
-// to separate), and the stats line shows a small, constant number of live
-// tensors (12) however many steps run.
-ignite {
-    int X = tensor_load_csv("mnist_X.csv", 200, 784) ;
-    int Y = tensor_load_csv("mnist_Y.csv", 200, 10) ;
+# M0 demo: an MNIST-shaped MLP (784 -> 64 -> 10) trained with autograd for 10,000 minibatch steps.
+# Memory must stay flat for the whole run.
+#
+# Data: synthetic, MNIST-shaped (300 samples x 784 features, 10 classes).
+# Generate it first, from this folder: python generate_mnist_data.py
+# Run:     NOVA_TENSOR_STATS=1 ./compiler examples/mnist_mlp.nova
+# Expect: loss falls from ~2.31 to under 0.001 (the synthetic classes are easy
+# to separate), and the stats line shows a small, constant number of live
+# tensors (12) however many steps run.
+ignite:
+    int X = tensor_load_csv("mnist_X.csv", 200, 784)
+    int Y = tensor_load_csv("mnist_Y.csv", 200, 10)
 
-    int W1 = tensor_xavier(784, 64) ;
-    int b1 = tensor_zeros(1, 64) ;
-    int W2 = tensor_xavier(64, 10) ;
-    int b2 = tensor_zeros(1, 10) ;
-    requires_grad(W1) ;
-    requires_grad(b1) ;
-    requires_grad(W2) ;
-    requires_grad(b2) ;
+    int W1 = tensor_xavier(784, 64)
+    int b1 = tensor_zeros(1, 64)
+    int W2 = tensor_xavier(64, 10)
+    int b2 = tensor_zeros(1, 10)
+    requires_grad(W1)
+    requires_grad(b1)
+    requires_grad(W2)
+    requires_grad(b2)
 
-    double lr = 0.1 ;
-    int steps = 10000 ;
-    int step = 0 ;
-    int batch = 0 ;
-    while (step < steps) {
-        int start = batch * 20 ;
-        int xb = tensor_slice_rows(X, start, start + 20) ;
-        int yb = tensor_slice_rows(Y, start, start + 20) ;
-        int h = relu(tensor_add(matmul(xb, W1), b1)) ;
-        int logits = tensor_add(matmul(h, W2), b2) ;
-        int loss = cross_entropy_loss(logits, yb) ;
-        backward(loss) ;
-        grad_step(W1, lr) ;
-        grad_step(b1, lr) ;
-        grad_step(W2, lr) ;
-        grad_step(b2, lr) ;
-        if (step < 1) { print(tensor_get(loss, 0, 0)) ; }
-        batch = batch + 1 ;
-        if (batch > 9) { batch = 0 ; }
-        step = step + 1 ;
-    }
+    double lr = 0.1
+    int steps = 10000
+    int step = 0
+    int batch = 0
+    while (step < steps):
+        int start = batch * 20
+        int xb = tensor_slice_rows(X, start, start + 20)
+        int yb = tensor_slice_rows(Y, start, start + 20)
+        int h = relu(tensor_add(matmul(xb, W1), b1))
+        int logits = tensor_add(matmul(h, W2), b2)
+        int loss = cross_entropy_loss(logits, yb)
+        backward(loss)
+        grad_step(W1, lr)
+        grad_step(b1, lr)
+        grad_step(W2, lr)
+        grad_step(b2, lr)
+        if (step < 1): print(tensor_get(loss, 0, 0))
+        batch = batch + 1
+        if (batch > 9): batch = 0
+        step = step + 1
 
-    // final loss on all 200 samples
-    int hf = relu(tensor_add(matmul(X, W1), b1)) ;
-    int lf = tensor_add(matmul(hf, W2), b2) ;
-    int lossf = cross_entropy_loss(lf, Y) ;
-    print(tensor_get(lossf, 0, 0)) ;
-}
+    # final loss on all 200 samples
+    int hf = relu(tensor_add(matmul(X, W1), b1))
+    int lf = tensor_add(matmul(hf, W2), b2)
+    int lossf = cross_entropy_loss(lf, Y)
+    print(tensor_get(lossf, 0, 0))

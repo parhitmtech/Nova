@@ -1,7 +1,6 @@
-ignite {
-    string s = "hello" ;
-    print(s) ;
-    print("world") ;
-    string t = "nova" ;
-    print(t) ;
-}
+ignite:
+    string s = "hello"
+    print(s)
+    print("world")
+    string t = "nova"
+    print(t)

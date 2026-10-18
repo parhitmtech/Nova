@@ -49,12 +49,12 @@ void run_repl()
     fflush(stdout);
 
     string accumulated = "";  // full input collected so far
-    int brace_depth = 0;  // tracks open {} to detect multi-line input
+    bool in_block = false;    // a line ended with ':': keep reading until a blank line (like Python)
 
     while (true)
     {
         // show prompt
-        if (brace_depth == 0)
+        if (!in_block)
             printf(">>> ");
         else
             printf("... ");
@@ -83,20 +83,14 @@ void run_repl()
         // accumulated line
         accumulated += line + "\n";
 
-        // count brace depth
-        for (char c : line)
+        // A line ending in ':' opens a block: keep reading until an empty line ends it.
+        string code = trimmed.substr(0, trimmed.find('#'));
+        size_t codeEnd = code.find_last_not_of(" \t");
+        if (codeEnd != string::npos && code[codeEnd] == ':') in_block = true;
+        if (in_block)
         {
-            if (c == '{') brace_depth++;
-            if (c == '}') brace_depth--;
-        }
-
-        // brace_depth should never go below 0
-        if (brace_depth < 0) brace_depth = 0;
-
-        // if braces are still open - keep reading
-        if (brace_depth > 0)
-        {
-            continue;
+            if (!trimmed.empty()) continue;
+            in_block = false;
         }
 
         // we have a complete input - parse and execute
@@ -120,13 +114,16 @@ void run_repl()
                            accumulated.find("import ") != string::npos);
         if (!hasTopLevel)
         {
-            // Pure statement - wrap in an ignite block
-            wrapped = "ignite\n{\n" + accumulated + "\n}\n";
+            // Pure statements - indent them into an ignite block
+            wrapped = "ignite:\n";
+            istringstream lines(accumulated);
+            string l;
+            while (getline(lines, l)) wrapped += "    " + l + "\n";
         }
         else if (!hasIgnite)
         {
             // Top-level def/class/import without an ignite block - append an empty one
-            wrapped = accumulated + "\nignite\n{\n}\n";
+            wrapped = accumulated + "\nignite:\n    pass\n";
         }
         set<string> already_imported;
         string processed = preprocess_import(wrapped, ".", already_imported);
@@ -139,7 +136,7 @@ void run_repl()
                 fprintf(stderr, "%s\n", err.c_str());
             errorList.clear();
             accumulated = "";
-            brace_depth = 0;
+            in_block = false;
             continue; // recover insterad of crashing
         }
         else if (program != nullptr)
@@ -151,6 +148,6 @@ void run_repl()
 
         // reset for next input
         accumulated = "";
-        brace_depth = 0;
+        in_block = false;
     }
 }

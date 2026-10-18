@@ -1,8 +1,6 @@
-// One ignite block per file.
-ignite {
-    print(1) ;
-}
+# One ignite block per file.
+ignite:
+    print(1)
 
-ignite {
-    print(2) ;
-}
+ignite:
+    print(2)

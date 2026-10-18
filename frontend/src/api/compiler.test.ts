@@ -36,7 +36,7 @@ describe('runCodeStream', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     const seen: [string, string][] = []
-    await runCodeStream('ignite {}', '', (type, text) => seen.push([type, text]), undefined, 'tok')
+    await runCodeStream('ignite:\n    pass', '', (type, text) => seen.push([type, text]), undefined, 'tok')
 
     expect(seen).toEqual([
       ['stdout', '\r[█░] 50%'],

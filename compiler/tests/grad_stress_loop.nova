@@ -1,23 +1,21 @@
-// Stress test for the compiler-inserted tensor-free pass: allocate and
-// discard a tensor every iteration of a long-running loop. If releases are
-// not actually happening, tensor_heap grows by one entry per iteration and
-// this either runs very slowly or (checked externally via NOVA_TENSOR_STATS)
-// shows a heap size proportional to the iteration count instead of flat.
-ignite {
-    int i = 0;
-    int total = 2000;
-    double acc = 0.0;
-    while (i < total) {
-        int t = tensor_zeros(4, 4);
-        tensor_set(t, 0, 0, 1.0);
-        tensor_set(t, 1, 1, 2.0);
-        tensor_set(t, 2, 2, 3.0);
-        tensor_set(t, 3, 3, 4.0);
-        double v = tensor_get(t, 1, 1);
-        acc = acc + v;
-        i = i + 1;
-    }
-    print("done ");
-    print(acc);
-    print("\n");
-}
+# Stress test for the compiler-inserted tensor-free pass: allocate and
+# discard a tensor every iteration of a long-running loop. If releases are
+# not actually happening, tensor_heap grows by one entry per iteration and
+# this either runs very slowly or (checked externally via NOVA_TENSOR_STATS)
+# shows a heap size proportional to the iteration count instead of flat.
+ignite:
+    int i = 0
+    int total = 2000
+    double acc = 0.0
+    while (i < total):
+        int t = tensor_zeros(4, 4)
+        tensor_set(t, 0, 0, 1.0)
+        tensor_set(t, 1, 1, 2.0)
+        tensor_set(t, 2, 2, 3.0)
+        tensor_set(t, 3, 3, 4.0)
+        double v = tensor_get(t, 1, 1)
+        acc = acc + v
+        i = i + 1
+    print("done ")
+    print(acc)
+    print("\n")

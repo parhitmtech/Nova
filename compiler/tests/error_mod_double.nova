@@ -1,5 +1,4 @@
-// % works on ints only.
-ignite {
-    double d = 5.0 ;
-    double e = d % 2.0 ;
-}
+# % works on ints only.
+ignite:
+    double d = 5.0
+    double e = d % 2.0

@@ -1,5 +1,0 @@
-// An extra closing brace is reported.
-ignite {
-    print(1) ;
-}
-}

@@ -1,56 +1,52 @@
-def dabs(double x) -> double {
-    if (x < 0.0) {
-        return 0.0 - x ;
-    }
-    return x ;
-}
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
 
-ignite {
-    double eps = 0.0001 ;
-    double tol = 0.001 ;
-    double maxdiff = 0.0 ;
-    double d = 0.0 ;
+ignite:
+    double eps = 0.0001
+    double tol = 0.001
+    double maxdiff = 0.0
+    double d = 0.0
 
-    // ── sigmoid ─────────────────────────────────────────────────────────────
-    int sgA = tensor_zeros(2, 2) ;
-    tensor_set(sgA, 0, 0, 1.5) ;
-    tensor_set(sgA, 0, 1, (0.0 - 2.0)) ;
-    tensor_set(sgA, 1, 0, 0.7) ;
-    tensor_set(sgA, 1, 1, (0.0 - 0.3)) ;
-    int sgT = tensor_zeros(2, 2) ;
-    tensor_set(sgT, 0, 0, 0.1) ;
-    tensor_set(sgT, 0, 1, 0.2) ;
-    tensor_set(sgT, 1, 0, 0.3) ;
-    tensor_set(sgT, 1, 1, 0.4) ;
+    # ── sigmoid ─────────────────────────────────────────────────────────────
+    int sgA = tensor_zeros(2, 2)
+    tensor_set(sgA, 0, 0, 1.5)
+    tensor_set(sgA, 0, 1, (0.0 - 2.0))
+    tensor_set(sgA, 1, 0, 0.7)
+    tensor_set(sgA, 1, 1, (0.0 - 0.3))
+    int sgT = tensor_zeros(2, 2)
+    tensor_set(sgT, 0, 0, 0.1)
+    tensor_set(sgT, 0, 1, 0.2)
+    tensor_set(sgT, 1, 0, 0.3)
+    tensor_set(sgT, 1, 1, 0.4)
 
-    requires_grad(sgA) ;
-    int sgY = sigmoid(sgA) ;
-    int sgL = mse_loss(sgY, sgT) ;
-    backward(sgL) ;
-    int sgG = tensor_grad(sgA) ;
+    requires_grad(sgA)
+    int sgY = sigmoid(sgA)
+    int sgL = mse_loss(sgY, sgT)
+    backward(sgL)
+    int sgG = tensor_grad(sgA)
 
-    maxdiff = 0.0 ;
-    int gi = 0 ;
-    while (gi < 2) {
-        int gj = 0 ;
-        while (gj < 2) {
-            double orig = tensor_get(sgA, gi, gj) ;
-            tensor_set(sgA, gi, gj, orig + eps) ;
-            int yP7 = sigmoid(sgA) ;
-            int lP7 = mse_loss(yP7, sgT) ;
-            double lossP = tensor_get(lP7, 0, 0) ;
-            tensor_set(sgA, gi, gj, orig - eps) ;
-            int yM7 = sigmoid(sgA) ;
-            int lM7 = mse_loss(yM7, sgT) ;
-            double lossM = tensor_get(lM7, 0, 0) ;
-            tensor_set(sgA, gi, gj, orig) ;
-            double numeric = (lossP - lossM) / (2.0 * eps) ;
-            double analytic = tensor_get(sgG, gi, gj) ;
-            d = dabs(numeric - analytic) ;
-            if (d > maxdiff) { maxdiff = d ; }
-            gj = gj + 1 ;
-        }
-        gi = gi + 1 ;
-    }
-    if (maxdiff < tol) { print("PASS sigmoid") ; } else { print("FAIL sigmoid") ; }
-}
+    maxdiff = 0.0
+    int gi = 0
+    while (gi < 2):
+        int gj = 0
+        while (gj < 2):
+            double orig = tensor_get(sgA, gi, gj)
+            tensor_set(sgA, gi, gj, orig + eps)
+            int yP7 = sigmoid(sgA)
+            int lP7 = mse_loss(yP7, sgT)
+            double lossP = tensor_get(lP7, 0, 0)
+            tensor_set(sgA, gi, gj, orig - eps)
+            int yM7 = sigmoid(sgA)
+            int lM7 = mse_loss(yM7, sgT)
+            double lossM = tensor_get(lM7, 0, 0)
+            tensor_set(sgA, gi, gj, orig)
+            double numeric = (lossP - lossM) / (2.0 * eps)
+            double analytic = tensor_get(sgG, gi, gj)
+            d = dabs(numeric - analytic)
+            if (d > maxdiff): maxdiff = d
+            gj = gj + 1
+        gi = gi + 1
+    if (maxdiff < tol): print("PASS sigmoid")
+    else: print("FAIL sigmoid")

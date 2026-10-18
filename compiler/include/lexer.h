@@ -62,6 +62,7 @@ class Token {
     std::string lexeme;
     TokenType token_type;
     int line_no;
+    int indent = -1;  // first token on its line: the line's indentation in spaces; otherwise -1
 };
 
 class LexicalAnalyzer {
@@ -82,7 +83,11 @@ class LexicalAnalyzer {
     Token tmp;
     InputBuffer input;
     bool initialized = false;
+    bool atLineStart = true;   // no token read yet on the current line
+    int column = 0;            // spaces since the start of the current line
+    bool tabInIndent = false;  // a tab in the current line's indentation (not allowed)
     bool SkipSpace();
+    void ApplyLayout();        // indentation, ':' and line ends  ->  { } and ;
     bool NextIs(char c);  // consume the next character if it is c
     void DesugarCompoundAssignments();  // x += e  ->  x = x + (e)
     void AddMainEntry();                // no ignite block but def main()  ->  ignite { main() ; }

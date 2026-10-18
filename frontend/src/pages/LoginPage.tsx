@@ -57,7 +57,7 @@ export default function LoginPage() {
           <div className="code-label">
             <span className="status-dot" /> hello.nova
           </div>
-          <pre>{'ignite {\n    print("Hello, possibility.") ;\n}'}</pre>
+          <pre>{'ignite:\n    print("Hello, possibility.")'}</pre>
         </div>
       </section>
       <section className="auth-form-side">
