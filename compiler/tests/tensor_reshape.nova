@@ -1,5 +1,5 @@
 // tensor_reshape keeps the elements in order, infers one -1 dimension and supports N-D shapes.
-main() {
+ignite {
     int a = tensor_ones(3, 4) ;
     tensor_set(a, 0, 1, 7.0) ;
     int b = tensor_reshape(a, 2, 6) ;

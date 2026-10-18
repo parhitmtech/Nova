@@ -1,0 +1,4 @@
+// A program needs an entry point.
+def helper() -> int {
+    return 1 ;
+}

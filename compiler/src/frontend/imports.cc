@@ -77,6 +77,71 @@ string get_stdlib_path()
     return path + "/stdlib";
 }
 
+// An imported file's 'ignite { ... }' block only runs when that file itself is the program, so it is
+// removed before the file is inlined. Strings and comments are skipped; newlines inside the block are
+// kept so the line count does not change.
+static string strip_ignite_blocks(const string& src)
+{
+    string out;
+    size_t i = 0, n = src.size();
+    auto is_ident = [](char c) { return isalnum((unsigned char)c) || c == '_'; };
+    while (i < n)
+    {
+        char c = src[i];
+        if (c == '"')  // string literal: copy as is
+        {
+            size_t j = i + 1;
+            while (j < n && src[j] != '"' && src[j] != '\n') j += (src[j] == '\\') ? 2 : 1;
+            j = min(j + 1, n);
+            out.append(src, i, j - i);
+            i = j;
+            continue;
+        }
+        if (c == '#' || (c == '/' && i + 1 < n && src[i + 1] == '/'))  // comment: copy to end of line
+        {
+            size_t j = src.find('\n', i);
+            if (j == string::npos) j = n;
+            out.append(src, i, j - i);
+            i = j;
+            continue;
+        }
+        if (src.compare(i, 6, "ignite") == 0 && (i == 0 || !is_ident(src[i - 1])) &&
+            (i + 6 >= n || !is_ident(src[i + 6])))
+        {
+            size_t j = i + 6;
+            while (j < n && isspace((unsigned char)src[j])) j++;
+            if (j < n && src[j] == '{')
+            {
+                // skip to the matching '}', keeping newlines
+                int depth = 0;
+                for (size_t k = i; k < j; k++) if (src[k] == '\n') out += '\n';
+                for (; j < n; j++)
+                {
+                    if (src[j] == '\n') out += '\n';
+                    if (src[j] == '"')  // braces inside strings do not count
+                    {
+                        j++;
+                        while (j < n && src[j] != '"' && src[j] != '\n') j += (src[j] == '\\') ? 2 : 1;
+                        continue;
+                    }
+                    if (src[j] == '#' || (src[j] == '/' && j + 1 < n && src[j + 1] == '/'))  // nor in comments
+                    {
+                        while (j + 1 < n && src[j + 1] != '\n') j++;
+                        continue;
+                    }
+                    if (src[j] == '{') depth++;
+                    else if (src[j] == '}' && --depth == 0) { j++; break; }
+                }
+                i = j;
+                continue;
+            }
+        }
+        out += c;
+        i++;
+    }
+    return out;
+}
+
 string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported)
 {
     string result;
@@ -121,7 +186,7 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
                     imported_dir = ".";
                 }
 
-                string inlined = preprocess_import(file_src, imported_dir, already_imported);
+                string inlined = preprocess_import(strip_ignite_blocks(file_src), imported_dir, already_imported);
                 result += inlined + "\n";
                 continue;
             }
@@ -148,7 +213,7 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
                 string file_src = read_file(full_path);
                 if (file_src.empty()) continue;
 
-                string inlined = preprocess_import(file_src, stdlib_dir, already_imported);
+                string inlined = preprocess_import(strip_ignite_blocks(file_src), stdlib_dir, already_imported);
                 result += inlined + "\n";
                 continue;
             }

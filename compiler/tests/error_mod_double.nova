@@ -1,5 +1,5 @@
 // % works on ints only.
-main() {
+ignite {
     double d = 5.0 ;
     double e = d % 2.0 ;
 }

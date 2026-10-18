@@ -299,27 +299,34 @@ struct InstructionNode* parse_generate_intermediate_representation()
         token = lexer.GetToken();
     }
 
+    // The entry point: one 'ignite { ... }' block after the definitions (Nova is one-pass, so
+    // everything it calls must already be defined). A file with only 'def main()' gets
+    // "ignite { main() ; }" appended by the lexer.
     struct InstructionNode* head = nullptr, *tracker = nullptr;
-    if (token.token_type != MAIN)
+    if (token.token_type == END_OF_FILE)
     {
-        report_error(token.line_no, "expected 'main' function but got '" + token.lexeme + "'");
+        report_error(token.line_no, "no entry point: add an 'ignite { ... }' block at the end of the file (or define 'def main()')");
+    }
+    else if (token.token_type != IGNITE)
+    {
+        report_error(token.line_no, "expected a definition or the 'ignite' block, got '" + token.lexeme + "'");
     }
     else
     {
-        token = lexer.GetToken();  // consume '('
-        // fprintf(stderr, "TOKEN after main: %d '%s'\n", token.token_type, token.lexeme.c_str());
-        // fflush(stderr);
-        token = lexer.GetToken();  // consume ')'
-        token = lexer.GetToken();  // consume '{'
+        token = lexer.GetToken();  // consume 'ignite' -> '{'
+        if (token.token_type != LBRACE)
+            report_error(token.line_no, "expected '{' after 'ignite'");
         token = lexer.GetToken();  // advance to first statement in body
-        // fprintf(stderr, "FIRST STATEMENT TOKEN: %d '%s'\n", token.token_type, token.lexeme.c_str());
-        // fflush(stderr);
-        // parsing the main body
         while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
         {
-            parse_statement(head, tracker); 
+            parse_statement(head, tracker);
             token = lexer.GetToken();
         }
+        token = lexer.GetToken();  // past the closing '}'
+        if (token.token_type == IGNITE)
+            report_error(token.line_no, "a file can have only one 'ignite' block");
+        else if (token.token_type != END_OF_FILE)
+            report_error(token.line_no, "the 'ignite' block must come last: move '" + token.lexeme + "' above it");
     }
     
     if (head == nullptr) 

@@ -41,7 +41,7 @@ def halfF(float x) -> float {
     return x * 0.5 ;
 }
 
-main() {
+ignite {
     // arguments are variables: a bare decimal literal lexes as float and
     // is (correctly) rejected for a double parameter
     double a = 5.0 ;

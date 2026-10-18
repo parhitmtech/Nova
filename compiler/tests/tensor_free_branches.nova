@@ -3,7 +3,7 @@
 // last use is inside an else arm. Both used to leak once per skipped iteration (no release on the skipped edge).
 // A wrong release here would instead free a tensor too early and stop with a "freed tensor handle" error,
 // so this test also guards against over-releasing. Keep must survive the loop untouched
-main() {
+ignite {
     int keep = tensor_ones(2, 2) ;
     double acc = 0.0 ;
     int i = 0 ;

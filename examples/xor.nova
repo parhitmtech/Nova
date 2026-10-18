@@ -1,7 +1,7 @@
 // @ml
 import <novatorch.nn> ;
 
-main() {
+ignite {
     int X = tensor_zeros(4, 2) ;
     tensor_set(X, 0, 0, 0) ;
     tensor_set(X, 0, 1, 0) ;

@@ -7,7 +7,7 @@ class Acc {
     def get() -> int { return self.total ; }
 }
 
-main() {
+ignite {
     // comparisons
     int a = 3 ;
     int b = 5 ;

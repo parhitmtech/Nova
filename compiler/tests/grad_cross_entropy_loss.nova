@@ -22,7 +22,7 @@ def dabs(double x) -> double {
     return x ;
 }
 
-main() {
+ignite {
     double eps = 0.0001 ;
     double invTwoEps = 1.0 / (2.0 * eps) ;
     double tol = 0.001 ;

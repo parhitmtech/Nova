@@ -1,0 +1,8 @@
+// The entry point can be def main() instead of an ignite block.
+def square(int x) -> int {
+    return x * x ;
+}
+
+def main() {
+    print(square(7)) ;
+}

@@ -1,6 +1,6 @@
 //  "==" in conditions: int, double (including a literal on one side),
 // string, combined with and/or, negated with not, and as a loop condition.
-main() {
+ignite {
     int a = 3 ;
     int b = 3 ;
     int  c = 4 ;

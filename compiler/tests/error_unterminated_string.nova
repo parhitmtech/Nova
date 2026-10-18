@@ -1,4 +1,4 @@
 // An unterminated string literal is reported with its line.
-main() {
+ignite {
     print("abc) ;
 }

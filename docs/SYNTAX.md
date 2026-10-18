@@ -15,7 +15,7 @@ arguments in angle brackets.
 ```python
 orbit novatorch.nn
 
-fn main():
+ignite:
     Tensor X = zeros(4, 2)
     X[1, 1] = 1.0
     X[2, 0] = 1.0
@@ -93,24 +93,29 @@ the same name can be declared again in a later block.
 ## 5. Functions
 
 ```python
-fn add(int a, int b) -> int:       # typed: every parameter and the return type are declared
+def add(int a, int b) -> int:      # typed: parameter types first, return type after ->
     return a + b
 
-fn forward(Tensor<float> x) -> Tensor<float>:
+def forward(Tensor<float> x) -> Tensor<float>:
     return relu(x)
 
 def scale(x, k):                   # loose: types are inferred from each call
     return x * k
 
-fn main():                         # entry point
+ignite:                            # entry point: runs when this file is the program
     print(add(1, 2))
     print(scale(2.0, 3.0))         # compiles a double version of scale
 ```
 
-- `fn`: all parameter types required; return type required unless the function returns nothing.
-- `def`: parameter and return types may be omitted. Nova is compiled, so `def` is not dynamic: the
-  compiler makes one specialized copy per distinct combination of argument types it is called with
-  (like C++ templates). Type errors are still compile errors.
+- Every function is a `def`. Parameter types and the `-> type` return type may each be written or
+  left out. Nova is compiled, so leaving them out is not dynamic: the compiler makes one specialized
+  copy per distinct combination of argument types a function is called with (like C++ templates),
+  and type errors are still compile errors.
+- **Entry point:** the `ignite` block. It comes after the definitions (Nova is one-pass, so a
+  function must be defined before it is called), and a file has at most one. A file without an
+  `ignite` block may define `def main()` instead. When a file is pulled in with `orbit`, its
+  `ignite` block does not run, so a library file can carry its own demo or quick test, like Python's
+  `if __name__ == "__main__":`.
 
 ## 6. Structs and classes
 
@@ -123,21 +128,21 @@ class Linear:
     Tensor W
     Tensor b
 
-    fn init(self, int in_f, int out_f):       # constructor: Linear(2, 4) calls init
+    def init(self, int in_f, int out_f):       # constructor: Linear(2, 4) calls init
         self.W = xavier(in_f, out_f)
         self.b = zeros(1, out_f)
 
-    fn forward(self, Tensor x) -> Tensor:
+    def forward(self, Tensor x) -> Tensor:
         return x @ self.W + self.b
 
 class Tanh extends Activation:
-    fn forward(self, Tensor x) -> Tensor:
+    def forward(self, Tensor x) -> Tensor:
         return tanh(x)
 
 class Box<T>:                                 # generic class: one compiled copy per T used
     T value
 
-    fn init(self, T v):
+    def init(self, T v):
         self.value = v
 ```
 
@@ -242,11 +247,11 @@ ML libraries stay under `novatorch` (`orbit novatorch.nn`, `orbit novatorch.opti
 
 | Today | Target |
 |---|---|
-| `main() { ... }` | `fn main():` + indented block |
+| `main() { ... }` | `ignite:` + indented block (or `def main():`) |
 | `int x = 5 ;` | `int x = 5` |
 | `int t = tensor_zeros(2, 3) ;` | `Tensor t = zeros(2, 3)` |
-| `def f(double x) -> double {` | `fn f(double x) -> double:` |
-| `def forward(int x) -> int {` (tensor as `int`) | `fn forward(Tensor x) -> Tensor:` |
+| `def f(double x) -> double {` | `def f(double x) -> double:` |
+| `def forward(int x) -> int {` (tensor as `int`) | `def forward(Tensor x) -> Tensor:` |
 | `for(i = 1 ; i < n ; i = i + 1) {` | `for (i = 1; i < n; i += 1):` |
 | `do { ... } while c ;` | `do:` + block, then `while (c)` |
 | `switch(x) { case 1: {...} default: {...} }` | `switch (x):` / `case 1:` / `default:` |
@@ -268,7 +273,8 @@ commit.
 1. Operators and conditions (done): `!=`, `<=`, `>=`, `%`, unary minus, `+= -= *= /=`;
    conditions of `if` / `elif` / `while` / `do`-`while` / `switch` in mandatory parentheses;
    comparisons and `and` / `or` / `not` are expressions, so any expression is a condition.
-2. Functions: `fn` and `fn main()`.
+2. Entry point (done): `ignite { ... }` replaces `main() { ... }`; `def main()` is also accepted; an
+   imported file's `ignite` block does not run.
 3. Indentation: `INDENT` / `DEDENT`, `:` blocks, no braces, no semicolons, `#` comments only.
 4. `break` and `continue`.
 5. `Tensor` / `Tensor<dtype>` as a real type (no more `int` tensors).

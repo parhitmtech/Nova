@@ -1,4 +1,4 @@
-main() {
+ignite {
     int sum = 0 ;
     int n = 6 ;
     int i = 0 ;

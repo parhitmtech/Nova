@@ -1,7 +1,7 @@
 import <novatorch.nn> ;
 import <novatorch.optim> ;
 
-main() {
+ignite {
     # Dataset: y = 2x + 1
     int X = tensor_zeros(5, 1) ;
     tensor_set(X, 0, 0, 1) ;

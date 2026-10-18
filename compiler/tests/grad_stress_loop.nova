@@ -3,7 +3,7 @@
 // not actually happening, tensor_heap grows by one entry per iteration and
 // this either runs very slowly or (checked externally via NOVA_TENSOR_STATS)
 // shows a heap size proportional to the iteration count instead of flat.
-main() {
+ignite {
     int i = 0;
     int total = 2000;
     double acc = 0.0;

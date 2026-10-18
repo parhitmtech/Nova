@@ -1,5 +1,5 @@
 import <collections> ;
-main() {
+ignite {
     Queue q ;
     q.init() ;
     q.enqueue(5) ; q.enqueue(15) ; q.enqueue(25) ;

@@ -1,4 +1,4 @@
-main() {
+ignite {
     int x = 10 ;
     int y = 3 ;
     print(x + y) ;

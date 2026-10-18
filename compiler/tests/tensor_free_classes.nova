@@ -25,7 +25,7 @@ class Holder {
     }
 }
 
-main() {
+ignite {
     int base = tensor_ones(2, 2) ;
     Holder a ;
     Holder b ;

@@ -17,8 +17,8 @@ using namespace std;
 
 typedef enum { END_OF_FILE = 0,
 
-    // main keyword
-    MAIN,
+    // entry point: ignite { ... }
+    IGNITE,
 
     // keywords 
     FOR, IF, ELIF, WHILE, DO, SWITCH, CASE, DEFAULT,
@@ -85,6 +85,7 @@ class LexicalAnalyzer {
     bool SkipSpace();
     bool NextIs(char c);  // consume the next character if it is c
     void DesugarCompoundAssignments();  // x += e  ->  x = x + (e)
+    void AddMainEntry();                // no ignite block but def main()  ->  ignite { main() ; }
     int FindKeywordIndex(std::string);
     Token ScanIdOrKeyword();
     Token ScanNumber();

@@ -22,7 +22,7 @@ class Counter {
     }
 }
 
-main() {
+ignite {
     Counter c ;
     c.init() ;
     print(c.get()) ;

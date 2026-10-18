@@ -1,4 +1,4 @@
-main()
+ignite
 {
     int n = 32 ;
     int A = tensor_randn(n, n) ;

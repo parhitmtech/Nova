@@ -1,7 +1,7 @@
 import <novatorch.nn> ;
 import <novatorch.optim> ;
 
-main() {
+ignite {
     // Dataset: AND gate — simplest linearly separable binary problem
     // Input: 4x2,  Label: 1 only when both inputs are 1
     int X = tensor_zeros(4, 2) ;

@@ -38,3 +38,10 @@ def pow_int(int base, int exp) -> int {
     }
     return result;
 }
+
+// Runs only when this file itself is the program (nova stdlib/math.nova), not when imported.
+ignite {
+    print(abs_val(-5)) ;
+    print(max_val(2, 7)) ;
+    print(pow_int(2, 10)) ;
+}

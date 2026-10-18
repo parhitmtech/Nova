@@ -1,0 +1,6 @@
+// An imported file's ignite block does not run: math.nova has one that prints 5, 7, 1024.
+import <math> ;
+
+ignite {
+    print(clamp(15, 0, 10)) ;
+}

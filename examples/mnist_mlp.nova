@@ -7,7 +7,7 @@
 // Expect: loss falls from ~2.31 to under 0.001 (the synthetic classes are easy
 // to separate), and the stats line shows a small, constant number of live
 // tensors (12) however many steps run.
-main() {
+ignite {
     int X = tensor_load_csv("mnist_X.csv", 200, 784) ;
     int Y = tensor_load_csv("mnist_Y.csv", 200, 10) ;
 

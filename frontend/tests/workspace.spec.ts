@@ -2,8 +2,8 @@ import { test, expect, type Page } from '@playwright/test'
 import { Buffer } from 'node:buffer'
 
 const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-const first = 'main() {\n    print(1) ;\n}\n'
-const second = 'main() {\n    print(2) ;\n}\n'
+const first = 'ignite {\n    print(1) ;\n}\n'
+const second = 'ignite {\n    print(2) ;\n}\n'
 
 async function workspace(page: Page) {
   const files: Record<string, string> = { 'first.nova': first, 'second.nova': second, 'model.nbc': 'binary' }
@@ -105,7 +105,7 @@ test('file switching saves the edited source before loading another file', async
   const state = await workspace(page)
   await page.getByRole('button', { name: 'first.nova', exact: true }).click()
   await expect(page.locator('.editor-tab')).toContainText('first.nova')
-  const changed = 'main() {\n    print(42) ;\n}'
+  const changed = 'ignite {\n    print(42) ;\n}'
   await edit(page, changed)
   await page.getByRole('button', { name: 'second.nova', exact: true }).click()
   await expect(page.locator('.editor-tab')).toContainText('second.nova')
@@ -118,7 +118,7 @@ test('a failed save preserves the draft and blocks navigation until retry succee
   const state = await workspace(page)
   await page.getByRole('button', { name: 'first.nova', exact: true }).click()
   await expect(page.locator('.editor-tab')).toContainText('first.nova')
-  const changed = 'main() { print(99) ; }'
+  const changed = 'ignite { print(99) ; }'
   await edit(page, changed)
   state.fail(true)
   await page.getByRole('button', { name: 'second.nova', exact: true }).click()

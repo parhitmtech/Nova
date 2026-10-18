@@ -28,7 +28,7 @@ Nova compiles to native code via LLVM, with a CUDA backend for tensor operations
 Type casting: \`int(x)\`, \`float(x)\`, \`double(x)\`
 
 \`\`\`nova
-main()
+ignite
 {
     int a = 5 ;
     float b = float(a) ;
@@ -44,7 +44,7 @@ main()
 
 - Every statement ends with a **space then semicolon**: \`print(x) ;\`
 - Comments: \`// line comment\` or \`# line comment\`
-- Entry point: \`main()\` block (no return type, no args)
+- Entry point: an \`ignite { ... }\` block, after all definitions (one per file). A file without one may define \`def main()\` instead. When a file is imported, its \`ignite\` block does not run.
 - Functions: \`def name(params) -> returnType { ... }\`
 - Curly braces on same or next line — both work
 - No semicolons after \`}\`
@@ -53,7 +53,7 @@ main()
 
 \`\`\`nova
 // Hello World
-main()
+ignite
 {
     print("Hello, Nova!") ;
 }
@@ -79,7 +79,7 @@ main()
 ## Variables
 
 \`\`\`nova
-main()
+ignite
 {
     int x = 10 ;
     float y = 3.14 ;
@@ -96,7 +96,7 @@ main()
 ## I/O
 
 \`\`\`nova
-main()
+ignite
 {
     int n = input() ;   // reads integer from stdin
     print(n) ;
@@ -112,7 +112,7 @@ main()
 ### if / elif / else
 
 \`\`\`nova
-main()
+ignite
 {
     int x = 7 ;
     if (x > 10) {
@@ -130,7 +130,7 @@ main()
 ### while loop
 
 \`\`\`nova
-main()
+ignite
 {
     int i = 0 ;
     while (i < 10) {
@@ -143,7 +143,7 @@ main()
 ### for loop (C-style, 3-part)
 
 \`\`\`nova
-main()
+ignite
 {
     int i ;
     for(i = 0 ; i < 10 ; i = i + 1) {
@@ -155,7 +155,7 @@ main()
 ### do-while loop
 
 \`\`\`nova
-main()
+ignite
 {
     int i = 0 ;
     do {
@@ -168,7 +168,7 @@ main()
 ### switch / case / default
 
 \`\`\`nova
-main()
+ignite
 {
     int x = 2 ;
     switch(x) {
@@ -199,7 +199,7 @@ def square(int n) -> int {
     return n * n ;
 }
 
-main()
+ignite
 {
     int r = square(5) ;
     print(r) ;
@@ -213,7 +213,7 @@ def minmax(int a, int b) -> int, int {
     return a, b ;
 }
 
-main()
+ignite
 {
     int lo, int hi = minmax(3, 9) ;
     print(lo) ;
@@ -240,7 +240,7 @@ def fib(int n) -> int {
     return fib(n - 1) + fib(n - 2) ;
 }
 
-main()
+ignite
 {
     print(fib(40)) ;   // fast — auto-memoized
 }
@@ -253,7 +253,7 @@ main()
 Arrays are heap-allocated with \`array(n)\` and accessed with \`[]\` indexing. Size can be a variable or literal.
 
 \`\`\`nova
-main()
+ignite
 {
     int nums = array(6) ;
     int i = 0 ;
@@ -282,7 +282,7 @@ def fill(int n) -> int {
     return arr[n - 1] ;
 }
 
-main()
+ignite
 {
     print(fill(10)) ;
 }
@@ -310,7 +310,7 @@ def distance(Point a, Point b) -> int {
     return dx * dx + dy * dy ;
 }
 
-main()
+ignite
 {
     Point p ;
     p.x = 3 ;
@@ -355,7 +355,7 @@ class Dog extends Animal {
     }
 }
 
-main()
+ignite
 {
     Dog d ;
     d.init(3) ;
@@ -500,7 +500,7 @@ int r = rand_int(10) ;       // random int in [0, 10)
 ### Full Example: Neural Network Training
 
 \`\`\`nova
-main()
+ignite
 {
     tensor X = tensor_randn(100, 4) ;
     tensor y = tensor_zeros(100, 1) ;
@@ -541,7 +541,7 @@ Run inference on any HuggingFace model without leaving Nova.
 \`\`\`nova
 import hf
 
-main()
+ignite
 {
     hf.set_token("hf_xxxxx") ;
 
@@ -580,7 +580,7 @@ Submit fine-tuning jobs to the SOL supercomputer — a high-performance GPU clus
 import hf
 import sol
 
-main()
+ignite
 {
     hf.set_token("hf_xxxxx") ;
 
@@ -693,7 +693,7 @@ const NOVA_TOOLS = [
     input_schema: {
       type: 'object',
       properties: {
-        code:   { type: 'string', description: 'Complete Nova source code to execute. Must include main() function.' },
+        code:   { type: 'string', description: 'Complete Nova source code to execute. Must include an ignite { ... } block (or def main()).' },
         inputs: { type: 'string', description: 'Optional stdin inputs for the program, newline separated.' },
       },
       required: ['code'],

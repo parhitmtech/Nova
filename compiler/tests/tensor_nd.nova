@@ -7,7 +7,7 @@ def dabs(double x) -> double {
     return x ;
 }
 
-main() {
+ignite {
     // creation and shape
     int x = tensor_zeros(2, 3, 4) ;
     print(tensor_rank(x)) ;                     // 3

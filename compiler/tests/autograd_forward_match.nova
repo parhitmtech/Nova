@@ -11,7 +11,7 @@ def check(double off, double on) {
     if (dabs(off - on) < 0.000000001) { print("PASS") ; } else { print("FAIL") ; }
 }
 
-main() {
+ignite {
     int A = tensor_randn(2, 3) ;
     int B = tensor_randn(3, 4) ;
     int C = tensor_randn(2, 3) ;

@@ -1,7 +1,7 @@
 import <novatorch.nn> ;
 import <novatorch.optim> ;
 
-main() {
+ignite {
     // Dataset: 3-class problem (6 samples, 2 features, 3 classes)
     // Class 0: top-left, Class 1: top-right, Class 2: bottom-center
     int X = tensor_zeros(6, 2) ;

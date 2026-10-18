@@ -16,8 +16,8 @@ using namespace std;
 
 // must match TokenType enum order exactly
 string reserved[] = { 
-    "MAIN",    
     "END_OF_FILE",
+    "IGNITE",
     // control flow
     "FOR", "IF", "ELIF", "WHILE", "DO", "SWITCH", "CASE", "DEFAULT",
     // I/O
@@ -87,6 +87,7 @@ void LexicalAnalyzer::Initialize()
         token = GetTokenMain();
     }
     DesugarCompoundAssignments();
+    AddMainEntry();
 }
 
 void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
@@ -108,6 +109,7 @@ void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
         token = GetTokenMain();
     }
     DesugarCompoundAssignments();
+    AddMainEntry();
 }
 
 void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
@@ -131,6 +133,7 @@ void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
         token = GetTokenMain();
     }
     DesugarCompoundAssignments();
+    AddMainEntry();
 }
 
 bool LexicalAnalyzer::SkipSpace()
@@ -211,6 +214,38 @@ void LexicalAnalyzer::DesugarCompoundAssignments()
     tokenList.swap(out);
 }
 
+// The entry point is the 'ignite { ... }' block. A file without one may define 'def main()' instead:
+// then "ignite { main() ; }" is appended, so the parser always sees a single entry block.
+void LexicalAnalyzer::AddMainEntry()
+{
+    bool hasMain = false;
+    for (size_t i = 0; i < tokenList.size(); i++)
+    {
+        if (tokenList[i].token_type == IGNITE) return;
+        if (tokenList[i].token_type == DEF && i + 3 < tokenList.size() &&
+            tokenList[i + 1].token_type == ID && tokenList[i + 1].lexeme == "main" &&
+            tokenList[i + 2].token_type == LPAREN && tokenList[i + 3].token_type == RPAREN)
+            hasMain = true;
+    }
+    if (!hasMain) return;
+
+    int line = tokenList.back().line_no;
+    auto add = [&](TokenType type, const char* lexeme) {
+        Token k;
+        k.token_type = type;
+        k.lexeme = lexeme;
+        k.line_no = line;
+        tokenList.push_back(k);
+    };
+    add(IGNITE, "ignite");
+    add(LBRACE, "{");
+    add(ID, "main");
+    add(LPAREN, "(");
+    add(RPAREN, ")");
+    add(SEMICOLON, ";");
+    add(RBRACE, "}");
+}
+
 // Two-character operators ("<=", "+=", "!=", ...): if the next character is c, consume it and
 // return true; otherwise leave the input untouched.
 bool LexicalAnalyzer::NextIs(char c)
@@ -228,7 +263,7 @@ int LexicalAnalyzer::FindKeywordIndex(string s)
     // keywords must match TokenType enum order exactly
     // starting at index 1 (END_OF_FILE = 0)
     string keyword[] = {
-        "main",
+        "ignite",
         // 1–7
         "for", "if", "elif", "while", "do", "switch", "case", "default",
         // 8–10

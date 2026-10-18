@@ -1,4 +1,4 @@
-main() {
+ignite {
     float x = 3.5 ;
     float y = 1.5 ;
     print(x + y) ;

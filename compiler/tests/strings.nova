@@ -1,4 +1,4 @@
-main() {
+ignite {
     string s = "hello" ;
     print(s) ;
     print("world") ;

@@ -112,20 +112,21 @@ void run_repl()
 
         // parse
         string wrapped = accumulated;
-        bool hasTopLevel = (accumulated.find("main()") != string::npos ||
+        bool hasIgnite = accumulated.find("ignite") != string::npos;
+        bool hasTopLevel = (hasIgnite ||
                            accumulated.find("def ") != string::npos ||
                            accumulated.find("class ") != string::npos ||
                            accumulated.find("struct ") != string::npos ||
                            accumulated.find("import ") != string::npos);
-        if (!hasTopLevel) 
+        if (!hasTopLevel)
         {
-            // Pure statement - wrap in main()
-            wrapped = "main()\n{\n" + accumulated + "\n}\n";
+            // Pure statement - wrap in an ignite block
+            wrapped = "ignite\n{\n" + accumulated + "\n}\n";
         }
-        else if (accumulated.find("main()") == string::npos)
+        else if (!hasIgnite)
         {
-            // Top-level def/class/import without main() - append empty main()
-            wrapped = accumulated + "\nmain()\n{\n}\n";
+            // Top-level def/class/import without an ignite block - append an empty one
+            wrapped = accumulated + "\nignite\n{\n}\n";
         }
         set<string> already_imported;
         string processed = preprocess_import(wrapped, ".", already_imported);

@@ -10,7 +10,7 @@ def noisy(int v) -> int {
     return v ;
 }
 
-main() {
+ignite {
     int a = 1 ;
     int b = 2 ;
     int c = 3 ;

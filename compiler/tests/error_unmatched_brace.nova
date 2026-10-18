@@ -1,5 +1,5 @@
 // An extra closing brace is reported.
-main() {
+ignite {
     print(1) ;
 }
 }

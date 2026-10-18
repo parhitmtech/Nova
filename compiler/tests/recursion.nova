@@ -12,7 +12,7 @@ def fib(int n) -> int {
     return fib(n - 1) + fib(n - 2) ;
 }
 
-main() {
+ignite {
     print(factorial(1)) ;
     print(factorial(5)) ;
     print(factorial(6)) ;
