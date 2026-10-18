@@ -11,12 +11,15 @@ export function sessionExpired() {
   window.dispatchEvent(new Event('novacomp:session-expired'))
 }
 
-http.interceptors.request.use(config => {
+http.interceptors.request.use((config) => {
   const token = localStorage.getItem('novacomp_token')
   if (token && !config.headers.Authorization) config.headers.Authorization = `Bearer ${token}`
   return config
 })
-http.interceptors.response.use(response => response, error => {
-  if (error.response?.status === 401 && localStorage.getItem('novacomp_token')) sessionExpired()
-  return Promise.reject(error)
-})
+http.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401 && localStorage.getItem('novacomp_token')) sessionExpired()
+    return Promise.reject(error)
+  },
+)

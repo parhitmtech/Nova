@@ -14,11 +14,11 @@ function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login"     element={!token ? <LoginPage /> : <Navigate to="/ide" />} />
-        <Route path="/ide"       element={token  ? <IDEPage />   : <Navigate to="/login" />} />
+        <Route path="/login" element={!token ? <LoginPage /> : <Navigate to="/ide" />} />
+        <Route path="/ide" element={token ? <IDEPage /> : <Navigate to="/login" />} />
         <Route path="/share/:id" element={<SharePage />} />
         {/* Catch-all: send authenticated users to the IDE, guests to login */}
-        <Route path="*"          element={<Navigate to={token ? '/ide' : '/login'} />} />
+        <Route path="*" element={<Navigate to={token ? '/ide' : '/login'} />} />
       </Routes>
     </BrowserRouter>
   )

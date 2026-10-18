@@ -8,8 +8,7 @@ const authHeaders = (token: string) => ({
 
 // Returns the list of files registered in DynamoDB for this user.
 // DynamoDB holds metadata only (fileName, updatedAt); actual content lives in S3.
-export const listFiles = (token: string) =>
-  axios.get(`${API}/files`, authHeaders(token))
+export const listFiles = (token: string) => axios.get(`${API}/files`, authHeaders(token))
 
 // Upload file content to S3 and register it in DynamoDB.
 // Overwrites silently if a file with the same name already exists.

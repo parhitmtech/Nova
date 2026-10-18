@@ -13,11 +13,11 @@ The dev server proxies API and WebSocket routes to the backend on `localhost:300
 
 ## Scripts
 
-| Command | What it does |
-|---|---|
-| `npm run dev` | Vite dev server with hot reload |
-| `npm run build` | type-check (`tsc -b`) and build to `dist/`, which the backend serves |
-| `npm run lint` | ESLint |
+| Command            | What it does                                                                                                |
+| ------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `npm run dev`      | Vite dev server with hot reload                                                                             |
+| `npm run build`    | type-check (`tsc -b`) and build to `dist/`, which the backend serves                                        |
+| `npm run lint`     | ESLint                                                                                                      |
 | `npm run test:e2e` | Playwright browser tests in `tests/` (API responses are mocked; run `npx playwright install chromium` once) |
 
 ## Layout

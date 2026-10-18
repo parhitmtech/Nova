@@ -8,5 +8,4 @@ export const shareCode = (code: string, token?: string) =>
 
 // Fetch a previously shared snippet by its UUID.
 // Used by SharePage to populate the read-only editor.
-export const getShare = (id: string) =>
-  axios.get(`${API}/api/share/${id}`)
+export const getShare = (id: string) => axios.get(`${API}/api/share/${id}`)

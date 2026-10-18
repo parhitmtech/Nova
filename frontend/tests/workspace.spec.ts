@@ -10,50 +10,79 @@ async function workspace(page: Page) {
   const saves: { fileName: string; content: string }[] = []
   let failSave = false
   let runInputs = ''
-  const payload = Buffer.from(JSON.stringify({ userId: '12345678-1234-4234-9234-123456789abc', email: 'test@example.com', exp: Math.floor(Date.now() / 1000) + 3600 })).toString('base64url')
+  const payload = Buffer.from(
+    JSON.stringify({
+      userId: '12345678-1234-4234-9234-123456789abc',
+      email: 'test@example.com',
+      exp: Math.floor(Date.now() / 1000) + 3600,
+    }),
+  ).toString('base64url')
   const token = `eyJhbGciOiJIUzI1NiJ9.${payload}.test-fixture`
-  await page.route(url => /^\/(auth|files|agent|gpu|run-stream)(\/|$)/.test(url.pathname), async route => {
-    const url = new URL(route.request().url())
-    const body = route.request().postDataJSON()
-    const json = (data: unknown, status = 200) => route.fulfill({ status, json: data })
-    if (url.pathname === '/auth/login' || url.pathname === '/auth/signup') return json({ token })
-    if (url.pathname === '/files') return json({ files: Object.keys(files).map(fileName => ({ fileName, updatedAt: '2026-10-03T00:00:00Z' })) })
-    if (url.pathname === '/files/load') return json({ content: files[url.searchParams.get('fileName')!] })
-    if (url.pathname === '/files/save') {
-      if (failSave) return json({ error: 'Temporary storage outage' }, 503)
-      await new Promise(resolve => setTimeout(resolve, 150))
-      saves.push(body); files[body.fileName] = body.content
-      return json({ ok: true })
-    }
-    if (url.pathname === '/files/delete') { delete files[url.searchParams.get('fileName')!]; return json({ ok: true }) }
-    if (url.pathname === '/agent/history') return json({ history: [] })
-    if (url.pathname === '/agent/memory') return json({ memory: {} })
-    if (url.pathname === '/gpu/submit') return json({ error: 'GPU execution is disabled on this deployment' }, 503)
-    if (url.pathname === '/run-stream') {
-      expect(route.request().headers().authorization).toBe(`Bearer ${token}`)
-      runInputs = body.inputs
-      return route.fulfill({ contentType: 'text/event-stream', body: 'data: {"type":"stdout","text":"12\\n"}\n\ndata: {"type":"done","text":"15"}\n\n' })
-    }
-    return json({})
-  })
+  await page.route(
+    (url) => /^\/(auth|files|agent|gpu|run-stream)(\/|$)/.test(url.pathname),
+    async (route) => {
+      const url = new URL(route.request().url())
+      const body = route.request().postDataJSON()
+      const json = (data: unknown, status = 200) => route.fulfill({ status, json: data })
+      if (url.pathname === '/auth/login' || url.pathname === '/auth/signup') return json({ token })
+      if (url.pathname === '/files')
+        return json({
+          files: Object.keys(files).map((fileName) => ({ fileName, updatedAt: '2026-10-03T00:00:00Z' })),
+        })
+      if (url.pathname === '/files/load') return json({ content: files[url.searchParams.get('fileName')!] })
+      if (url.pathname === '/files/save') {
+        if (failSave) return json({ error: 'Temporary storage outage' }, 503)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        saves.push(body)
+        files[body.fileName] = body.content
+        return json({ ok: true })
+      }
+      if (url.pathname === '/files/delete') {
+        delete files[url.searchParams.get('fileName')!]
+        return json({ ok: true })
+      }
+      if (url.pathname === '/agent/history') return json({ history: [] })
+      if (url.pathname === '/agent/memory') return json({ memory: {} })
+      if (url.pathname === '/gpu/submit')
+        return json({ error: 'GPU execution is disabled on this deployment' }, 503)
+      if (url.pathname === '/run-stream') {
+        expect(route.request().headers().authorization).toBe(`Bearer ${token}`)
+        runInputs = body.inputs
+        return route.fulfill({
+          contentType: 'text/event-stream',
+          body: 'data: {"type":"stdout","text":"12\\n"}\n\ndata: {"type":"done","text":"15"}\n\n',
+        })
+      }
+      return json({})
+    },
+  )
   await page.goto('/login')
   await page.getByLabel('Email address').fill('test@example.com')
   await page.getByLabel('Password', { exact: true }).fill('test-password')
   await page.getByRole('button', { name: 'Open my workspace' }).click()
   await expect(page.getByRole('region', { name: 'Code editor' })).toBeVisible()
   await expect(page.locator('.monaco-editor .view-lines')).toBeVisible()
-  return { files, saves, fail: (value: boolean) => { failSave = value }, inputs: () => runInputs }
+  return {
+    files,
+    saves,
+    fail: (value: boolean) => {
+      failSave = value
+    },
+    inputs: () => runInputs,
+  }
 }
 
 async function edit(page: Page, code: string) {
   await page.getByRole('textbox', { name: 'Editor content' }).focus()
   await page.keyboard.press(`${modifier}+a`)
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write'])
-  await page.evaluate(text => navigator.clipboard.writeText(text), code)
+  await page.evaluate((text) => navigator.clipboard.writeText(text), code)
   await page.keyboard.press(`${modifier}+v`)
 }
 
-test('command palette keyboard navigation opens persistent editor settings and restores focus', async ({ page }) => {
+test('command palette keyboard navigation opens persistent editor settings and restores focus', async ({
+  page,
+}) => {
   await workspace(page)
   await page.keyboard.press(`${modifier}+k`)
   const search = page.getByRole('combobox', { name: 'Search commands and files' })
@@ -82,7 +111,7 @@ test('file switching saves the edited source before loading another file', async
   await expect(page.locator('.editor-tab')).toContainText('second.nova')
   expect(state.files['first.nova']).toBe(changed)
   expect(state.files['second.nova']).toBe(second)
-  expect(state.saves.every(s => s.fileName !== 'model.nbc')).toBe(true)
+  expect(state.saves.every((s) => s.fileName !== 'model.nbc')).toBe(true)
 })
 
 test('a failed save preserves the draft and blocks navigation until retry succeeds', async ({ page }) => {
@@ -125,7 +154,9 @@ test('runs with standard input and displays unavailable GPU capability explicitl
   await expect(page.getByText('GPU execution is disabled on this deployment')).toBeVisible()
 })
 
-test('binary artifacts cannot be overwritten by autosave and delete confirmation is keyboard accessible', async ({ page }) => {
+test('binary artifacts cannot be overwritten by autosave and delete confirmation is keyboard accessible', async ({
+  page,
+}) => {
   const state = await workspace(page)
   await page.getByRole('button', { name: 'model.nbc', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Model artifact' })).toBeVisible()
@@ -134,10 +165,12 @@ test('binary artifacts cannot be overwritten by autosave and delete confirmation
   await expect(page.getByRole('dialog', { name: 'Delete file?' })).toBeVisible()
   await page.getByRole('button', { name: 'Keep file' }).click()
   expect(state.files['model.nbc']).toBe('binary')
-  expect(state.saves.some(s => s.fileName === 'model.nbc')).toBe(false)
+  expect(state.saves.some((s) => s.fileName === 'model.nbc')).toBe(false)
 })
 
-test('mobile toolbar remains usable and explorer can be opened without horizontal overflow', async ({ page }) => {
+test('mobile toolbar remains usable and explorer can be opened without horizontal overflow', async ({
+  page,
+}) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await workspace(page)
   await expect(page.getByRole('button', { name: 'Compare optimization', exact: true })).toBeVisible()

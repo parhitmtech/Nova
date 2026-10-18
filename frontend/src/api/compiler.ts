@@ -2,8 +2,7 @@ import { http as axios, API, authHeaders, sessionExpired } from './client'
 
 // Buffered run — waits for the entire execution to finish before returning.
 // Prefer runCodeStream for any long-running code (ML training, SOL jobs).
-export const runCode = (source: string, inputs: string = '') =>
-  axios.post(`${API}/run`, { source, inputs })
+export const runCode = (source: string, inputs: string = '') => axios.post(`${API}/run`, { source, inputs })
 
 // Streaming run over Server-Sent Events (SSE).
 // We use fetch instead of EventSource because EventSource only supports GET,
@@ -18,7 +17,7 @@ export const runCodeStream = (
   inputs: string = '',
   onChunk: (type: string, text: string) => void,
   signal?: AbortSignal,
-  token?: string
+  token?: string,
 ): Promise<void> =>
   fetch(`${API}/run-stream`, {
     method: 'POST',
@@ -28,7 +27,7 @@ export const runCodeStream = (
     },
     body: JSON.stringify({ source, inputs }),
     signal,
-  }).then(async res => {
+  }).then(async (res) => {
     if (!res.ok) {
       if (res.status === 401) sessionExpired()
       const data = await res.json().catch(() => ({}))
@@ -52,7 +51,9 @@ export const runCodeStream = (
           try {
             const parsed = JSON.parse(line.slice(6)) as { type: string; text: string }
             onChunk(parsed.type, parsed.text)
-          } catch { /* skip malformed SSE line */ }
+          } catch {
+            /* skip malformed SSE line */
+          }
         }
       }
     }
@@ -66,9 +67,13 @@ export const compareCode = (source: string, inputs: string = '', token?: string)
 // Submit a GPU job to the SOL HPC cluster via the server's SSH tunnel.
 // The server detects the job type (CUDA / HuggingFace / SOL finetune) from the source.
 export const submitGpuJob = (token: string, source: string) =>
-  axios.post(`${API}/gpu/submit`, { source }, {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+  axios.post(
+    `${API}/gpu/submit`,
+    { source },
+    {
+      headers: { Authorization: `Bearer ${token}` },
+    },
+  )
 
 // Poll the current state of a submitted GPU job (pending / running / completed / failed).
 export const getGpuStatus = (token: string, jobId: string) =>

@@ -19,7 +19,9 @@ interface Props {
 export default function TerminalPanel({ onClose, onWsReady }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const onReadyRef = useRef(onWsReady)
-  useEffect(() => { onReadyRef.current = onWsReady }, [onWsReady])
+  useEffect(() => {
+    onReadyRef.current = onWsReady
+  }, [onWsReady])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -27,17 +29,17 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
     // Initialise xterm.js with the NovaComp dark theme palette.
     const term = new Terminal({
       theme: {
-        background:  '#0d1117',
-        foreground:  '#c9d1d9',
-        cursor:      '#00d4ff',
-        black:       '#0d1117',
+        background: '#0d1117',
+        foreground: '#c9d1d9',
+        cursor: '#00d4ff',
+        black: '#0d1117',
         brightBlack: '#3d4259',
-        white:       '#c9d1d9',
+        white: '#c9d1d9',
         brightWhite: '#e8ecf5',
-        cyan:        '#00d4ff',
-        green:       '#39ff8f',
-        yellow:      '#ffb347',
-        red:         '#ff4757',
+        cyan: '#00d4ff',
+        green: '#39ff8f',
+        yellow: '#ffb347',
+        red: '#ff4757',
       },
       fontSize: 13,
       fontFamily: 'ui-monospace, Consolas, "Courier New", monospace',
@@ -60,24 +62,21 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
     const ws = new WebSocket(`${WS_URL}/terminal?token=${encodeURIComponent(token)}`)
 
     ws.onopen = () => {
-      fitAddon.fit()       // refit now that the connection is live
-      onReadyRef.current?.(ws)      // hand the socket to IDEPage for file-write commands
+      fitAddon.fit() // refit now that the connection is live
+      onReadyRef.current?.(ws) // hand the socket to IDEPage for file-write commands
     }
 
     // Server sends raw PTY output — write it directly to the terminal.
     ws.onmessage = (e) => term.write(e.data)
 
     // Show a dim notice when the server closes the shell (e.g. idle timeout).
-    ws.onclose = () =>
-      term.write('\r\n\x1b[2m[connection closed]\x1b[0m\r\n')
+    ws.onclose = () => term.write('\r\n\x1b[2m[connection closed]\x1b[0m\r\n')
 
-    ws.onerror = () =>
-      term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n')
+    ws.onerror = () => term.write('\r\n\x1b[31m[connection error]\x1b[0m\r\n')
 
     // Forward every keystroke to the server's PTY process as a JSON message.
     term.onKey(({ key }) => {
-      if (ws.readyState === WebSocket.OPEN)
-        ws.send(JSON.stringify({ type: 'input', data: key }))
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'input', data: key }))
     })
 
     // Refit the terminal whenever the panel is resized (e.g. window resize,
@@ -103,7 +102,13 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
         <span className="text-xs font-semibold uppercase tracking-wider" style={{ color: '#8b949e' }}>
           Nova REPL
         </span>
-        <button onClick={onClose} className="p-0.5 rounded" style={{ color: '#8b949e' }} title="Close terminal" aria-label="Close terminal">
+        <button
+          onClick={onClose}
+          className="p-0.5 rounded"
+          style={{ color: '#8b949e' }}
+          title="Close terminal"
+          aria-label="Close terminal"
+        >
           <X size={14} />
         </button>
       </div>

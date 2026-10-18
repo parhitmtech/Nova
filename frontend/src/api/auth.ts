@@ -8,8 +8,7 @@ export const signup = (email: string, password: string) =>
   axios.post(`${API}/auth/signup`, { email, password })
 
 // Authenticate with existing credentials. Server returns a signed JWT on success.
-export const login = (email: string, password: string) =>
-  axios.post(`${API}/auth/login`, { email, password })
+export const login = (email: string, password: string) => axios.post(`${API}/auth/login`, { email, password })
 
 // Fetch the current user's profile. Useful for validating a stored token is still active.
 export const getMe = (token: string) =>
