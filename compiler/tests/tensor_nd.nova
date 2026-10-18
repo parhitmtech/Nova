@@ -1,0 +1,62 @@
+// M1 stage 2: N-D tensors. Creation with one argument per dimension,
+// indexing with one index per dimension, reshape (with an inferred -1),
+// element-wise ops and matmul keeping the N-D shape, N-D printing, and the
+// gradient flowing back through a reshape.
+def dabs(double x) -> double {
+    if x < 0.0 { return 0.0 - x ; }
+    return x ;
+}
+
+main() {
+    // creation and shape
+    int x = tensor_zeros(2, 3, 4) ;
+    print(tensor_rank(x)) ;                     // 3
+    print(tensor_dim(x, 0)) ;                   // 2
+    print(tensor_dim(x, 2)) ;                   // 4
+    int v = tensor_ones(5) ;
+    print(tensor_rank(v)) ;                     // 1
+    print(tensor_get(v, 4)) ;                   // 1
+
+    // N-D set/get, and row-major layout: (1,2,3) is flat element 1*12+2*4+3 = 23
+    tensor_set(x, 1, 2, 3, 5.0) ;
+    print(tensor_get(x, 1, 2, 3)) ;             // 5
+    int flat = tensor_reshape(x, 24) ;
+    print(tensor_get(flat, 23)) ;               // 5
+    int r = tensor_reshape(x, 6, -1) ;
+    print(tensor_dim(r, 1)) ;                   // 4
+    print(tensor_get(r, 5, 3)) ;                // 5
+
+    // element-wise ops keep the N-D shape
+    int y = tensor_add(x, x) ;
+    print(tensor_rank(y)) ;                     // 3
+    print(tensor_get(y, 1, 2, 3)) ;             // 10
+    int z = relu(y) ;
+    print(tensor_dim(z, 1)) ;                   // 3
+
+    // (2,3,4) @ (4,5) -> (2,3,5)
+    int o = tensor_ones(2, 3, 4) ;
+    int w = tensor_ones(4, 5) ;
+    int m = matmul(o, w) ;
+    print(tensor_rank(m)) ;                     // 3
+    print(tensor_dim(m, 2)) ;                   // 5
+    print(tensor_get(m, 1, 2, 4)) ;             // 4
+
+    // printing a 2x2x2 tensor: one 2-D block per leading index
+    int p = tensor_zeros(2, 2, 2) ;
+    tensor_set(p, 0, 0, 1, 1.0) ;
+    tensor_set(p, 1, 1, 0, 2.0) ;
+    tensor_print(p) ;
+
+    // gradient through reshape: loss = mean((reshape(q))^2), dq = 2q/6
+    int q = tensor_randn(2, 3) ;
+    requires_grad(q) ;
+    int qr = tensor_reshape(q, 3, 2) ;
+    int t = tensor_zeros(3, 2) ;
+    int loss = mse_loss(qr, t) ;
+    backward(loss) ;
+    int g = tensor_grad(q) ;
+    print(tensor_rank(g)) ;                     // 2
+    print(tensor_dim(g, 1)) ;                   // 3
+    double want = tensor_get(q, 0, 1) * 2.0 / 6.0 ;
+    if dabs(tensor_get(g, 0, 1) - want) < 0.000000001 { print("PASS reshape grad") ; } else { print("FAIL reshape grad") ; }
+}

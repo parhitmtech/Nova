@@ -39,7 +39,7 @@ extern int next_double_available;
 int alloc_tensor(int rows, int cols);
 int alloc_tensor_nd(const std::vector<int>& shape);  // for any number of dimension
 int alloc_tensor_like(int src);
-int ag_reshape(int a, const std::vector<int>& shape);
+int ag_reshape(int a, const std::vector<int>& shape, int line);
 
 // Gradient storage
 // grad_heap[i] mirrirs tensor_heap[i]

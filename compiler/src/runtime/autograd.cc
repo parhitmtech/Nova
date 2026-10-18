@@ -5,6 +5,7 @@
  
 #include "autograd.h"
 #include "compiler.h"
+#include "tensor_ops.h"
 #include <cmath>
 #include <cassert>
 #include <cstdio>
@@ -141,11 +142,12 @@ int ag_matmul(int a, int b)
 {
     // Forward
     int aR = tensor_heap[a].rows;
+    int aC = tensor_heap[a].cols;
     int bC = tensor_heap[b].cols;
     int h = alloc_tensor(aR, bC);
     for (int i = 0;i < aR;i++)
     {
-        for (int k = 0;k < bC;k++)
+        for (int k = 0;k < aC; k++)  // inner dimension (was bC: wrong unless aC == bC)
         {
             for (int j = 0;j < bC;j++)
             {
@@ -209,7 +211,7 @@ int ag_add(int a, int b)
 {
     int aR = tensor_heap[a].rows, aC = tensor_heap[a].cols;
     int bR = tensor_heap[b].rows, bC = tensor_heap[b].cols;
-    int h = alloc_tensor(aR, aC);
+    int h = alloc_tensor_like(a);
 
     bool broadcast_b = (bR == 1 && aC == bC);  // B is a bias
 
@@ -275,7 +277,7 @@ int ag_sub(int a, int b)
 {
     int aR = tensor_heap[a].rows, aC = tensor_heap[a].cols;
     int bR = tensor_heap[b].rows, bC = tensor_heap[b].cols;
-    int h = alloc_tensor(aR, aC);
+    int h = alloc_tensor_like(a);
 
     bool broadcast_b = (bR == 1 && aC == bC);
     if (broadcast_b)
@@ -341,7 +343,7 @@ int ag_sub(int a, int b)
 int ag_mul(int a, int b)
 {
     int size = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(tensor_heap[a].rows, tensor_heap[a].cols);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < size;i++)
     {
         tensor_heap[h].data[i] = tensor_heap[a].data[i] * tensor_heap[b].data[i];
@@ -383,7 +385,7 @@ int ag_mul(int a, int b)
 int ag_scale(int a, double s)
 {
     int size = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(tensor_heap[a].rows, tensor_heap[a].cols);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < size;i++)
     {
         tensor_heap[h].data[i] = tensor_heap[a].data[i] * s;
@@ -411,7 +413,7 @@ int ag_scale(int a, double s)
 int ag_relu(int a)
 {
     int size = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(tensor_heap[a].rows, tensor_heap[a].cols);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < size;i++)
     {
         tensor_heap[h].data[i] = max(0.0, tensor_heap[a].data[i]);
@@ -439,7 +441,7 @@ int ag_relu(int a)
 int ag_sigmoid(int a)
 {
     int size = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(tensor_heap[a].rows, tensor_heap[a].cols);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < size;i++)
     {
         double s = 1.0 / (1.0 + exp(-tensor_heap[a].data[i]));
@@ -470,7 +472,7 @@ int ag_sigmoid(int a)
 int ag_tanh_t(int a)
 {
     int size = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(tensor_heap[a].rows, tensor_heap[a].cols);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < size;i++)
     {
         tensor_heap[h].data[i] = tanh(tensor_heap[a].data[i]);
@@ -501,7 +503,7 @@ int ag_tanh_t(int a)
 int ag_softmax(int a)
 {
     int aR = tensor_heap[a].rows, aC = tensor_heap[a].cols;
-    int h = alloc_tensor(aR, aC);
+    int h = alloc_tensor_like(a);
     for (int i = 0;i < aR;i++)
     {
         double maxv = tensor_heap[a].at(i, 0);
@@ -577,6 +579,26 @@ int ag_transpose(int a)
                     dA[i * aC + j] = gOut[j * aR + i];
                 }
             }
+            accum_grad(a, dA);
+        }});
+        tensor_retain(h);
+        tensor_retain(a);
+    }
+    return h;
+}
+
+// ─── reshape: same elements, new shape ──────────────────────────────────────
+// The gradient flows back unchanged: element i of the output is element i of
+// the input, so dA = dOut in the same flat order.
+int ag_reshape(int a, const std::vector<int>& shape, int line)
+{
+    int h = ten_reshape(a, shape, line);  // checks the shape, fills in a -1, copies the elements
+    grad_heap_ensure(h);
+    if (grad_mode && grad_heap[a].requires_grad)
+    {
+        grad_heap[h].requires_grad = true;
+        grad_tape.push_back({"reshape", h, {a}, [a](int out) {
+            vector<double> dA = grad_heap[out].data;
             accum_grad(a, dA);
         }});
         tensor_retain(h);

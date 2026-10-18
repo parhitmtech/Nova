@@ -11,6 +11,7 @@ using std::string;
 
 size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int line);
 void require_2d(int h, const char* op, int line);
+[[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
 bool slot_owns(int i);
 void set_owns(int i, bool v);

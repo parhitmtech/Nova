@@ -4,8 +4,9 @@
 // Data: synthetic, MNIST-shaped (300 samples x 784 features, 10 classes).
 // Generate it first, from this folder: python generate_mnist_data.py 
 // Run:     NOVA_TENSOR_STATS=1 ./compiler examples/mnist_mlp.nova
-// Expect: loss falls from -2.30 to -0.35, and the stats line shows a small,
-// constant number of live tensors (12) however many steps run.
+// Expect: loss falls from ~2.31 to under 0.001 (the synthetic classes are easy
+// to separate), and the stats line shows a small, constant number of live
+// tensors (12) however many steps run.
 main() {
     int X = tensor_load_csv("mnist_X.csv", 200, 784) ;
     int Y = tensor_load_csv("mnist_Y.csv", 200, 10) ;

@@ -44,7 +44,7 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
         }
         if (lo >= 0 && (numArgs < lo || numArgs > hi))
         {
-            report_error(token.line_no, "'" + name + "'  takes " + to_string(lo) + " to " + to_string(hi) + 
+            report_error(token.line_no, "'" + name + "' takes " + to_string(lo) + " to " + to_string(hi) + 
                          " arguments, got " + to_string(numArgs));
         }
     }

@@ -97,7 +97,6 @@ extern const map<string, TensorOp> TENSOR_OP_MAP = {
     {"tensor_live_count", TEN_LIVE_COUNT},
     {"tensor_rank", TEN_RANK},
     {"tensor_dim", TEN_DIM},
-    {"tensor_dim", TEN_DIM},
     {"tensor_reshape", TEN_RESHAPE}
 };
 

@@ -81,7 +81,7 @@ int alloc_tensor_like(int src)
 }
 
 // Runtime shape errors stop the program with the line number, like the freed-handle errors do.
-[[noreturn]] static void tensor_shape_error(int line, const std::string& msg)
+[[noreturn]] void tensor_shape_error(int line, const std::string& msg)
 {
     fprintf(stderr, "Runtime error at line %d: %s\n", line, msg.c_str());
     exit(1);
@@ -145,7 +145,7 @@ int ten_reshape(int a, std::vector<int> shape, int line)
     if (inferred >= 0)
     {
         if (count % known != 0)
-            tensor_shape_error(line, "tensor_reshape: cannot infer -1 for " + std::to_string(count) + " elements");
+            tensor_shape_error(line, "tensor_reshape: cannot infer the -1 dimension for " + std::to_string(count) + " elements");
         shape[inferred] = (int)(count / known);
         known = count;
     }
@@ -273,27 +273,27 @@ int ten_add(int a, int b)
     int h;
     if (aRows == bRows && aCols == bCols)
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < (int)tensor_heap[a].data.size(); i++)
             tensor_heap[h].data[i] = tensor_heap[a].data[i] + tensor_heap[b].data[i];
     }
     else if (bRows == 1 && aCols == bCols)
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < aRows; i++)
             for (int j = 0; j < aCols; j++)
                 tensor_heap[h].at(i, j) = tensor_heap[a].at(i, j) + tensor_heap[b].at(0, j);
     }
     else if (aRows == 1 && aCols == bCols)
     {
-        h = alloc_tensor(bRows, bCols);
+        h = alloc_tensor_like(b);
         for (int i = 0; i < bRows; i++)
             for (int j = 0; j < bCols; j++)
                 tensor_heap[h].at(i, j) = tensor_heap[a].at(0, j) + tensor_heap[b].at(i, j);
     }
     else
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < (int)tensor_heap[a].data.size(); i++)
             tensor_heap[h].data[i] = tensor_heap[a].data[i] + tensor_heap[b].data[i];
     }
@@ -307,20 +307,20 @@ int ten_sub(int a, int b)
     int h;
     if (aRows == bRows && aCols == bCols)
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < (int)tensor_heap[a].data.size(); i++)
             tensor_heap[h].data[i] = tensor_heap[a].data[i] - tensor_heap[b].data[i];
     }
     else if (bRows == 1 && aCols == bCols)
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < aRows; i++)
             for (int j = 0; j < aCols; j++)
                 tensor_heap[h].at(i, j) = tensor_heap[a].at(i, j) - tensor_heap[b].at(0, j);
     }
     else
     {
-        h = alloc_tensor(aRows, aCols);
+        h = alloc_tensor_like(a);
         for (int i = 0; i < (int)tensor_heap[a].data.size(); i++)
             tensor_heap[h].data[i] = tensor_heap[a].data[i] - tensor_heap[b].data[i];
     }
@@ -342,9 +342,8 @@ int ten_sum_axis0(int a)
 
 int ten_mul(int a, int b)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = tensor_heap[a].data[i] * tensor_heap[b].data[i];
     return h;
@@ -352,9 +351,8 @@ int ten_mul(int a, int b)
 
 int ten_scale(int a, double s)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = tensor_heap[a].data[i] * s;
     return h;
@@ -372,9 +370,8 @@ int ten_transpose(int a)
 
 int ten_clip(int a, double lo, double hi)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = std::max(lo, std::min(hi, tensor_heap[a].data[i]));
     return h;
@@ -382,9 +379,8 @@ int ten_clip(int a, double lo, double hi)
 
 int ten_relu(int a)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = std::max(0.0, tensor_heap[a].data[i]);
     return h;
@@ -392,9 +388,8 @@ int ten_relu(int a)
 
 int ten_sigmoid(int a)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = 1.0 / (1.0 + std::exp(-tensor_heap[a].data[i]));
     return h;
@@ -402,9 +397,8 @@ int ten_sigmoid(int a)
 
 int ten_tanh(int a)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = std::tanh(tensor_heap[a].data[i]);
     return h;
@@ -413,7 +407,7 @@ int ten_tanh(int a)
 int ten_softmax(int a)
 {
     int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < aRows; i++)
     {
         double maxv = tensor_heap[a].at(i, 0);
@@ -431,9 +425,8 @@ int ten_softmax(int a)
 
 int ten_relu_grad(int a)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = tensor_heap[a].data[i] > 0.0 ? 1.0 : 0.0;
     return h;
@@ -441,9 +434,8 @@ int ten_relu_grad(int a)
 
 int ten_sigmoid_grad(int a)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
     int sz = (int)tensor_heap[a].data.size();
-    int h = alloc_tensor(aRows, aCols);
+    int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
     {
         double s = 1.0 / (1.0 + std::exp(-tensor_heap[a].data[i]));
@@ -467,9 +459,8 @@ double ten_mse_loss(int pred, int target)
 
 int ten_mse_grad(int pred, int target)
 {
-    int pRows = tensor_heap[pred].rows, pCols = tensor_heap[pred].cols;
     int sz = (int)tensor_heap[pred].data.size();
-    int h = alloc_tensor(pRows, pCols);
+    int h = alloc_tensor_like(pred);
     double scale = 2.0 / sz;
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = scale * (tensor_heap[pred].data[i] - tensor_heap[target].data[i]);
@@ -478,10 +469,8 @@ int ten_mse_grad(int pred, int target)
 
 int ten_bce_grad(int pred, int target)
 {
-    int pRows = tensor_heap[pred].rows;
-    int pCols = tensor_heap[pred].cols;
     int size = (int)tensor_heap[pred].data.size();
-    int h = alloc_tensor(pRows, pCols);
+    int h = alloc_tensor_like(pred);
     double scale = 1.0 / size;
     for (int i = 0;i < size;i++)
     {

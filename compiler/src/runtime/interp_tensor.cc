@@ -65,18 +65,22 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     break;
                 }
                 case TEN_ZEROS:
-                {
-                    res = ten_zeros({mem[a[0]], mem[a[1]]});
-                    break;
-                }
                 case TEN_ONES:
-                {
-                    res = ten_ones({mem[a[0]], mem[a[1]]});
-                    break;
-                }
                 case TEN_RANDN:
                 {
-                    res = ten_randn({mem[a[0]], mem[a[1]]});
+                    // one argument per dimension: tensor_zeros(2, 3, 4) is 2x3x4
+                    std::vector<int> shape;
+                    for (int i = 0;i < tc.num_args; i++)
+                    {
+                        if (mem[a[i]] < 0)
+                        {
+                            tensor_shape_error(pc->line_no, "negative dimension " + std::to_string(mem[a[i]]));
+                        }
+                        shape.push_back(mem[a[i]]);
+                    }
+                    res = (tc.op == TEN_ZEROS) ? ten_zeros(shape)
+                        : (tc.op == TEN_ONES) ? ten_ones(shape)
+                        :                       ten_randn(shape);
                     break;
                 }
                 case TEN_XAVIER:
@@ -96,7 +100,13 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                                         "pleae report this as bug.\n", pc->line_no, mem[a[0]]);
                         exit(1);
                     }
-                    double v = tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]);
+                    // double v = tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]);
+                    // one index per dimension, checked against the shape
+                    int idx[TENSOR_MAX_RANK + 1];
+                    int n = tc.num_args - 1;
+                    for (int k = 0;k < n && k <= TENSOR_MAX_RANK; k++) idx[k] = mem[a[k + 1]];
+                    const Tensor& GT = tensor_heap[mem[a[0]]];
+                    double v = GT.data[tensor_offset(GT, idx, n, "tensor_get", pc->line_no)];
                     int dslot = (int)dmem.size();
                     dmem.push_back(v);
                     next_double_available++;
@@ -112,7 +122,13 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                                         "please report this as a bug.\n", pc->line_no, mem[a[0]]);
                         exit(1);
                     }
-                    tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]) = getScalar(3);
+                    // tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]) = getScalar(3);
+                    // indices first, value last: tensor_set(t, i, j, k, v)
+                    int idx[TENSOR_MAX_RANK + 1];
+                    int n = tc.num_args - 2;
+                    for (int k = 0; k < n && k <= TENSOR_MAX_RANK; k++) idx[k] = mem[a[k + 1]];
+                    Tensor& ST = tensor_heap[mem[a[0]]];
+                    ST.data[tensor_offset(ST, idx, n, "tensor_set", pc->line_no)] = getScalar(tc.num_args - 1);
                     res = 0;
                     break;
                 }
@@ -129,22 +145,35 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 case TEN_PRINT:
                 {
                     Tensor& T = tensor_heap[mem[a[0]]];
-                    // Build entire output as single string then print once
+                    // Build entire output as single string then print once.
+                    // Rank 1 and 2 print exactly as before. A higher-rank tensor prints as a list
+                    // of its 2-D blocks (the last two dimensions), separated by a blank line.
+                    int bRows = (T.ndim() >= 2) ? T.shape[T.ndim() - 2] : 1;
+                    int bCols = T.cols;
+                    int nBlocks = (bRows * bCols == 0) ? 0 : (int)(T.data.size() / ((size_t)bRows * bCols));
                     string out_str = "";
-                    out_str += "[";
-                    for (int i = 0; i < T.rows; i++)
+                    if (T.ndim() > 2) out_str += "[";
+                    for (int blk = 0; blk < nBlocks; blk++)
                     {
-                        if (T.rows > 1) out_str += (i == 0 ? "[" : " [");
-                        for (int j = 0; j < T.cols; j++)
+                        size_t base = (size_t)blk * bRows * bCols;
+                        if (blk > 0) out_str += ",\n\n ";
+                        out_str += "[";
+                        for (int i = 0; i < bRows; i++)
                         {
-                            char buf[32];
-                            snprintf(buf, sizeof(buf), "%.4f", T.at(i, j));
-                            out_str += buf;
-                            if (j < T.cols - 1) out_str += ", ";
+                            if (bRows > 1) out_str += (i == 0 ? "[" : (T.ndim() > 2 ? "  [" : " ["));
+                            for (int j = 0; j < bCols; j++)
+                            {
+                                char buf[32];
+                                snprintf(buf, sizeof(buf), "%.4f", T.data[base + (size_t)i * bCols + j]);
+                                out_str += buf;
+                                if (j < bCols - 1) out_str += ", ";
+                            }
+                            if (bRows > 1) out_str += (i < bRows - 1 ? "],\n" : "]");
                         }
-                        if (T.rows > 1) out_str += (i < T.rows - 1 ? "],\n" : "]");
+                        out_str += "]";
                     }
-                    out_str += "]\n";
+                    if (T.ndim() > 2) out_str += "]";
+                    out_str += "\n";
                     printf("%s", out_str.c_str());
                     fflush(stdout);
                     res = 0;
@@ -152,10 +181,29 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_MATMUL: 
                 {
+                    // (..., n) @ (n, m): an N-D left side is treated as a stack of rows and keep its
+                    // leading dimensions in the result. An N-D right side (batched matmul) comes in M1 stage 3.
+                    require_2d(mem[a[1]], "matmul (right operand)", pc->line_no);
+                    if (tensor_heap[mem[a[0]]].cols != tensor_heap[mem[a[1]]].rows)
+                    {
+                        tensor_shape_error(pc->line_no, "matmul: inner dimensions differ (" + 
+                            std::to_string(tensor_heap[mem[a[0]]].cols) + " vs " + 
+                            std::to_string(tensor_heap[mem[a[1]]].rows) + ")");
+                    }
                     if (grad_mode)
+                    {
                         res = ag_matmul(mem[a[0]], mem[a[1]]);
+                    }
                     else
-                        res = ten_matmul(mem[a[0]], mem[a[1]]); 
+                    {
+                        res = ten_matmul(mem[a[0]], mem[a[1]]);
+                    }
+                    if (tensor_heap[mem[a[0]]].ndim() > 2)
+                    {
+                        std::vector<int> outShape = tensor_heap[mem[a[0]]].shape;
+                        outShape.back() = tensor_heap[mem[a[1]]].cols;
+                        tensor_set_shape(tensor_heap[res], outShape);
+                    }
                     break;
                 }
                 case TEN_ADD: 
@@ -192,6 +240,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_T: 
                 {
+                    require_2d(mem[a[0]], "tensor_T", pc->line_no);
                     if (grad_mode)
                         res = ag_transpose(mem[a[0]]);
                     else
@@ -326,19 +375,36 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     res = ten_rand_int(mem[a[0]], mem[a[1]]);
                     break;
                 }
-                case TEN_GET_ROW: res = ten_get_row(mem[a[0]], mem[a[1]]); break;
+                case TEN_GET_ROW:
+                { 
+                    require_2d(mem[a[0]], "tensor_get_row", pc->line_no);
+                    res = ten_get_row(mem[a[0]], mem[a[1]]); 
+                    break;
+                }
                 case TEN_SET_ROW:
                 {
+                    require_2d(mem[a[0]], "tensor_set_row", pc->line_no);
                     ten_set_row(mem[a[0]], mem[a[1]], mem[a[2]]);
                     res = 0;
                     break;
                 }
-                case TEN_SLICE_ROWS: res = ten_slice_rows(mem[a[0]], mem[a[1]], mem[a[2]]); break;
+                case TEN_SLICE_ROWS: 
+                {
+                    require_2d(mem[a[0]], "tensor_slice_rows", pc->line_no);
+                    res = ten_slice_rows(mem[a[0]], mem[a[1]], mem[a[2]]); 
+                    break;
+                }
                 case TEN_RESHAPE:  // tensor_reshape(t, d0, d1, ...)
                 {
+                    if (!tensor_is_live(mem[a[0]]))
+                    {
+                        tensor_shape_error(pc->line_no, "tensor_reshape on a freed or invalid tensor handle");
+                    }
                     std::vector<int> shape;
                     for (int i = 1; i < tc.num_args; i++) shape.push_back(mem[a[i]]);
-                    res = ten_reshape(mem[a[0]], shape, pc->line_no);
+                    // ten_reshape checks the shape and fills in a -1; ag_reshape also records the gradient
+                    res = grad_mode ? ag_reshape(mem[a[0]], shape, pc->line_no)
+                                    : ten_reshape(mem[a[0]], shape, pc->line_no);
                     break;
                 }
                 case TEN_LOAD_CSV:
