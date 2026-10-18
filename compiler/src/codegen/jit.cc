@@ -65,7 +65,7 @@ static void* jit_alloc_exec(size_t size)
     return mmap(nullptr, size, PROT_READ | PROT_WRITE | PROT_EXEC,
                 MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 }
-static void jit_free_exec(void* mem, size_t size)
+[[maybe_unused]] static void jit_free_exec(void* mem, size_t size)  // JIT pages live for the whole run
 {
     munmap(mem, size);
 }

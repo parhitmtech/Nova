@@ -133,7 +133,8 @@ InstructionNode* exec_hf_infer(InstructionNode* pc)
 
             string pyCmd = "python3 " + pyFile + " > " + tmpOut + " 2>/dev/null";
             fprintf(stderr, "HF_CMD: python3 %s\n", pyFile.c_str());
-            system(pyCmd.c_str());
+            if (system(pyCmd.c_str()) == -1)
+                fprintf(stderr, "hf: could not start python3\n");
 
             string response;
             {

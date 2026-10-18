@@ -54,7 +54,7 @@ InstructionNode* exec_in(InstructionNode* pc)
             else
             {
                 // ── live stdin mode ───────────────────────────────────────
-                scanf("%d", &val);
+                if (scanf("%d", &val) != 1) val = 0;  // no number (end of input or junk) reads as 0
 
                 // capture for potential benchmark replay
                 input_replay_buffer.push_back(val);

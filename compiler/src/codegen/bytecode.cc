@@ -496,7 +496,7 @@ struct InstructionNode* load_bytecode(const std::string& path)
     rewind(f);
     if (fsize < 10) { fclose(f); fprintf(stderr, "NBC: file too small\n"); return nullptr; }
     vector<uint8_t> raw((size_t)fsize);
-    fread(raw.data(), 1, (size_t)fsize, f);
+    if (fread(raw.data(), 1, (size_t)fsize, f) != (size_t)fsize) { fclose(f); fprintf(stderr, "NBC: cannot read %s\n", path.c_str()); return nullptr; }
     fclose(f);
 
     // Verify CRC (last 4 bytes cover everything before them)
