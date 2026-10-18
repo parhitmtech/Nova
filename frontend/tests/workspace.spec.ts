@@ -187,3 +187,32 @@ test('mobile toolbar remains usable and explorer can be opened without horizonta
   await expect(page.getByRole('button', { name: 'Run', exact: true })).toBeInViewport()
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(320)
 })
+
+test('a failed editor chunk load shows the recovery screen instead of a blank page', async ({ page }) => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      userId: '12345678-1234-4234-9234-123456789abc',
+      email: 'test@example.com',
+      exp: 9999999999,
+    }),
+  ).toString('base64url')
+  await page.route(
+    (url) => /^\/(auth|files|agent)(\/|$)/.test(url.pathname),
+    (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path.startsWith('/auth/'))
+        return route.fulfill({ json: { token: `eyJhbGciOiJIUzI1NiJ9.${payload}.x` } })
+      if (path === '/files') return route.fulfill({ json: { files: [] } })
+      if (path === '/agent/history') return route.fulfill({ json: { history: [] } })
+      return route.fulfill({ json: {} })
+    },
+  )
+  // Simulate a network failure for the lazily loaded editor chunk.
+  await page.route(/NovaEditor/, (route) => route.abort())
+  await page.goto('/login')
+  await page.getByLabel('Email address').fill('test@example.com')
+  await page.getByLabel('Password', { exact: true }).fill('test-password')
+  await page.getByRole('button', { name: 'Open my workspace' }).click()
+  await expect(page.getByRole('alert').getByRole('heading', { name: 'Something went wrong' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reload' })).toBeVisible()
+})
