@@ -34,8 +34,6 @@ string reserved[] = {
     "TRUE", "FALSE",
     // struct and class keywords
     "STRUCT", "CLASS", "EXTENDS", "SELF", "IMPORT",
-    // punctuation 
-    "DOT",
     // arithmetic
     "PLUS", "MINUS", "DIV", "MULT",
     // punctuation
@@ -44,7 +42,10 @@ string reserved[] = {
     // comparison
     "NOTEQUAL", "GREATER", "LESS", "EQEQ",
     // arrow (new)
-    "ARROW",
+    "ARROW", "DOT",
+    // more comparisons, remainder and compound assignment
+    "GREATEREQ", "LESSEQ", "MOD",
+    "PLUSEQ", "MINUSEQ", "MULTEQ", "DIVEQ",
     // literals + misc
     "NUM", "FLOAT_LITERAL", "ID", "STRING", "ERROR"
 };
@@ -85,6 +86,7 @@ void LexicalAnalyzer::Initialize()
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    DesugarCompoundAssignments();
 }
 
 void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
@@ -105,6 +107,7 @@ void LexicalAnalyzer::InitializeFromFile(const std::string& filename)
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    DesugarCompoundAssignments();
 }
 
 void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
@@ -127,6 +130,7 @@ void LexicalAnalyzer::ReinitializeFromString(const std::string& s)
         tokenList.push_back(token);
         token = GetTokenMain();
     }
+    DesugarCompoundAssignments();
 }
 
 bool LexicalAnalyzer::SkipSpace()
@@ -147,6 +151,76 @@ bool LexicalAnalyzer::SkipSpace()
         input.UngetChar(c);
     }
     return space_encountered;
+}
+
+// "target op= expr" becomes "target = target op (expr)" in the token list, before parsing. Every
+// kind of target the parser accepts (x, a[i], obj.f, self.f) then gets += -= *= /= without code of
+// its own. The target is the run of tokens since the start of the statement, and it is evaluated
+// twice (once to read, once to write).
+void LexicalAnalyzer::DesugarCompoundAssignments()
+{
+    vector<Token> out;
+    out.reserve(tokenList.size());
+    for (size_t i = 0; i < tokenList.size(); i++)
+    {
+        const Token& t = tokenList[i];
+        TokenType base;
+        switch (t.token_type)
+        {
+            case PLUSEQ:  base = PLUS;  break;
+            case MINUSEQ: base = MINUS; break;
+            case MULTEQ:  base = MULT;  break;
+            case DIVEQ:   base = DIV;   break;
+            default:      out.push_back(t); continue;
+        }
+
+        // the target: tokens since the last statement boundary
+        size_t start = out.size();
+        while (start > 0)
+        {
+            TokenType p = out[start - 1].token_type;
+            if (p == SEMICOLON || p == LBRACE || p == RBRACE || p == COLON) break;
+            start--;
+        }
+        vector<Token> target(out.begin() + start, out.end());
+
+        auto make = [&](TokenType type, const char* lexeme) {
+            Token k = t;
+            k.token_type = type;
+            k.lexeme = lexeme;
+            return k;
+        };
+        out.push_back(make(EQUAL, "="));
+        out.insert(out.end(), target.begin(), target.end());
+        out.push_back(make(base, ""));
+        out.push_back(make(LPAREN, "("));
+
+        // the right side runs to the end of the statement (';', or the ')' closing a for header)
+        int depth = 0;
+        for (i = i + 1; i < tokenList.size(); i++)
+        {
+            TokenType k = tokenList[i].token_type;
+            if (depth == 0 && (k == SEMICOLON || k == RPAREN || k == RBRACE)) break;
+            if (k == LPAREN || k == LBRAC) depth++;
+            if (k == RPAREN || k == RBRAC) depth--;
+            out.push_back(tokenList[i]);
+        }
+        out.push_back(make(RPAREN, ")"));
+        i--;  // the terminator is copied by the outer loop
+    }
+    tokenList.swap(out);
+}
+
+// Two-character operators ("<=", "+=", "!=", ...): if the next character is c, consume it and
+// return true; otherwise leave the input untouched.
+bool LexicalAnalyzer::NextIs(char c)
+{
+    if (input.EndOfInput()) return false;
+    char next;
+    input.GetChar(next);
+    if (next == c) return true;
+    input.UngetChar(next);
+    return false;
 }
 
 int LexicalAnalyzer::FindKeywordIndex(string s)
@@ -315,18 +389,15 @@ Token LexicalAnalyzer::GetTokenMain()
     tmp.line_no = line_no;
     input.GetChar(c);
     switch (c) {
-        case '+':   tmp.token_type = PLUS;      return tmp;
+        case '+':   tmp.token_type = NextIs('=') ? PLUSEQ : PLUS;   return tmp;
 
-        // ── '-' or '->' ───────────────────────────────────────────────────────
+        // ── '-', '->' or '-=' ─────────────────────────────────────────────────
         case '-': {
-            char next;
-            input.GetChar(next);
-            if (next == '>') {
+            if (NextIs('>')) {
                 tmp.lexeme = "->";
                 tmp.token_type = ARROW;
             } else {
-                if (!input.EndOfInput()) input.UngetChar(next);
-                tmp.token_type = MINUS;
+                tmp.token_type = NextIs('=') ? MINUSEQ : MINUS;
             }
             return tmp;
         }
@@ -344,11 +415,12 @@ Token LexicalAnalyzer::GetTokenMain()
                 return GetTokenMain();  // recurse to get the real next token
             } else {
                 if (!input.EndOfInput()) input.UngetChar(next);
-                tmp.token_type = DIV;
+                tmp.token_type = NextIs('=') ? DIVEQ : DIV;
                 return tmp;
             }
         }
-        case '*':   tmp.token_type = MULT;      return tmp;
+        case '*':   tmp.token_type = NextIs('=') ? MULTEQ : MULT;   return tmp;
+        case '%':   tmp.token_type = MOD;       return tmp;
         case '=':
         {   
             // "==" is equality in a condition; a single "=" is assignment
@@ -371,15 +443,15 @@ Token LexicalAnalyzer::GetTokenMain()
         case '{':   tmp.token_type = LBRACE;    return tmp;
         case '}':   tmp.token_type = RBRACE;    return tmp;
         case '.':   tmp.token_type = DOT;       return tmp;
-        case '>':   tmp.token_type = GREATER;   return tmp;
+        case '>':   tmp.token_type = NextIs('=') ? GREATEREQ : GREATER;   return tmp;
         case '<':
-            input.GetChar(c);
-            if (c == '>') {
-                tmp.token_type = NOTEQUAL;
-            } else {
-                if (!input.EndOfInput()) input.UngetChar(c);
-                tmp.token_type = LESS;
-            }
+            if (NextIs('>'))      tmp.token_type = NOTEQUAL;  // "<>" (older spelling of "!=")
+            else if (NextIs('=')) tmp.token_type = LESSEQ;
+            else                  tmp.token_type = LESS;
+            return tmp;
+        case '!':
+            // "!=" only; a lone '!' is not an operator (use "not")
+            tmp.token_type = NextIs('=') ? NOTEQUAL : ERROR;
             return tmp;
 
         // ── string literals ───────────────────────────────────────────────────

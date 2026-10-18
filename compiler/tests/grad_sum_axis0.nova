@@ -1,5 +1,5 @@
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -31,16 +31,16 @@ main() {
     double f1 = tensor_get(saY, 0, 1) ;
     double f2 = tensor_get(saY, 0, 2) ;
     double fd = dabs(f0 - 1.3) + dabs(f1 - (0.0 - 0.8)) + dabs(f2 - (0.0 - 0.3)) ;
-    if fd < tol { print("PASS sum_axis0 forward") ; } else { print("FAIL" sum axis0 forward) ; } 
+    if (fd < tol) { print("PASS sum_axis0 forward") ; } else { print("FAIL" sum axis0 forward) ; } 
     int saL = mse_loss(saY, saT) ;
     backward(saL) ;
     int saG = tensor_grad(saA) ;
 
     maxdiff = 0.0 ;
     int qi = 0 ;
-    while qi < 2 {
+    while (qi < 2) {
         int qj = 0 ;
-        while qj < 3 {
+        while (qj < 3) {
             double orig = tensor_get(saA, qi, qj) ;
             tensor_set(saA, qi, qj, orig + eps) ;
             int yP11 = tensor_sum_rows(saA) ;
@@ -54,10 +54,10 @@ main() {
             double numeric = (lossP - lossM) / (2.0 * eps) ;
             double analytic = tensor_get(saG, qi, qj) ;
             d = dabs(numeric - analytic) ;
-            if d > maxdiff { maxdiff = d ; }
+            if (d > maxdiff) { maxdiff = d ; }
             qj = qj + 1 ;
         }
         qi = qi + 1 ;
     }
-    if maxdiff < tol { print("PASS sum_axis0") ; } else { print("FAIL sum_axis0") ; }
+    if (maxdiff < tol) { print("PASS sum_axis0") ; } else { print("FAIL sum_axis0") ; }
 }

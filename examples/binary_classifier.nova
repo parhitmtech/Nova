@@ -34,7 +34,7 @@ main() {
     int z    = 0 ;
     int pred = 0 ;
 
-    while epoch < 10000 {
+    while (epoch < 10000) {
         // Forward
         z    = layer1.forward(X) ;
         pred = sig1.forward(z) ;

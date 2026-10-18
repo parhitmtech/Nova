@@ -970,174 +970,14 @@ void parse_assignment_for_statement(struct InstructionNode*& head, struct Instru
     append(head, tracker, node);
 }
 
-void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tracker, struct InstructionNode* noOpNode)
+// A condition is any expression; it holds when its value is true (non-zero). Emits a test that
+// falls through into the body when it holds and jumps to failTarget when it does not.
+void parse_condition(struct InstructionNode*& head, struct InstructionNode*& tracker, struct InstructionNode* failTarget)
 {
-    if (token.token_type == NOT) 
-    {
-        token = lexer.GetToken();
-        int lhsIdx = parse_expression(head, tracker);
-        VarType lhsCondType = lastExprType;
-
-        ConditionalOperatorType condOp = CONDITION_NOTEQUAL;
-        int rhsIdx;
-        if (token.token_type == GREATER || token.token_type == LESS || token.token_type == NOTEQUAL ||
-            token.token_type == EQEQ)
-        {
-            if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
-            else if (token.token_type == LESS)     condOp = CONDITION_LESS;
-            else if (token.token_type == EQEQ)     condOp = CONDITION_EQUAL;
-            else                                   condOp = CONDITION_NOTEQUAL;
-            token = lexer.GetToken();
-            rhsIdx = parse_expression(head, tracker);
-        }
-        else
-        {
-            int zeroSlot = alloc_slot();
-            mem[zeroSlot] = 0;
-            rhsIdx = zeroSlot;
-        }
-        VarType rhsCondType = lastExprType;
-
-        bool isStringCmp = (lhsCondType == TYPE_STRING || rhsCondType == TYPE_STRING);
-
-        struct InstructionNode* cjmpNode = new InstructionNode();
-        cjmpNode->line_no = token.line_no;
-        if (isStringCmp) 
-        {
-            cjmpNode->type = SCMP;
-            cjmpNode->scmp_inst.condition_op   = condOp;
-            cjmpNode->scmp_inst.operand1_index = lhsIdx;
-            cjmpNode->scmp_inst.operand2_index = rhsIdx;
-        } 
-        else 
-        {
-            // cjmpNode->type = CJMP;
-            // cjmpNode->cjmp_inst.condition_op   = condOp;
-            // cjmpNode->cjmp_inst.operand1_index = lhsIdx;
-            // cjmpNode->cjmp_inst.operand2_index = rhsIdx;
-            // cjmpNode->cjmp_inst.operand_type = 
-            //                     (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
-            //                     (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
-            //                     TYPE_INT;
-
-            // Cast float/double operands to a common type before comparing.
-            VarType condType = 
-                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
-                (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
-                TYPE_INT;
-            if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
-            {
-                lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
-                rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
-            }
-            cjmpNode->type = CJMP;
-            cjmpNode->cjmp_inst.condition_op = condOp;
-            cjmpNode->cjmp_inst.operand1_index = lhsIdx;
-            cjmpNode->cjmp_inst.operand2_index = rhsIdx;
-            cjmpNode->cjmp_inst.operand_type = condType;
-        }
-
-        struct InstructionNode* bodyEntry = new InstructionNode();
-        bodyEntry->line_no = token.line_no;
-        bodyEntry->type = NOOP;
-        cjmpNode->cjmp_inst.target = bodyEntry;
-        append(head, tracker, cjmpNode);
-        struct InstructionNode* skipNode = new InstructionNode();
-        skipNode->line_no = token.line_no;
-        skipNode->type = JMP; 
-        skipNode->jmp_inst.target = noOpNode;
-        append(head, tracker, skipNode);
-        append(head, tracker, bodyEntry);
-        tracker = bodyEntry;
-        return;
-    }
-
-    int lhsIdx = parse_expression(head, tracker);
-    VarType lhsCondType = lastExprType;
-
-    ConditionalOperatorType condOp = CONDITION_NOTEQUAL;
-    if      (token.token_type == GREATER)  condOp = CONDITION_GREATER;
-    else if (token.token_type == LESS)     condOp = CONDITION_LESS;
-    else if (token.token_type == NOTEQUAL) condOp = CONDITION_NOTEQUAL;
-    else if (token.token_type == EQEQ)     condOp = CONDITION_EQUAL;
-    token = lexer.GetToken();
-
-    int rhsIdx = parse_expression(head, tracker);
-    VarType rhsCondType = lastExprType;
-
-    bool isStringCmp = (lhsCondType == TYPE_STRING || rhsCondType == TYPE_STRING);
-
-    struct InstructionNode* cjmpNode = new InstructionNode();
-    cjmpNode->line_no = token.line_no;
-    if (isStringCmp)
-    {
-        cjmpNode->type = SCMP;
-        cjmpNode->scmp_inst.condition_op   = condOp;
-        cjmpNode->scmp_inst.operand1_index = lhsIdx;
-        cjmpNode->scmp_inst.operand2_index = rhsIdx;
-    } 
-    else 
-    {
-        // cjmpNode->type = CJMP;
-        // cjmpNode->cjmp_inst.condition_op   = condOp;
-        // cjmpNode->cjmp_inst.operand1_index = lhsIdx;
-        // cjmpNode->cjmp_inst.operand2_index = rhsIdx;
-        // cjmpNode->cjmp_inst.operand_type = 
-        //                         (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
-        //                         (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT : 
-        //                         TYPE_INT;
-
-        // Cast float/double operands to a common type before comparing.
-            VarType condType = 
-                (lhsCondType == TYPE_DOUBLE || rhsCondType == TYPE_DOUBLE) ? TYPE_DOUBLE :
-                (lhsCondType == TYPE_FLOAT || rhsCondType == TYPE_FLOAT) ? TYPE_FLOAT :
-                TYPE_INT;
-            if (condType == TYPE_FLOAT || condType == TYPE_DOUBLE)
-            {
-                lhsIdx = coerce_float_double(lhsIdx, lhsCondType, condType, head, tracker, token.line_no);
-                rhsIdx = coerce_float_double(rhsIdx, rhsCondType, condType, head, tracker, token.line_no);
-            }
-            cjmpNode->type = CJMP;
-            cjmpNode->cjmp_inst.condition_op = condOp;
-            cjmpNode->cjmp_inst.operand1_index = lhsIdx;
-            cjmpNode->cjmp_inst.operand2_index = rhsIdx;
-            cjmpNode->cjmp_inst.operand_type = condType;
-    }
-
-    if (token.token_type == AND) 
-    {
-        cjmpNode->cjmp_inst.target = noOpNode;
-        append(head, tracker, cjmpNode);
-        token = lexer.GetToken();
-        parse_condition(head, tracker, noOpNode);
-    } 
-    else if (token.token_type == OR) 
-    {
-        struct InstructionNode* skipSecond = new InstructionNode();
-        skipSecond->line_no = token.line_no;
-        skipSecond->type = NOOP;
-        cjmpNode->cjmp_inst.target = skipSecond;
-        append(head, tracker, cjmpNode);
-        struct InstructionNode* jumpToBody = new InstructionNode();
-        jumpToBody->line_no = token.line_no;
-        jumpToBody->type = JMP;
-        append(head, tracker, jumpToBody);
-        append(head, tracker, skipSecond);
-        tracker = skipSecond;
-        token = lexer.GetToken();
-        parse_condition(head, tracker, noOpNode);
-        struct InstructionNode* bodyEntry = new InstructionNode();
-        bodyEntry->line_no = token.line_no;
-        bodyEntry->type = NOOP;
-        jumpToBody->jmp_inst.target = bodyEntry;
-        append(head, tracker, bodyEntry);
-        tracker = bodyEntry;
-    } 
-    else 
-    {
-        cjmpNode->cjmp_inst.target = noOpNode;
-        append(head, tracker, cjmpNode);
-    }
+    int line = token.line_no;
+    int v = parse_expression(head, tracker);
+    if (branch_on_comparison(v, failTarget, tracker)) return;  // a lone comparison: jump on it directly
+    emit_truth_test(v, lastExprType, true, failTarget, line, head, tracker);
 }
 
 void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
@@ -1146,11 +986,11 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     noOpNode->line_no = token.line_no;
     struct InstructionNode* condFailNode = new InstructionNode(); condFailNode->type = NOOP;
     condFailNode->line_no = token.line_no;
+    string keyword = token.lexeme;            // "if" or "elif"
     token = lexer.GetToken();
-    bool had_paren = maybe_consume_lparen(); // check for '('
-    if (had_paren) token = lexer.GetToken();  // move into condition
+    expect_condition_lparen(keyword);
     parse_condition(head, tracker, condFailNode);
-    if (had_paren) token = lexer.GetToken();  // consume ')'
+    expect_condition_rparen(keyword);         // token is now '{'
     token = lexer.GetToken();
     while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
     { 
@@ -1196,10 +1036,9 @@ void parse_while_statement(struct InstructionNode*& head, struct InstructionNode
     condStart->line_no = token.line_no;
     append(head, tracker, condStart);
     token = lexer.GetToken();
-    bool had_paren = maybe_consume_lparen();
-    if (had_paren) token = lexer.GetToken();
+    expect_condition_lparen("while");
     parse_condition(head, tracker, noOpNode);
-    if (had_paren) token = lexer.GetToken();
+    expect_condition_rparen("while");         // token is now '{'
     token = lexer.GetToken();
     while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
     struct InstructionNode* jmpNode = new InstructionNode();
@@ -1232,14 +1071,14 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
     // token = '}'
 
     token = lexer.GetToken();  // must be WHILE
+    if (token.token_type != WHILE)
+        report_error(token.line_no, "expected 'while (...)' after the body of 'do'");
     token = lexer.GetToken();
-    bool had_paren = maybe_consume_lparen();
-    if (had_paren) token = lexer.GetToken();
+    expect_condition_lparen("while");
 
     // Condition: if TRUE -> jump back to bodyStart, if FALSE -> fall to noOpNode
     parse_condition(head, tracker, noOpNode);
-    
-    if (had_paren) token = lexer.GetToken();  // consume ')'
+    expect_condition_rparen("while");
 
     // Unconditional jump back to body top (condition passed)
     struct InstructionNode* jmpBack = new InstructionNode();
@@ -1257,28 +1096,19 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     token = lexer.GetToken(); token = lexer.GetToken();
     if (token.token_type == ID) parse_assignment_statement(head, tracker);
 
-    struct InstructionNode* forConditionNode = new InstructionNode(); 
-    forConditionNode->type = CJMP;
-    forConditionNode->cjmp_inst.operand_type = TYPE_INT;
-    forConditionNode->line_no = token.line_no;
-    token = lexer.GetToken();
-    if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand1_index = symbolTable[token.lexeme];
-    else { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand1_index = s; }
-    token = lexer.GetToken();
-    if      (token.token_type == GREATER)  forConditionNode->cjmp_inst.condition_op = CONDITION_GREATER;
-    else if (token.token_type == LESS)     forConditionNode->cjmp_inst.condition_op = CONDITION_LESS;
-    else if (token.token_type == NOTEQUAL) forConditionNode->cjmp_inst.condition_op = CONDITION_NOTEQUAL;
-    token = lexer.GetToken();
-    if (token.token_type == ID && symbolTable.count(token.lexeme)) forConditionNode->cjmp_inst.operand2_index = symbolTable[token.lexeme];
-    else if (token.token_type == NUM) { int s = alloc_slot(); mem[s] = stoi(token.lexeme); forConditionNode->cjmp_inst.operand2_index = s; }
-
+    // The condition is any expression, evaluated again before every iteration (condStart).
+    struct InstructionNode* condStart = new InstructionNode();
+    condStart->line_no = token.line_no;
+    condStart->type = NOOP;
+    append(head, tracker, condStart);
     struct InstructionNode* noOpNode = new InstructionNode();
-    noOpNode->line_no = token.line_no; 
+    noOpNode->line_no = token.line_no;
     noOpNode->type = NOOP;
-    forConditionNode->cjmp_inst.target = noOpNode;
-    append(head, tracker, forConditionNode);
+    token = lexer.GetToken();  // first token of the condition
+    parse_condition(head, tracker, noOpNode);
+    // token is now the ';' before the update
 
-    token = lexer.GetToken(); token = lexer.GetToken();
+    token = lexer.GetToken();
     struct InstructionNode* updateNode = nullptr, *updateTracker = nullptr;
     if (token.token_type == ID && symbolTable.count(token.lexeme)) {
         parse_assignment_for_statement(updateNode, updateTracker);
@@ -1286,7 +1116,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
         while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
         struct InstructionNode* jmpNode = new InstructionNode();
         jmpNode->line_no = token.line_no;
-        jmpNode->type = JMP; jmpNode->jmp_inst.target = forConditionNode;
+        jmpNode->type = JMP; jmpNode->jmp_inst.target = condStart;
         tracker->next = updateNode; updateTracker->next = jmpNode; jmpNode->next = noOpNode; tracker = noOpNode;
     }
 }
@@ -1294,8 +1124,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
 void parse_switch_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     token = lexer.GetToken();
-    bool hasParen = (token.token_type == LPAREN);
-    if (hasParen) token = lexer.GetToken();
+    expect_condition_lparen("switch");
     int switchSlot = alloc_temp();
     int resultIdx  = parse_expression(head, tracker);
     struct InstructionNode* copyNode = new InstructionNode();
@@ -1305,7 +1134,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
     copyNode->assign_inst.operand1_index       = resultIdx;
     copyNode->assign_inst.op                   = OPERATOR_NONE;
     append(head, tracker, copyNode);
-    if (hasParen && token.token_type == RPAREN) token = lexer.GetToken();
+    expect_condition_rparen("switch");        // token is now '{'
     token = lexer.GetToken();
     struct InstructionNode* noOpNode = new InstructionNode(); 
     noOpNode->line_no = token.line_no;

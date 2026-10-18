@@ -24,7 +24,7 @@ main() {
     int steps = 10000 ;
     int step = 0 ;
     int batch = 0 ;
-    while step < steps {
+    while (step < steps) {
         int start = batch * 20 ;
         int xb = tensor_slice_rows(X, start, start + 20) ;
         int yb = tensor_slice_rows(Y, start, start + 20) ;
@@ -36,9 +36,9 @@ main() {
         grad_step(b1, lr) ;
         grad_step(W2, lr) ;
         grad_step(b2, lr) ;
-        if step < 1 { print(tensor_get(loss, 0, 0)) ; }
+        if (step < 1) { print(tensor_get(loss, 0, 0)) ; }
         batch = batch + 1 ;
-        if batch > 9 { batch = 0 ; }
+        if (batch > 9) { batch = 0 ; }
         step = step + 1 ;
     }
 

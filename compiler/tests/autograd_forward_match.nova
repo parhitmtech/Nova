@@ -3,12 +3,12 @@
 // how ag_matmul's forward bug (inner loop bounded by the output width instead
 // of the inner dimension) went unnoticed.
 def dabs(double x) -> double {
-    if x < 0.0 { return 0.0 - x ; }
+    if (x < 0.0) { return 0.0 - x ; }
     return x ;
 }
 
 def check(double off, double on) {
-    if dabs(off - on) < 0.000000001 { print("PASS") ; } else { print("FAIL") ; }
+    if (dabs(off - on) < 0.000000001) { print("PASS") ; } else { print("FAIL") ; }
 }
 
 main() {

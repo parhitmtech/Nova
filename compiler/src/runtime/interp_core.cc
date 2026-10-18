@@ -245,6 +245,16 @@ InstructionNode* exec_cjmp(InstructionNode* pc)
                         pc = (d1 == d2) ? pc->next : pc->cjmp_inst.target;
                         break;
                     }
+                    case CONDITION_GREATER_EQUAL:
+                    {
+                        pc = (d1 >= d2) ? pc->next : pc->cjmp_inst.target;
+                        break;
+                    }
+                    case CONDITION_LESS_EQUAL:
+                    {
+                        pc = (d1 <= d2) ? pc->next : pc->cjmp_inst.target;
+                        break;
+                    }
                 }
             }
             break;
@@ -360,6 +370,8 @@ InstructionNode* exec_scmp(InstructionNode* pc)
                 case CONDITION_LESS: pass = (left < right); break;
                 case CONDITION_NOTEQUAL: pass = (left != right); break;
                 case CONDITION_EQUAL: pass = (left == right); break;
+                case CONDITION_GREATER_EQUAL: pass = (left >= right); break;
+                case CONDITION_LESS_EQUAL: pass = (left <= right); break;
             }
             pc = pass ? pc->next : pc->scmp_inst.target;
             break;

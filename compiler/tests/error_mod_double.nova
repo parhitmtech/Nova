@@ -1,0 +1,5 @@
+// % works on ints only.
+main() {
+    double d = 5.0 ;
+    double e = d % 2.0 ;
+}

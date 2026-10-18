@@ -1,5 +1,5 @@
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -36,9 +36,9 @@ main() {
 
     maxdiff = 0.0 ;
     int si = 0 ;
-    while si < 2 {
+    while (si < 2) {
         int sj = 0 ;
-        while sj < 2 {
+        while (sj < 2) {
             double orig = tensor_get(suA, si, sj) ;
             tensor_set(suA, si, sj, orig + eps) ;
             int yP3 = tensor_sub(suA, suB) ;
@@ -52,10 +52,10 @@ main() {
             double numeric = (lossP - lossM) / (2.0 * eps) ;
             double analytic = tensor_get(suG, si, sj) ;
             d = dabs(numeric - analytic) ;
-            if d > maxdiff { maxdiff = d ; }
+            if (d > maxdiff) { maxdiff = d ; }
             sj = sj + 1 ;
         }
         si = si + 1;
     }
-    if maxdiff < tol { print("PASS sub") ; } else { print("FAIL sub") ; }
+    if (maxdiff < tol) { print("PASS sub") ; } else { print("FAIL sub") ; }
 }

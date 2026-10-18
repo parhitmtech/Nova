@@ -7,7 +7,7 @@ main() {
     int i = 0;
     int total = 2000;
     double acc = 0.0;
-    while i < total {
+    while (i < total) {
         int t = tensor_zeros(4, 4);
         tensor_set(t, 0, 0, 1.0);
         tensor_set(t, 1, 1, 2.0);

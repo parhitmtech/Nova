@@ -8,7 +8,7 @@
 // file is committed so this reports SKIP rather than a flaky FAIL/PASS.
 
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -32,13 +32,13 @@ main() {
     int msL = mse_loss(msP, msT) ;
     // forward value: ((0.5-1.0)^2 + (-1.0-0.3)^2) / 2 = 0.97
     double fv = tensor_get(msL, 0, 0) ;
-    if dabs(fv - 0.97) < tol { print("PASS mse_loss forward") ; } else { print("FAIL mse_loss forward") ; }
+    if (dabs(fv - 0.97) < tol) { print("PASS mse_loss forward") ; } else { print("FAIL mse_loss forward") ; }
     backward(msL) ;
     int msG = tensor_grad(msP) ;
 
     maxdiff = 0.0 ;
     int ei = 0 ;
-    while ei < 2 {
+    while (ei < 2) {
         double orig = tensor_get(msP, 0, ei) ;
         tensor_set(msP, 0, ei, orig + eps) ;
         int lP12 = mse_loss(msP, msT) ;
@@ -50,8 +50,8 @@ main() {
         double numeric = (lossP - lossM) / (2.0 * eps) ;
         double analytic = tensor_get(msG, 0, ei) ;
         d = dabs(numeric - analytic) ;
-        if d > maxdiff { maxdiff = d ; }
+        if (d > maxdiff) { maxdiff = d ; }
         ei = ei + 1 ;
     }
-    if maxdiff < tol { print("PASS mse_loss") ; } else { print("FAIL mse_loss") ; }
+    if (maxdiff < tol) { print("PASS mse_loss") ; } else { print("FAIL mse_loss") ; }
 }

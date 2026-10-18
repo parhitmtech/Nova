@@ -30,7 +30,7 @@ main() {
     Holder a ;
     Holder b ;
     int i = 0 ;
-    while i < 50 {
+    while (i < 50) {
         int x = tensor_add(base, base) ;
         a.set(x) ;
         b.set(a.doubled()) ;

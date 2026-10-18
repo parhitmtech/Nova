@@ -1,5 +1,5 @@
 // A truncated file (missing closing brackets) is reported, not run or hung.
 main() {
     print(1) ;
-    if 1 < 2 {
+    if (1 < 2) {
         print(2) ;

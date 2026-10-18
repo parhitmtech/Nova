@@ -1,5 +1,5 @@
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -29,7 +29,7 @@ main() {
 
     maxdiff = 0.0 ;
     int fi = 0 ;
-    while fi < 3 {
+    while (fi < 3) {
         double orig = tensor_get(smA, 0, fi) ;
         tensor_set(smA, 0, fi, orig + eps) ;
         int yP9 = softmax(smA) ;
@@ -43,8 +43,8 @@ main() {
         double numeric = (lossP - lossM) / (2.0 * eps) ;
         double analytic = tensor_get(smG, 0, fi) ;
         d = dabs(numeric - analytic) ;
-        if d > maxdiff { maxdiff = d ; }
+        if (d > maxdiff) { maxdiff = d ; }
         fi = fi + 1 ;
     }
-    if maxdiff < tol { print("PASS softmax") ; } else { print("FAIL softmax") ; }
+    if (maxdiff < tol) { print("PASS softmax") ; } else { print("FAIL softmax") ; }
 }

@@ -124,9 +124,93 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     return freshSlot;
 }
 
+// dst = a <op> b on int slots (op may be OPERATOR_NONE for a plain copy: dst = a).
+static struct InstructionNode* emit_int_assign(int dst, int a, ArithmeticOperatorType op, int b, int line,
+                                               struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    struct InstructionNode* node = new InstructionNode();
+    node->line_no = line;
+    node->type = ASSIGN;
+    node->assign_inst.left_hand_side_index = dst;
+    node->assign_inst.operand1_index       = a;
+    node->assign_inst.operand2_index       = b;
+    node->assign_inst.op                   = op;
+    append(head, tracker, node);
+    return node;
+}
+
+static int int_constant(int v)
+{
+    int s = alloc_slot();
+    mem[s] = v;
+    return s;
+}
+
+// -x, emitted as 0 - x in x's own type.
+static int emit_negate(int v, VarType t, int line,
+                       struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (t == TYPE_FLOAT || t == TYPE_DOUBLE)
+    {
+        bool isD = (t == TYPE_DOUBLE);
+        int zero = isD ? alloc_double_slot() : alloc_float_slot();  // starts at 0.0
+        int dst  = isD ? alloc_double_slot() : alloc_float_slot();
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = line;
+        if (isD)
+        {
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = dst;
+            node->assign_d_inst.operand1_index = zero;
+            node->assign_d_inst.operand2_index = v;
+            node->assign_d_inst.op = OPERATOR_MINUS;
+        }
+        else
+        {
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = dst;
+            node->assign_f_inst.operand1_index = zero;
+            node->assign_f_inst.operand2_index = v;
+            node->assign_f_inst.op = OPERATOR_MINUS;
+        }
+        append(head, tracker, node);
+        lastExprType = t;
+        return dst;
+    }
+    if (t != TYPE_INT && t != TYPE_UNKNOWN)
+        report_error(line, "unary '-' needs a number, got " + typeToString(t));
+    int dst = alloc_temp();
+    emit_int_assign(dst, int_constant(0), OPERATOR_MINUS, v, line, head, tracker);
+    lastExprType = TYPE_INT;
+    return dst;
+}
+
 int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    if (token.token_type == LPAREN) 
+    if (token.token_type == MINUS)
+    {
+        // unary minus: a literal folds into the constant (-2, -0.5); anything else becomes 0 - x
+        int line = token.line_no;
+        token = lexer.GetToken();
+        if (token.token_type == NUM)
+        {
+            int idx = int_constant((int)-stoll(token.lexeme));
+            lastExprType = TYPE_INT;
+            token = lexer.GetToken();
+            return idx;
+        }
+        if (token.token_type == FLOAT_LITERAL)
+        {
+            int idx = alloc_float_slot();
+            fmem[idx] = -stof(token.lexeme);
+            lastExprType = TYPE_FLOAT;
+            token = lexer.GetToken();
+            return idx;
+        }
+        int v = parse_factor(head, tracker);
+        return emit_negate(v, lastExprType, line, head, tracker);
+    }
+    if (token.token_type == LPAREN)
     {
         token = lexer.GetToken();
         int result = parse_expression(head, tracker);
@@ -441,8 +525,24 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int left = parse_factor(head, tracker);
     VarType leftType = lastExprType;
-    while (token.token_type == MULT || token.token_type == DIV) {
+    while (token.token_type == MULT || token.token_type == DIV || token.token_type == MOD) {
         int opLine = token.line_no;
+        if (token.token_type == MOD)
+        {
+            // a % b = a - (a / b) * b on ints (the result has the sign of a, as in C), built from
+            // instructions every back end already runs. b == 0 stops with the division-by-zero error.
+            token = lexer.GetToken();
+            int right = parse_factor(head, tracker);
+            VarType rightType = lastExprType;
+            if ((leftType != TYPE_INT && leftType != TYPE_UNKNOWN) || (rightType != TYPE_INT && rightType != TYPE_UNKNOWN))
+                report_error(opLine, "'%' needs int operands, got " + typeToString(leftType) + " and " + typeToString(rightType));
+            int quotient = alloc_temp(), product = alloc_temp(), rem = alloc_temp();
+            emit_int_assign(quotient, left, OPERATOR_DIV, right, opLine, head, tracker);
+            emit_int_assign(product, quotient, OPERATOR_MULT, right, opLine, head, tracker);
+            emit_int_assign(rem, left, OPERATOR_MINUS, product, opLine, head, tracker);
+            left = rem; leftType = TYPE_INT; lastExprType = TYPE_INT;
+            continue;
+        }
         ArithmeticOperatorType op = (token.token_type == MULT) ? OPERATOR_MULT : OPERATOR_DIV;
 
         // if (leftType == TYPE_FLOAT)
@@ -540,7 +640,8 @@ int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
     return left;
 }
 
-int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tracker)
+// + and - (and string +)
+static int parse_additive(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int left = parse_term(head, tracker);
     VarType leftType = lastExprType;
@@ -669,4 +770,211 @@ int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tra
         left = tmp; leftType = TYPE_INT; lastExprType = TYPE_INT;
     }
     return left;
+}
+
+// ── Comparisons and and / or / not as values ─────────────────────────────────
+// They produce a bool (0 or 1) in an int slot, so they can appear anywhere an expression can:
+// nested in parentheses, stored, passed, returned. They are built from CJMP / SCMP and ASSIGN,
+// which every back end already runs. A CJMP falls through when its test holds and jumps to its
+// target when it does not; and / or skip the right side when the left side decides the result.
+
+static bool comparison_op(TokenType t, ConditionalOperatorType& op)
+{
+    switch (t)
+    {
+        case LESS:      op = CONDITION_LESS;          return true;
+        case GREATER:   op = CONDITION_GREATER;       return true;
+        case LESSEQ:    op = CONDITION_LESS_EQUAL;    return true;
+        case GREATEREQ: op = CONDITION_GREATER_EQUAL; return true;
+        case EQEQ:      op = CONDITION_EQUAL;         return true;
+        case NOTEQUAL:  op = CONDITION_NOTEQUAL;      return true;
+        default:        return false;
+    }
+}
+
+static struct InstructionNode* new_label(int line)
+{
+    struct InstructionNode* n = new InstructionNode();
+    n->line_no = line;
+    n->type = NOOP;
+    return n;
+}
+
+// Test (lhs op rhs): fall through when it holds, jump to failTarget when it does not.
+// Strings compare as strings; numbers are converted to a common type first (int < float < double).
+static struct InstructionNode* emit_compare(int lhs, VarType lt, ConditionalOperatorType op, int rhs, VarType rt,
+                                            struct InstructionNode* failTarget, int line,
+                                            struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    struct InstructionNode* n = new InstructionNode();
+    n->line_no = line;
+    if (lt == TYPE_STRING || rt == TYPE_STRING)
+    {
+        if (lt != rt && lt != TYPE_UNKNOWN && rt != TYPE_UNKNOWN)
+            report_error(line, "cannot compare " + typeToString(lt) + " with " + typeToString(rt));
+        n->type = SCMP;
+        n->scmp_inst.condition_op   = op;
+        n->scmp_inst.operand1_index = lhs;
+        n->scmp_inst.operand2_index = rhs;
+        n->scmp_inst.target         = failTarget;
+    }
+    else
+    {
+        VarType ct = (lt == TYPE_DOUBLE || rt == TYPE_DOUBLE) ? TYPE_DOUBLE :
+                     (lt == TYPE_FLOAT  || rt == TYPE_FLOAT)  ? TYPE_FLOAT  : TYPE_INT;
+        if (ct != TYPE_INT)
+        {
+            lhs = coerce_float_double(lhs, lt, ct, head, tracker, line);
+            rhs = coerce_float_double(rhs, rt, ct, head, tracker, line);
+        }
+        n->type = CJMP;
+        n->cjmp_inst.condition_op   = op;
+        n->cjmp_inst.operand1_index = lhs;
+        n->cjmp_inst.operand2_index = rhs;
+        n->cjmp_inst.operand_type   = ct;
+        n->cjmp_inst.target         = failTarget;
+    }
+    append(head, tracker, n);
+    return n;
+}
+
+// The instructions of the most recent comparison: result = 0; test; result = 1; done.
+// parse_condition uses them to branch on a lone comparison directly (see branch_on_comparison).
+static struct {
+    int result = -1;
+    struct InstructionNode* setFalse = nullptr;
+    struct InstructionNode* test = nullptr;
+    struct InstructionNode* setTrue = nullptr;
+    struct InstructionNode* done = nullptr;
+} g_lastComparison;
+
+// If the condition just parsed (value v, last instruction tracker) is exactly one comparison, turn its
+// "store true/false" code into a single jump to failTarget: the same code as before comparisons became
+// values, and a shape the JIT can compile. Returns false (and changes nothing) otherwise.
+bool branch_on_comparison(int v, struct InstructionNode* failTarget, struct InstructionNode* tracker)
+{
+    if (g_lastComparison.result != v || g_lastComparison.done != tracker) return false;
+    g_lastComparison.setFalse->type = NOOP;
+    g_lastComparison.setTrue->type = NOOP;
+    if (g_lastComparison.test->type == SCMP) g_lastComparison.test->scmp_inst.target = failTarget;
+    else                                     g_lastComparison.test->cjmp_inst.target = failTarget;
+    g_lastComparison.result = -1;
+    return true;
+}
+
+// Test whether v is true (non-zero): fall through when its truth equals wantTrue, otherwise jump to
+// failTarget. Any number works as a condition, as in C; a string does not.
+void emit_truth_test(int v, VarType t, bool wantTrue, struct InstructionNode* failTarget, int line,
+                     struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (t == TYPE_STRING)
+        report_error(line, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
+    int zero;
+    if (t == TYPE_FLOAT)       zero = alloc_float_slot();
+    else if (t == TYPE_DOUBLE) zero = alloc_double_slot();
+    else                       zero = int_constant(0);
+    emit_compare(v, t, wantTrue ? CONDITION_NOTEQUAL : CONDITION_EQUAL, zero, t, failTarget, line, head, tracker);
+}
+
+// additive (== != < > <= >=) additive
+static int parse_comparison(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int left = parse_additive(head, tracker);
+    VarType lt = lastExprType;
+    ConditionalOperatorType op;
+    if (!comparison_op(token.token_type, op)) return left;
+
+    int line = token.line_no;
+    token = lexer.GetToken();
+    int right = parse_additive(head, tracker);
+    VarType rt = lastExprType;
+
+    // result = 0; if (left op right) result = 1
+    int result = alloc_temp();
+    struct InstructionNode* done = new_label(line);
+    g_lastComparison.setFalse = emit_int_assign(result, int_constant(0), OPERATOR_NONE, 0, line, head, tracker);
+    g_lastComparison.test     = emit_compare(left, lt, op, right, rt, done, line, head, tracker);
+    g_lastComparison.setTrue  = emit_int_assign(result, int_constant(1), OPERATOR_NONE, 0, line, head, tracker);
+    append(head, tracker, done);
+    g_lastComparison.done   = done;
+    g_lastComparison.result = result;
+
+    if (comparison_op(token.token_type, op))
+        report_error(token.line_no, "comparisons cannot be chained; use 'and', e.g. (a < b and b < c)");
+    lastExprType = TYPE_BOOL;
+    return result;
+}
+
+// not x
+static int parse_not(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (token.token_type != NOT) return parse_comparison(head, tracker);
+    int line = token.line_no;
+    token = lexer.GetToken();
+    int v = parse_not(head, tracker);
+    VarType t = lastExprType;
+
+    // result = 0; if (v is false) result = 1
+    int result = alloc_temp();
+    struct InstructionNode* done = new_label(line);
+    emit_int_assign(result, int_constant(0), OPERATOR_NONE, 0, line, head, tracker);
+    emit_truth_test(v, t, false, done, line, head, tracker);
+    emit_int_assign(result, int_constant(1), OPERATOR_NONE, 0, line, head, tracker);
+    append(head, tracker, done);
+    lastExprType = TYPE_BOOL;
+    return result;
+}
+
+// a and b and ...: stops at the first false operand
+static int parse_and(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int left = parse_not(head, tracker);
+    if (token.token_type != AND) return left;
+    int line = token.line_no;
+
+    // result = 0; each operand must be true to go on; result = 1 only if all were
+    int result = alloc_temp();
+    struct InstructionNode* done = new_label(line);
+    emit_int_assign(result, int_constant(0), OPERATOR_NONE, 0, line, head, tracker);
+    emit_truth_test(left, lastExprType, true, done, line, head, tracker);
+    while (token.token_type == AND)
+    {
+        token = lexer.GetToken();
+        int right = parse_not(head, tracker);
+        emit_truth_test(right, lastExprType, true, done, line, head, tracker);
+    }
+    emit_int_assign(result, int_constant(1), OPERATOR_NONE, 0, line, head, tracker);
+    append(head, tracker, done);
+    lastExprType = TYPE_BOOL;
+    return result;
+}
+
+// a or b or ...: stops at the first true operand
+static int parse_or(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int left = parse_and(head, tracker);
+    if (token.token_type != OR) return left;
+    int line = token.line_no;
+
+    // result = 1; any true operand jumps to the end; result = 0 only if all were false
+    int result = alloc_temp();
+    struct InstructionNode* done = new_label(line);
+    emit_int_assign(result, int_constant(1), OPERATOR_NONE, 0, line, head, tracker);
+    emit_truth_test(left, lastExprType, false, done, line, head, tracker);
+    while (token.token_type == OR)
+    {
+        token = lexer.GetToken();
+        int right = parse_and(head, tracker);
+        emit_truth_test(right, lastExprType, false, done, line, head, tracker);
+    }
+    emit_int_assign(result, int_constant(0), OPERATOR_NONE, 0, line, head, tracker);
+    append(head, tracker, done);
+    lastExprType = TYPE_BOOL;
+    return result;
+}
+
+// Full expression, lowest precedence first: or < and < not < comparison < + - < * / % < unary -.
+int parse_expression(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    return parse_or(head, tracker);
 }

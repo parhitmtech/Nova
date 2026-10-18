@@ -7,7 +7,7 @@ def multiply(int a, int b) -> int {
 }
 
 def max(int a, int b) -> int {
-    if a > b {
+    if (a > b) {
         return a ;
     }
     return b ;

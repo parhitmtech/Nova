@@ -60,6 +60,8 @@ enum ConditionalOperatorType {
     CONDITION_LESS,
     CONDITION_NOTEQUAL,
     CONDITION_EQUAL,  // "==" (added after the others so existing values don't change)
+    CONDITION_GREATER_EQUAL,  // ">="
+    CONDITION_LESS_EQUAL,     // "<="
 };
 
 // Tensor operation codes

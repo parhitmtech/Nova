@@ -1,5 +1,5 @@
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -32,9 +32,9 @@ main() {
 
     maxdiff = 0.0 ;
     int ci = 0 ;
-    while ci < 2 {
+    while (ci < 2) {
         int cj = 0 ;
-        while cj < 2 {
+        while (cj < 2) {
             double orig = tensor_get(scA, ci, cj) ;
              tensor_set(scA, ci, cj, orig + eps) ;
             int yP5 = tensor_scale(scA, scS) ;
@@ -48,10 +48,10 @@ main() {
             double numeric = (lossP - lossM) / (2.0 * eps) ;
             double analytic = tensor_get(scG, ci, cj) ;
             d = dabs(numeric - analytic) ;
-            if d > maxdiff { maxdiff = d ; }
+            if (d > maxdiff) { maxdiff = d ; }
             cj = cj + 1;
         }
         ci = ci + 1;
     }
-    if maxdiff < tol { print("PASS scale") ; } else { print("FAIL scale") ; }
+    if (maxdiff < tol) { print("PASS scale") ; } else { print("FAIL scale") ; }
 }

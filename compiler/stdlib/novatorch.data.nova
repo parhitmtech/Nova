@@ -16,7 +16,7 @@ class DataLoader {
 
     def shuffle() {
         int i = self.n_samples - 1 ;
-        while i > 0 {
+        while (i > 0) {
             int j = tensor_get(rand_int(0, i), 0, 0) ;
             int row_i = tensor_get_row(self.data, i) ;
             int row_j = tensor_get_row(self.data, j) ;
@@ -37,7 +37,7 @@ class DataLoader {
     def next_batch_x() -> int {
         int start = self.current ;
         int end = start + self.batch_size ;
-        if end > self.n_samples {
+        if (end > self.n_samples) {
             end = self.n_samples ;
         }
         return tensor_slice_rows(self.data, start, end) ;
@@ -46,7 +46,7 @@ class DataLoader {
     def next_batch_y() -> int {
         int start = self.current ;
         int end = start + self.batch_size ;
-        if end > self.n_samples {
+        if (end > self.n_samples) {
             end = self.n_samples ;
         }
         self.current = end ;
@@ -63,22 +63,22 @@ def normalize(int t) -> int {
     int rows = tensor_rows(t) ;
     int out = tensor_zeros(rows, cols) ;
     int col = 0 ;
-    while col < cols {
+    while (col < cols) {
         double mn = tensor_get(t, 0, col) ;
         double mx = tensor_get(t, 0, col) ;
         int row = 1 ;
-        while row < rows {
+        while (row < rows) {
             double v = tensor_get(t, row, col);
-            if v < mn { mn = v ;}
-            if v > mx { mx = v ; }
+            if (v < mn) { mn = v ;}
+            if (v > mx) { mx = v ; }
             row = row + 1 ;
         }
         double range = mx - mn ;
         row = 0 ;
-        while row < rows {
+        while (row < rows) {
             double v = tensor_get(t, row, col) ;
             double norm = 0.0 ;
-            if range > 0.0 {
+            if (range > 0.0) {
                 norm = (v - mn) / range ;
             }
             tensor_set(out, row, col, norm) ;

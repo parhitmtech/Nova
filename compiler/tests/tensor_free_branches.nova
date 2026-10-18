@@ -7,13 +7,13 @@ main() {
     int keep = tensor_ones(2, 2) ;
     double acc = 0.0 ;
     int i = 0 ;
-    while i < 6 {
+    while (i < 6) {
         int t = tensor_add(keep, keep) ;
         int u = tensor_add(keep, keep) ;
-        if i < 3 {
+        if (i < 3) {
             acc = acc + tensor_get(t, 0, 0) ;
         }
-        if i > 3 {
+        if (i > 3) {
             acc = acc + 0.0 ;
         } else {
             acc = acc + tensor_get(u, 1, 1) ;

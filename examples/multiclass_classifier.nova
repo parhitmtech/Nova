@@ -43,7 +43,7 @@ main() {
     int logits = 0 ;
     int pred   = 0 ;
 
-    while epoch < 5000 {
+    while (epoch < 5000) {
         // Forward
         h1     = layer1.forward(X) ;
         a1     = act1.forward(h1) ;

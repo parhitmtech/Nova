@@ -239,6 +239,12 @@ void generate_x86(struct InstructionNode* program, const std::string& outputFile
                     case CONDITION_EQUAL:
                         fprintf(out, "    jne  .L%d\n", targetLabel);
                         break;
+                    case CONDITION_GREATER_EQUAL:
+                        fprintf(out, "    jl   .L%d\n", targetLabel);
+                        break;
+                    case CONDITION_LESS_EQUAL:
+                        fprintf(out, "    jg   .L%d\n", targetLabel);
+                        break;
                 }
                 break;
             }

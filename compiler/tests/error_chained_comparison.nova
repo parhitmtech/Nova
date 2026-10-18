@@ -1,0 +1,7 @@
+// Comparisons cannot be chained; write (a < b and b < c).
+main() {
+    int a = 1 ;
+    int b = 2 ;
+    int c = 3 ;
+    if (a < b < c) { print(1) ; }
+}

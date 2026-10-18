@@ -115,14 +115,25 @@ int alloc_temp()
     return alloc_slot();
 }
 
-// CALL after consuming the keyword (WHILE / IF).
-// IF the next token is '(', consume it and return true (so we know to consume ')'after condition).
-bool maybe_consume_lparen()
+// The conditions of if / elif / while / do-while and the value of switch must be in parentheses:
+// if (x < 5). Called with token on the '(' (after the keyword); leaves token on the first token inside.
+void expect_condition_lparen(const string& keyword)
 {
     if (token.token_type == LPAREN)
     {
         token = lexer.GetToken();  // consume '('
-        return true;
+        return;
     }
-    return false;
+    report_error(token.line_no, "'" + keyword + "' needs its condition in parentheses: " + keyword + " (...)");
+}
+
+// Called with token on the ')' that closes the condition; leaves token on the token after it.
+void expect_condition_rparen(const string& keyword)
+{
+    if (token.token_type == RPAREN)
+    {
+        token = lexer.GetToken();  // consume ')'
+        return;
+    }
+    report_error(token.line_no, "missing ')' after the condition of '" + keyword + "'");
 }

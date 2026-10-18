@@ -39,7 +39,7 @@ main() {
 
     int bar = progress_bar(10000, 40) ;
 
-    while epoch < 10000 {
+    while (epoch < 10000) {
         h1   = layer1.forward(X) ;
         a1   = act1.forward(h1) ;
         h2   = layer2.forward(a1) ;

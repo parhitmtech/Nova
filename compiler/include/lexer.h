@@ -42,9 +42,13 @@ typedef enum { END_OF_FILE = 0,
     // comparison 
     NOTEQUAL, GREATER, LESS, EQEQ,
 
-    // arrow operator (for function return type) 
+    // arrow operator (for function return type)
     ARROW,
     DOT,
+
+    // more comparisons, remainder and compound assignment
+    GREATEREQ, LESSEQ, MOD,
+    PLUSEQ, MINUSEQ, MULTEQ, DIVEQ,
 
     // literals + misc 
     NUM, FLOAT_LITERAL, ID, STRING, ERROR
@@ -79,6 +83,8 @@ class LexicalAnalyzer {
     InputBuffer input;
     bool initialized = false;
     bool SkipSpace();
+    bool NextIs(char c);  // consume the next character if it is c
+    void DesugarCompoundAssignments();  // x += e  ->  x = x + (e)
     int FindKeywordIndex(std::string);
     Token ScanIdOrKeyword();
     Token ScanNumber();

@@ -65,12 +65,14 @@ main()
 
 | Category   | Operators            | Notes                              |
 |------------|----------------------|------------------------------------|
-| Arithmetic | \`+\` \`-\` \`*\` \`/\`       | Standard precedence                |
-| Comparison | \`<\` \`>\` \`<>\`           | \`<>\` means NOT EQUAL (not \`!=\`)    |
-| Logical    | \`and\` \`or\` \`not\`       | Keyword operators, int-based       |
+| Arithmetic | \`+\` \`-\` \`*\` \`/\` \`%\`   | Standard precedence; \`%\` is int-only remainder |
+| Unary      | \`-x\`                 | Negation: \`-a\`, \`-(a + b)\`, \`-2.5\`  |
+| Comparison | \`==\` \`!=\` \`<\` \`>\` \`<=\` \`>=\` | \`<>\` is an older spelling of \`!=\` |
+| Logical    | \`and\` \`or\` \`not\`       | Short-circuit; precedence or < and < not < comparison |
+| Assignment | \`=\` \`+=\` \`-=\` \`*=\` \`/=\` | \`x *= a + b\` means \`x = x * (a + b)\` |
 | String     | \`+\`                  | String concatenation               |
 
-**Important:** Nova does NOT have \`!=\`, \`==\`, \`<=\`, or \`>=\`. Use \`<>\` for not-equal. For less-than-or-equal you compose: \`x < 6\` instead of \`x <= 5\`.
+**Important:** conditions of \`if\`, \`elif\`, \`while\`, \`do ... while\` and \`switch\` must be in parentheses: \`if (x <= 5) {\`. A condition can be any expression: comparisons and \`and\`/\`or\`/\`not\` produce a bool that can be grouped (\`if ((a < b) or (c > d))\`), stored (\`bool ok = x > 0 ;\`) or returned; any number is true when non-zero. Comparisons cannot be chained: write \`a < b and b < c\`, not \`a < b < c\`.
 
 ---
 
@@ -113,10 +115,10 @@ main()
 main()
 {
     int x = 7 ;
-    if x > 10 {
+    if (x > 10) {
         print(1) ;
     }
-    elif x > 5 {
+    elif (x > 5) {
         print(2) ;
     }
     else {
@@ -131,7 +133,7 @@ main()
 main()
 {
     int i = 0 ;
-    while i < 10 {
+    while (i < 10) {
         print(i) ;
         i = i + 1 ;
     }
@@ -159,7 +161,7 @@ main()
     do {
         print(i) ;
         i = i + 1 ;
-    } while i < 5 ;
+    } while (i < 5) ;
 }
 \`\`\`
 
@@ -232,7 +234,7 @@ Pure recursive functions are **automatically memoized** by the compiler — no a
 
 \`\`\`nova
 def fib(int n) -> int {
-    if n < 2 {
+    if (n < 2) {
         return n ;
     }
     return fib(n - 1) + fib(n - 2) ;
@@ -255,12 +257,12 @@ main()
 {
     int nums = array(6) ;
     int i = 0 ;
-    while i < 6 {
+    while (i < 6) {
         nums[i] = i * 2 ;
         i = i + 1 ;
     }
     i = 0 ;
-    while i < 6 {
+    while (i < 6) {
         print(nums[i]) ;
         i = i + 1 ;
     }
@@ -273,7 +275,7 @@ Dynamic size from variable:
 def fill(int n) -> int {
     int arr = array(n) ;
     int i = 0 ;
-    while i < n {
+    while (i < n) {
         arr[i] = i * i ;
         i = i + 1 ;
     }
@@ -475,7 +477,7 @@ tensor W2 = grad_step(W, 0.01) ; // W = W - lr * grad(W)
 \`\`\`nova
 int pb = progress_bar(100, 40) ;  // total=100 iters, bar_width=40
 int i = 0 ;
-while i < 100 {
+while (i < 100) {
     // ... training step ...
     progress_update(pb) ;
     i = i + 1 ;
@@ -510,7 +512,7 @@ main()
 
     double lr = 0.01 ;
     int epoch = 0 ;
-    while epoch < 100 {
+    while (epoch < 100) {
         tensor pred = matmul(X, W) ;
         pred = tensor_add(pred, b) ;
         pred = sigmoid(pred) ;
@@ -640,7 +642,7 @@ Two forms:
 | Rule | Detail |
 |---|---|
 | Semicolons | Every statement: \`print(x) ;\` (space before \`;\`) |
-| Not-equal | Use \`<>\` not \`!=\` |
+| Conditions | Always in parentheses: \`if (x != 0) {\`, \`while (i <= n) {\` |
 | Comments | \`//\` or \`#\` |
 | Tanh | \`tanh_t()\` not \`tanh()\` |
 | Print arity | Exactly one argument |
@@ -665,7 +667,8 @@ Two forms:
 | \`CUDA codegen failed\` | Tensor op without proper setup | Check tensor dimensions match |
 | \`type mismatch\` | Assigning wrong type | Use explicit cast: \`float(x)\` |
 | No output on tensor | Used \`tanh\` instead of \`tanh_t\` | Replace with \`tanh_t()\` |
-| Wrong comparison | Used \`!=\` for not-equal | Replace with \`<>\` |
+| \`needs its condition in parentheses\` | Wrote \`if x < 5 {\` | Write \`if (x < 5) {\` |
+| \`comparisons cannot be chained\` | Wrote \`a < b < c\` | Write \`a < b and b < c\` |
 | Class method not found | Called method not defined in class | Define method in class body |
 
 ---

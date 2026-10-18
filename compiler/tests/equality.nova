@@ -4,27 +4,27 @@ main() {
     int a = 3 ;
     int b = 3 ;
     int  c = 4 ;
-    if a == b { print(1) ; } else { print(0) ; }
-    if a == c { print(1) ; } else { print(0) ; }
+    if (a == b) { print(1) ; } else { print(0) ; }
+    if (a == c) { print(1) ; } else { print(0) ; }
 
     double x = 2.5 ;
-    if x == 2.5 { print(1) ; } else { print(0) ; }
-    if x == 3.0 { print(1) ; } else { print(0) ; }
+    if (x == 2.5) { print(1) ; } else { print(0) ; }
+    if (x == 3.0) { print(1) ; } else { print(0) ; }
 
     string s = "abc" ;
-    if s == "abc" { print(1) ; } else { print(0) ; }
-    if s == "abd" { print(1) ; } else { print(0) ; }
+    if (s == "abc") { print(1) ; } else { print(0) ; }
+    if (s == "abd") { print(1) ; } else { print(0) ; }
 
-    if a == b and a == 3 { print(1) ; } else { print(0) ; }
-    if a == c or b == 3 { print(1) ; } else { print(0) ; }
-    if not a == c { print(1) ; } else { print(0) ; }
+    if (a == b and a == 3) { print(1) ; } else { print(0) ; }
+    if (a == c or b == 3) { print(1) ; } else { print(0) ; }
+    if (not a == c) { print(1) ; } else { print(0) ; }
 
     // loop until equal
     int i = 0 ;
     int done = 0;
-    while done == 0 {
+    while (done == 0) {
         i = i + 1 ;
-        if i == 5 { done = 1 ; }
+        if (i == 5) { done = 1 ; }
     }
     print(i) ;
 }

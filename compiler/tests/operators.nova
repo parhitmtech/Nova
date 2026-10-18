@@ -1,0 +1,68 @@
+// Syntax step 1: != <= >= % unary minus, and += -= *= /= on variables, array elements, fields,
+// strings and in a for header.
+class Acc {
+    int total ;
+    def init() { self.total = 0 ; }
+    def add(int n) { self.total += n ; }
+    def get() -> int { return self.total ; }
+}
+
+main() {
+    // comparisons
+    int a = 3 ;
+    int b = 5 ;
+    if (a != b) { print(1) ; } else { print(0) ; }
+    if (a <= 3) { print(1) ; } else { print(0) ; }
+    if (a >= 4) { print(1) ; } else { print(0) ; }
+    if (b >= 5) { print(1) ; } else { print(0) ; }
+    double d = 2.5 ;
+    if (d <= 2.5) { print(1) ; } else { print(0) ; }
+    string s = "apple" ;
+    if (s <= "banana") { print(1) ; } else { print(0) ; }
+
+    // remainder: the sign follows the left operand, as in C
+    print(17 % 5) ;
+    print(-17 % 5) ;
+    print(17 % -5) ;
+    print(a * b % 4) ;
+
+    // unary minus
+    print(-a) ;
+    print(-(a + b)) ;
+    print(2 - -a) ;
+    double nd = -d ;
+    print(nd) ;
+    print(-2.0 * d) ;
+
+    // compound assignment: the right side is grouped, x *= 1 + 1 is x = x * (1 + 1)
+    int x = 10 ;
+    x += 5 ;
+    x -= 3 ;
+    x *= 2 ;
+    x /= 4 ;
+    print(x) ;
+    x += a * b ;
+    print(x) ;
+    x *= 1 + 1 ;
+    print(x) ;
+    arr = array(3) ;
+    arr[1] = 7 ;
+    arr[1] += 3 ;
+    print(arr[1]) ;
+    Acc acc ;
+    acc.init() ;
+    acc.add(4) ;
+    acc.add(6) ;
+    print(acc.get()) ;
+    string greet = "hi" ;
+    greet += " nova" ;
+    print(greet) ;
+
+    // in a for header
+    int sum = 0 ;
+    int i = 0 ;
+    for(i = 0 ; i < 10 ; i += 2) {
+        sum += i ;
+    }
+    print(sum) ;
+}

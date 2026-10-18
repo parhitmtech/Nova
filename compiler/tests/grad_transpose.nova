@@ -1,5 +1,5 @@
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -35,9 +35,9 @@ main() {
 
     maxdiff = 0.0 ;
     int pi = 0 ;
-    while pi < 2 {
+    while (pi < 2) {
         int pj = 0 ;
-        while pj < 3 {
+        while (pj < 3) {
             double orig = tensor_get(trA, pi, pj) ;
             tensor_set(trA, pi, pj, orig + eps) ;
             int yP10 = tensor_T(trA) ;
@@ -53,10 +53,10 @@ main() {
             double numeric = diff / twoEps ;
             double analytic = tensor_get(trG, pi, pj) ;
             d = dabs(numeric - analytic) ;
-            if d > maxdiff { maxdiff = d ; }
+            if (d > maxdiff) { maxdiff = d ; }
             pj = pj + 1 ;
         }
         pi = pi + 1 ;
     }
-    if maxdiff < tol { print("PASS transpose") ; } else { print("FAIL transpose") ; }
+    if (maxdiff < tol) { print("PASS transpose") ; } else { print("FAIL transpose") ; }
 }

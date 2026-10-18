@@ -16,7 +16,7 @@
 // underlying arithmetic bug before re-enabling it.
 
 def dabs(double x) -> double {
-    if x < 0.0 {
+    if (x < 0.0) {
         return 0.0 - x ;
     }
     return x ;
@@ -43,13 +43,13 @@ main() {
     int ceLoss = cross_entropy_loss(ceL2, ceT) ;
     // forward value: log(e^1 + e^2 + e^0.5) - 2 = 0.4643688
     double fv = tensor_get(ceLoss, 0, 0) ;
-    if dabs(fv - 0.4643688) < tol { print("PASS cross_entropy_loss forward") ; } else { print("FAIL cross_entropy_loss forward") ; }
+    if (dabs(fv - 0.4643688) < tol) { print("PASS cross_entropy_loss forward") ; } else { print("FAIL cross_entropy_loss forward") ; }
     backward(ceLoss) ;
     int ceG = tensor_grad(ceL2) ;
 
     maxdiff = 0.0 ;
     int hi = 0 ;
-    while hi < 3 {
+    while (hi < 3) {
         double orig = tensor_get(ceL2, 0, hi) ;
         tensor_set(ceL2, 0, hi, orig + eps) ;
         int lP13 = cross_entropy_loss(ceL2, ceT) ;
@@ -62,8 +62,8 @@ main() {
         double numeric = diff * invTwoEps ;
         double analytic = tensor_get(ceG, 0, hi) ;
         d = dabs(numeric - analytic) ;
-        if d > maxdiff { maxdiff = d ; }
+        if (d > maxdiff) { maxdiff = d ; }
         hi = hi + 1 ;
     }
-    if maxdiff < tol { print("PASS cross_entropy_loss") ; } else { print("FAIL cross_entropy_loss") ; }
+    if (maxdiff < tol) { print("PASS cross_entropy_loss") ; } else { print("FAIL cross_entropy_loss") ; }
 }

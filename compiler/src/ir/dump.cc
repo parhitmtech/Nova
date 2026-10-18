@@ -36,6 +36,19 @@ int count_ir_nodes(struct InstructionNode* program)
     return count;
 }
 
+static const char* cond_str(ConditionalOperatorType op)
+{
+    switch (op)
+    {
+        case CONDITION_GREATER:       return ">";
+        case CONDITION_LESS:          return "<";
+        case CONDITION_EQUAL:         return "==";
+        case CONDITION_GREATER_EQUAL: return ">=";
+        case CONDITION_LESS_EQUAL:    return "<=";
+        default:                      return "!=";
+    }
+}
+
 void dump_ir(struct InstructionNode* program)
 {
     printf("\n");
@@ -88,10 +101,7 @@ void dump_ir(struct InstructionNode* program)
                 break;
             case CJMP:
             {
-                const char* condStr =
-                    pc->cjmp_inst.condition_op == CONDITION_GREATER ? ">"  :
-                    pc->cjmp_inst.condition_op == CONDITION_LESS ? "<" :
-                    pc->cjmp_inst.condition_op == CONDITION_EQUAL ? "==" : "<>";
+                const char* condStr = cond_str(pc->cjmp_inst.condition_op);
                 printf("CJMP        if mem[%d] %s mem[%d]  pass->next  fail->node@%p\n",
                     pc->cjmp_inst.operand1_index, condStr,
                     pc->cjmp_inst.operand2_index, (void*)pc->cjmp_inst.target);
@@ -126,10 +136,7 @@ void dump_ir(struct InstructionNode* program)
                 break;
             case SCMP:
             {
-                const char* condStr =
-                    pc->scmp_inst.condition_op == CONDITION_GREATER ? ">"  :
-                    pc->scmp_inst.condition_op == CONDITION_LESS ? "<" :
-                    pc->scmp_inst.condition_op == CONDITION_EQUAL ? "==" : "<>";
+                const char* condStr = cond_str(pc->scmp_inst.condition_op);
                 printf("SCMP        if strMem[mem[%d]] %s strMem[mem[%d]]  pass->next  fail->node@%p\n",
                     pc->scmp_inst.operand1_index, condStr,
                     pc->scmp_inst.operand2_index, (void*)pc->scmp_inst.target);

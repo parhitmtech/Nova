@@ -31,7 +31,7 @@ def poly(double v) -> double {
 }
 
 def dabs(double v) -> double {
-    if v < 0.0 {
+    if (v < 0.0) {
         return 0.0 - v ;
     }
     return v ;

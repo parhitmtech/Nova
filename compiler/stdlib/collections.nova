@@ -28,7 +28,7 @@ class Stack {
 
     def isEmpty() -> int {
         int r = 0 ;
-        if self.top < 0 {
+        if (self.top < 0) {
             r = 1 ;
         }
         return r ;
@@ -67,7 +67,7 @@ class Queue {
 
     def isEmpty() -> int {
         int r = 0 ;
-        if self.count < 1 {
+        if (self.count < 1) {
             r = 1 ;
         }
         return r ;

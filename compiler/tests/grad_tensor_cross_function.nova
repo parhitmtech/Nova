@@ -11,7 +11,7 @@
 // do with tensor-handle tracking and isn't what this test is checking.
 
 def dabs(double v) -> double {
-    if v < 0.0 {
+    if (v < 0.0) {
         return 0.0 - v ;
     }
     return v ;
@@ -22,7 +22,7 @@ def dabs(double v) -> double {
 // tensor handle through scaleN's own parameter and return slot on every
 // recursive call.
 def scaleN(int t, int n) -> int {
-    if n < 1 {
+    if (n < 1) {
         return t ;
     }
     int scaled = tensor_scale(t, 2.0) ;
@@ -73,9 +73,9 @@ main() {
     double d3 = dabs(w00 - 108.0) ;
     double d4 = dabs(w11 - 132.0) ;
     double maxdiff = d1 ;
-    if d2 > maxdiff { maxdiff = d2 ; }
-    if d3 > maxdiff { maxdiff = d3 ; }
-    if d4 > maxdiff { maxdiff = d4 ; }
+    if (d2 > maxdiff) { maxdiff = d2 ; }
+    if (d3 > maxdiff) { maxdiff = d3 ; }
+    if (d4 > maxdiff) { maxdiff = d4 ; }
 
-    if maxdiff < tol { print("PASS cross_function\n") ; } else { print("FAIL cross_function\n") ; }
+    if (maxdiff < tol) { print("PASS cross_function\n") ; } else { print("FAIL cross_function\n") ; }
 }
