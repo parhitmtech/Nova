@@ -120,10 +120,41 @@ void require_2d(int h, const char* op, int line)
     }
 }
 
-int ten_reshape(int a, const std::vector<int>& shape)
+// tensor_reshape(t, d0, d1, ...): a new tensor with the same elements in the same order. One dimension
+// may be -1 and is inferred from the element count.
+int ten_reshape(int a, std::vector<int> shape, int line)
 {
+    if (shape.empty() || (int)shape.size() > TENSOR_MAX_RANK)
+        tensor_shape_error(line, "tensor_reshape needs 1 to " + std::to_string(TENSOR_MAX_RANK) + " dimensions");
+    long long known = 1;
+    int inferred = -1;
+    for (int i = 0; i < (int)shape.size(); i++)
+    {
+        if (shape[i] == -1)
+        {
+            if (inferred >= 0) tensor_shape_error(line, "tensor_reshape: only one dimension can be -1");
+            inferred = i;
+        }
+        else if (shape[i] <= 0)
+            tensor_shape_error(line, "tensor_reshape: dimensions must be positive (or -1), got " +
+                               std::to_string(shape[i]));
+        else
+            known *= shape[i];
+    }
+    long long count = (long long)tensor_heap[a].data.size();
+    if (inferred >= 0)
+    {
+        if (count % known != 0)
+            tensor_shape_error(line, "tensor_reshape: cannot infer -1 for " + std::to_string(count) + " elements");
+        shape[inferred] = (int)(count / known);
+        known = count;
+    }
+    if (known != count)
+        tensor_shape_error(line, "tensor_reshape: new shape has " + std::to_string(known) +
+                           " elements but the tensor has " + std::to_string(count));
+    std::vector<double> data = tensor_heap[a].data;  // copy first: alloc may grow tensor_heap and move it
     int h = alloc_tensor_nd(shape);
-    tensor_heap[h].data = tensor_heap[a].data;  // same elements, same order
+    tensor_heap[h].data = std::move(data);  // same elements, same order
     return h;
 }
 
