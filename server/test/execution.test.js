@@ -26,6 +26,30 @@ test('local execution drops backend secrets and caps runaway output', async () =
   } finally { delete process.env.JWT_SECRET; fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('all output, including the last chunk, arrives before close and multi-byte characters survive', async () => {
+  const { createExecutor } = require('../src/services/execution');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-close-test-'));
+  const script = path.join(dir, 'emit.js');
+  // A progress bar redrawn in place with multi-byte characters, then a large final burst (big
+  // enough to be split mid-character across pipe reads) and an immediate exit.
+  fs.writeFileSync(script,
+    "for (let i = 0; i < 200; i++) process.stdout.write('\\r[' + '█'.repeat(i % 40) + ']');\n" +
+    "process.stdout.write('\\n' + '█'.repeat(50000) + '\\nDONE ✓\\n');\n");
+  let expected = '';
+  for (let i = 0; i < 200; i++) expected += '\r[' + '█'.repeat(i % 40) + ']';
+  expected += '\n' + '█'.repeat(50000) + '\nDONE ✓\n';
+  const executor = createExecutor({ mode: 'local', nodeEnv: 'test', binary: process.execPath });
+  try {
+    const child = executor.spawnCompiler([script], { cwd: dir, timeoutMs: 10000 });
+    let output = '';
+    child.stdout.on('data', chunk => { output += chunk; });
+    const [code] = await once(child, 'close');
+    assert.equal(code, 0);
+    assert.ok(!output.includes('�'), 'a multi-byte character was split into replacement characters');
+    assert.equal(output, expected);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('runner stops a hung program and releases the execution slot', async () => {
   const { createExecutor } = require('../src/services/execution');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-timeout-test-'));

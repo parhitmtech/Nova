@@ -1054,6 +1054,16 @@ void execute_program(struct InstructionNode* program)
                         if (res < 0) { fprintf(stderr, "tensor_load_csv failed\n"); exit(1); }
                         break;
                     }
+                    // progress_bar(total, width) -> handle; progress_update(bar, step, loss); progress_done(bar)
+                    case TEN_PROGRESS_BAR:
+                        res = ten_progress_bar(mem[a[0]], tc.num_args > 1 ? mem[a[1]] : 40);
+                        break;
+                    case TEN_PROGRESS_UPDATE:
+                        ten_progress_update(mem[a[0]], mem[a[1]], tc.num_args > 2 ? getScalar(2) : 0.0);
+                        break;
+                    case TEN_PROGRESS_DONE:
+                        ten_progress_done(mem[a[0]]);
+                        break;
                     case TEN_REQUIRES_GRAD:
                     {
                         requires_grad(mem[a[0]]);

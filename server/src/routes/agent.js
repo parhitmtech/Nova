@@ -23,7 +23,8 @@ router.post('/agent/chat', requireAuth, async (req, res) => {
     log('warn', 'Bedrock env vars not set — using defaults');
 
   res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('X-Accel-Buffering', 'no'); // stop nginx buffering the stream
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 

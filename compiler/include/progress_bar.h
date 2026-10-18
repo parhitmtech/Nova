@@ -47,10 +47,12 @@ inline void tqdm_update(int handle, int step, double loss)
     int e_min = (int)(elapsed / 60); double e_sec = elapsed - e_min * 60;
     int r_min = (int)(eta / 60);     double r_sec = eta - r_min * 60;
 
-    fprintf(stdout, "[");
+    // Redraw in place: '\r' returns to the start of the line (terminals and the IDE output panel
+    // both honour it), no newline until tqdm_done. Trailing spaces cover a shorter previous line.
+    fprintf(stdout, "\r[");
     for (int i = 0; i < filled; i++) fprintf(stdout, "\xe2\x96\x88");
     for (int i = 0; i < empty;  i++) fprintf(stdout, "\xe2\x96\x91");
-    fprintf(stdout, "] %3d%% %d/%d  loss: %.4f  [%02d:%05.2f<%02d:%05.2f]\n",
+    fprintf(stdout, "] %3d%% %d/%d  loss: %.4f  [%02d:%05.2f<%02d:%05.2f]  ",
         pct, step, total, loss, e_min, e_sec, r_min, r_sec);
     fflush(stdout);
 }
@@ -64,14 +66,13 @@ inline void tqdm_done(int handle)
     double elapsed = std::chrono::duration<double>(now - pb.start_time).count();
     int e_min = (int)(elapsed / 60); double e_sec = elapsed - e_min * 60;
 
-    // Move cursor up and clear last update line
-    fprintf(stdout, "\033[1A\033[2K");
-
+    // Overwrite the in-progress line with the finished bar and end the line.
+    fprintf(stdout, "\r");
     if (!pb.desc.empty()) fprintf(stdout, "%s: ", pb.desc.c_str());
 
     fprintf(stdout, "[");
     for (int i = 0; i < pb.width; i++) fprintf(stdout, "\xe2\x96\x88");
     fprintf(stdout, "] 100%% %d/%d", pb.total, pb.total);
-    fprintf(stdout, "  [%02d:%05.2f]\n", e_min, e_sec);
+    fprintf(stdout, "  [%02d:%05.2f]%30s\n", e_min, e_sec, "");  // pad over the longer update line
     fflush(stdout);
 }   

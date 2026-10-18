@@ -124,7 +124,10 @@ router.post("/run-stream", async (req, res) => {
     catch (err) { cleanupTempFile(tmpFile, tmpDir); return res.status(503).json({ error: err.message }); }
 
     res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
+    // no-transform: proxies must not compress (and so buffer) the stream;
+    // X-Accel-Buffering: nginx would otherwise buffer it and deliver all output at the end.
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('X-Accel-Buffering', 'no');
     res.setHeader('Connection', 'keep-alive');
     res.flushHeaders();
 
@@ -140,6 +143,19 @@ router.post("/run-stream", async (req, res) => {
 
     let stdoutBuf = '';
     let flushTimer = null;
+    const MARKERS = ['NOVA_SAVE_FILE:', 'NOVA_S3_FILE:'];
+    // A partial line that is, or could still become, an internal marker line is never shown.
+    const mayBeMarker = s => MARKERS.some(m => s.startsWith(m) || m.startsWith(s));
+    // Send the incomplete last line, e.g. a progress bar redrawn in place with '\r'. Frames before
+    // the last '\r' would be overwritten anyway, so only '\r' + the latest frame is sent. A buffer
+    // ending in '\r' may be the first half of a "\r\n" split across chunks, so it waits.
+    const flushPartial = () => {
+        flushTimer = null;
+        if (!stdoutBuf || stdoutBuf.endsWith('\r') || mayBeMarker(stdoutBuf)) return;
+        const cr = stdoutBuf.lastIndexOf('\r');
+        send('stdout', cr > 0 ? stdoutBuf.slice(cr) : stdoutBuf);
+        stdoutBuf = '';
+    };
 
     child.stdout.on('data', d => {
         stdoutBuf += d.toString();
@@ -160,17 +176,10 @@ router.post("/run-stream", async (req, res) => {
                 visible.push(line);
             }
         }
-        if (visible.length > 0) {
-            clearTimeout(flushTimer);
-            send('stdout', visible.join('\n') + '\n');
-        } else {
-            clearTimeout(flushTimer);
-            flushTimer = setTimeout(() => {
-                const isMarker = stdoutBuf.startsWith('NOVA_SAVE_FILE:') ||
-                                 stdoutBuf.startsWith('NOVA_S3_FILE:');
-                if (stdoutBuf && !isMarker) { send('stdout', stdoutBuf); stdoutBuf = ''; }
-            }, 50);
-        }
+        if (visible.length > 0) send('stdout', visible.join('\n') + '\n');
+        // Throttle, don't debounce: a program printing continuously (a training loop updating a
+        // progress bar) must still see its partial line within ~100 ms, not only once it goes quiet.
+        if (stdoutBuf && !flushTimer) flushTimer = setTimeout(flushPartial, 100);
     });
 
     child.stderr.on('data', d => { stderr += d.toString(); });

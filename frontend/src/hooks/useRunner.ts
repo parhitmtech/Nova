@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { runCodeStream, compareCode } from '../api/compiler'
 import { errorMessage } from '../lib/workspace'
+import { applyCarriageReturns } from '../lib/terminalText'
 import type { OutputState } from '../components/BottomPanel'
 import type { DocumentState } from './useWorkspace'
 
@@ -43,10 +44,14 @@ export function useRunner({
           if (controller.signal.aborted) return
           if (type === 'stdout' || type === 'stderr') {
             text += chunk
-            setOutput((prev) => ({ ...prev, mode: prev.mode === 'error' ? 'error' : 'run', content: text }))
+            setOutput((prev) => ({
+              ...prev,
+              mode: prev.mode === 'error' ? 'error' : 'run',
+              content: applyCarriageReturns(text),
+            }))
           } else if (type === 'error') {
             text += chunk
-            setOutput({ mode: 'error', content: text })
+            setOutput({ mode: 'error', content: applyCarriageReturns(text) })
           } else if (type === 'done') {
             setOutput((prev) => ({ ...prev, ms: Number(chunk) }))
             onFinished()

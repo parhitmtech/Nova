@@ -46,6 +46,8 @@ main() {
         pred = act2.forward(h2) ;
 
         int grad  = mse_grad(pred, Y) ;
+        double loss = tensor_get(mse_loss(pred, Y), 0, 0) ;
+        progress_update(bar, epoch, loss) ;
         int g2    = act2.backward(grad) ;
         int dW2   = layer2.get_dW(g2) ;
         int db2   = tensor_sum_rows(g2) ;

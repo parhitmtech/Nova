@@ -74,6 +74,10 @@ function createExecutor(config = {}) {
     const result = new EventEmitter();
     result.stdout = new PassThrough();
     result.stderr = new PassThrough();
+    // Emit strings, decoded across chunk boundaries: a multi-byte UTF-8 character (e.g. a
+    // progress bar's '█') split between two reads must not turn into replacement characters.
+    result.stdout.setEncoding('utf8');
+    result.stderr.setEncoding('utf8');
     result.stdin = child.stdin;
     result.pid = child.pid;
     result.stopReason = null;
@@ -121,10 +125,16 @@ function createExecutor(config = {}) {
       finished = true;
       active--;
       clearTimeout(timer);
-      result.stdout.end();
-      result.stderr.end();
       result.exitCode = result.stopReason ? 1 : code;
-      result.emit('close', result.exitCode, signal);
+      // PassThroughs deliver asynchronously: report 'close' only once both have emitted 'end',
+      // i.e. after the caller has received every byte, or it would miss the program's last output.
+      let open = 2;
+      const ended = () => { if (--open === 0) result.emit('close', result.exitCode, signal); };
+      for (const stream of [result.stdout, result.stderr]) {
+        stream.once('end', ended);
+        if (stream.listenerCount('data') === 0) stream.resume(); // nobody reading: drain so 'end' fires
+        stream.end();
+      }
     });
     return result;
   }
