@@ -364,7 +364,8 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
 // cache keys on raw argument values, and a tensor handle is reused (by
 // value) once freed, so memoizing a call keyed on a handle that may later be
 // released and reassigned would be a stale-cache-hit bug waiting to happen.
-void insert_tensor_releases(struct InstructionNode* program)
+// main, every function and every class method body (each once).
+static std::vector<struct InstructionNode*> all_bodies(struct InstructionNode* program)
 {
     std::vector<struct InstructionNode*> allBodies;
     std::set<struct InstructionNode*> seen;
@@ -381,6 +382,18 @@ void insert_tensor_releases(struct InstructionNode* program)
         }
     }
     allBodies.push_back(program);
+    return allBodies;
+}
+
+void mark_tensor_slots(struct InstructionNode* program)
+{
+    std::set<struct InstructionNode*> taintedParamFunctions;
+    propagate_tensor_slots(all_bodies(program), taintedParamFunctions);
+}
+
+void insert_tensor_releases(struct InstructionNode* program)
+{
+    std::vector<struct InstructionNode*> allBodies = all_bodies(program);
 
     std::set<struct InstructionNode*> taintedParamFunctions;
     propagate_tensor_slots(allBodies, taintedParamFunctions);

@@ -20,51 +20,90 @@
 #include "lexer.h"
 #include "compiler.h"
 #include "optimizer.h"
+#include "regalloc.h"  // get_defs
 
 using namespace std;
 
-// Constant folding 
+// Constant folding
+//
+// constant_slots[i] means "mem[i] already holds, at compile time, the value slot i has whenever it is
+// read at run time". That is true for slots nothing ever writes (literals the parser stored), and for
+// slots written exactly once by a copy or a foldable operation of such slots; mark_constants() and
+// fold_pass() establish the latter by computing those values into mem[] now. A slot that is merely
+// assigned once (e.g. `int x = 10 ;`) still holds 0 at compile time until its ASSIGN is evaluated, so
+// "written once" alone is not enough.
 
 static vector<bool> constant_slots;
+static vector<int> slot_writes;  // static count of instructions (in any body) that write each mem slot
+
+// Every mem[] slot n writes. get_defs() covers ASSIGN/IN/ARRAY_READ/CALL/ALLOC/STRCAT/TENSOR_CALL.
+static void count_writes(struct InstructionNode* n)
+{
+    std::unordered_set<int> defs;
+    get_defs(n, defs);
+    switch (n->type)
+    {
+        case CAST:
+            if (n->cast_inst.dst_type != TYPE_FLOAT && n->cast_inst.dst_type != TYPE_DOUBLE)
+                defs.insert(n->cast_inst.dst_index);
+            break;
+        case HF_INFER:
+            if (n->hf_inst.result_slot >= 0) defs.insert(n->hf_inst.result_slot);
+            break;
+        case SOL_CALL:
+            if (n->sol_inst.job_slot >= 0) defs.insert(n->sol_inst.job_slot);
+            if (n->sol_inst.result_slot >= 0) defs.insert(n->sol_inst.result_slot);
+            break;
+        default:
+            break;
+    }
+    for (int d : defs)
+        if (d >= 0 && d < (int)slot_writes.size()) slot_writes[d]++;
+}
+
+static bool written_once(int slot)
+{
+    return slot >= 0 && slot < (int)slot_writes.size() && slot_writes[slot] == 1;
+}
+
+static bool known(int slot)
+{
+    return slot >= 0 && slot < (int)constant_slots.size() && constant_slots[slot];
+}
+
+// Plain copies `dst <- src` of a known value into a slot written only by that copy make dst known.
+static int propagate_known_copies(struct InstructionNode* program)
+{
+    int changed = 0;
+    for (struct InstructionNode* pc = program; pc != nullptr; pc = pc->next)
+    {
+        if (pc->type != ASSIGN || pc->assign_inst.op != OPERATOR_NONE) continue;
+        int dst = pc->assign_inst.left_hand_side_index;
+        int src = pc->assign_inst.operand1_index;
+        if (known(dst) || !written_once(dst) || !known(src)) continue;
+        mem[dst] = mem[src];
+        constant_slots[dst] = true;
+        changed++;
+    }
+    return changed;
+}
 
 void mark_constants(struct InstructionNode* program)
 {
     int n = next_available;
-    vector<int> write_count(n, 0);
-    constant_slots.assign(n, true);
-    struct InstructionNode* pc = program;
-    while (pc != nullptr)
-    {
-        if (pc->type == ASSIGN)
-            write_count[pc->assign_inst.left_hand_side_index]++;
-        if (pc->type == IN)
-            write_count[pc->input_inst.var_index]++;
-        if (pc->type == ARRAY_READ)
-            write_count[pc->array_inst.target_index]++;
-        pc = pc->next;
-    }
+    slot_writes.assign(n, 0);
+    // Count writes everywhere a slot can be written: main, every function and every class method.
+    std::set<struct InstructionNode*> bodies = {program};
+    for (auto& kv : functionTable) bodies.insert(kv.second);
+    for (auto& cls : classMethodTable)
+        for (auto& m : cls.second) bodies.insert(m.second);
+    for (auto body : bodies)
+        for (struct InstructionNode* pc = body; pc != nullptr; pc = pc->next) count_writes(pc);
 
-    for (int i = 0;i < n;i++)
-    {
-        if (write_count[i] > 1) constant_slots[i] = false;
-    }
-
-    pc = program;
-    while (pc != nullptr)
-    {
-        if (pc->type == IN)
-            constant_slots[pc->input_inst.var_index] = false;
-        if (pc->type == ARRAY_READ)
-            constant_slots[pc->array_inst.target_index] = false;
-        if (pc->type == ASSIGN && pc->assign_inst.op == OPERATOR_NONE)
-            if (!constant_slots[pc->assign_inst.operand1_index])
-                constant_slots[pc->assign_inst.left_hand_side_index] = false;
-        if (pc->type == ASSIGN && pc->assign_inst.op != OPERATOR_NONE)
-            if (!constant_slots[pc->assign_inst.operand1_index] ||
-                !constant_slots[pc->assign_inst.operand2_index])
-                constant_slots[pc->assign_inst.left_hand_side_index] = false;
-        pc = pc->next;
-    }
+    constant_slots.assign(n, false);
+    for (int i = 0; i < n; i++)
+        if (slot_writes[i] == 0) constant_slots[i] = true;  // literal / never written
+    while (propagate_known_copies(program) > 0) {}
 }
 
 int fold_pass(struct InstructionNode* program)
@@ -79,7 +118,7 @@ int fold_pass(struct InstructionNode* program)
             int op2_idx = pc->assign_inst.operand2_index;
             int dst_idx = pc->assign_inst.left_hand_side_index;
 
-            if (constant_slots[op1_idx] && constant_slots[op2_idx])
+            if (known(op1_idx) && known(op2_idx) && written_once(dst_idx))
             {
                 int op1 = mem[op1_idx], op2 = mem[op2_idx], result = 0;
                 switch (pc->assign_inst.op)
@@ -111,7 +150,7 @@ int constant_fold(struct InstructionNode* program)
     do {
         folds = fold_pass(program);
         total_folds += folds;
-    } while (folds > 0);
+    } while (folds > 0 || propagate_known_copies(program) > 0);
     return total_folds;
 }
 

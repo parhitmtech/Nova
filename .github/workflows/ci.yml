@@ -74,6 +74,10 @@ jobs:
           CXX: ${{ matrix.cxx }}
       - name: Language tests (tests/*.nova)
         run: node tests/run.js
+      - name: Language tests with --optimize
+        run: node tests/run.js
+        env:
+          NOVA_TEST_ARGS: --optimize
 
   sanitizers:
     name: Compiler (ASan + UBSan)

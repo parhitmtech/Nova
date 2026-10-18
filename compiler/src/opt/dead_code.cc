@@ -20,127 +20,72 @@
 #include "lexer.h"
 #include "compiler.h"
 #include "optimizer.h"
+#include "regalloc.h"  // get_uses
 
 using namespace std;
 
+// Every mem[] slot n may read. get_uses() covers the core instructions (including tensor-call
+// arguments); this adds the rest. Over-approximating is safe: it only keeps more assignments alive.
+static void collect_reads(struct InstructionNode* n, vector<bool>& is_read)
+{
+    std::unordered_set<int> uses;
+    get_uses(n, uses);
+    switch (n->type)
+    {
+        case CALL:  // multi-return values are read back from every return slot
+            uses.insert(n->call_inst.ret_val_index);
+            for (int i = 0; n->call_inst.all_ret_slots && i < n->call_inst.num_ret_slots; i++)
+                uses.insert(n->call_inst.all_ret_slots[i]);
+            break;
+        case CAST:
+            uses.insert(n->cast_inst.src_index);
+            break;
+        case HF_INFER:
+            uses.insert(n->hf_inst.model_slot);
+            uses.insert(n->hf_inst.input_slot);
+            break;
+        case SOL_CALL:
+            for (int s : {n->sol_inst.job_slot, n->sol_inst.model_slot, n->sol_inst.task_slot,
+                          n->sol_inst.dataset_slot, n->sol_inst.input_slot, n->sol_inst.path_slot})
+                uses.insert(s);
+            break;
+        default:
+            break;
+    }
+    for (int u : uses)
+        if (u >= 0 && u < (int)is_read.size()) is_read[u] = true;
+}
+
+// Removes plain copies in the main program whose destination slot is never read anywhere
+// (main, functions or class methods).
 int dead_code_eliminate(struct InstructionNode* program)
 {
     int n = next_available;
 
     // Pass 1 - mark all slots that are read anywhere
     vector<bool> is_read(n, false);
-    
+    std::set<struct InstructionNode*> bodies = {program};
+    for (auto& kv : functionTable) bodies.insert(kv.second);
+    for (auto& cls : classMethodTable)
+        for (auto& m : cls.second) bodies.insert(m.second);
+    for (auto body : bodies)
+        for (struct InstructionNode* node = body; node != nullptr; node = node->next)
+            collect_reads(node, is_read);
+
+    // Pass 2 - eliminate OPERATOR_NONE assignments to unread slots. Copies of tensor handles and
+    // stores into object fields / self slots are not pure: the interpreter retains/releases tensor
+    // references on them, so removing one changes when tensors are freed. Keep those.
+    mark_tensor_slots(program);
+    auto has_side_effects = [](struct InstructionNode* a) {
+        int dst = a->assign_inst.left_hand_side_index, src = a->assign_inst.operand1_index;
+        return g_tensorSlots.count(src) || g_tensorSlots.count(dst) || g_fieldSlots.count(dst) ||
+               g_selfSlots.count(dst);
+    };
+    int eliminated = 0;
     struct InstructionNode* pc = program;
     while (pc != nullptr)
     {
-        switch (pc->type)
-        {
-            case ASSIGN:
-            {
-                if (pc->assign_inst.op == OPERATOR_NONE)
-                {
-                    int src = pc->assign_inst.operand1_index;
-                    if (src < n)
-                    {
-                        is_read[src] = true;
-                    }
-                }
-                else 
-                {
-                    int op1 = pc->assign_inst.operand1_index;
-                    int op2 = pc->assign_inst.operand2_index;
-                    if (op1 < n) is_read[op1] = true;
-                    if (op2 < n) is_read[op2] = true;
-                }
-                break;
-            }
-            case OUT:
-            {
-                if (pc->output_inst.var_index < n)
-                {
-                    is_read[pc->output_inst.var_index] = true;
-                }
-                break;
-            }
-            case CJMP:
-            {
-                if (pc->cjmp_inst.operand1_index < n) is_read[pc->cjmp_inst.operand1_index] = true;
-                if (pc->cjmp_inst.operand2_index < n) is_read[pc->cjmp_inst.operand2_index] = true;
-                break;
-            }
-            case SCMP:
-            {
-                if (pc->scmp_inst.operand1_index < n) is_read[pc->scmp_inst.operand1_index] = true;
-                if (pc->scmp_inst.operand1_index < n) is_read[pc->scmp_inst.operand1_index] = true;
-                break;
-            }
-            case ARRAY_READ:
-            {
-                if (pc->array_inst.index_slot < n) is_read[pc->array_inst.index_slot] = true;
-                if (pc->array_inst.base_index < n) is_read[pc->array_inst.base_index] = true;
-                if (pc->array_inst.size_slot >= 0 && pc->array_inst.size_slot < n)
-                {
-                    is_read[pc->array_inst.size_slot] = true;
-                }
-                break;
-            }
-            case ARRAY_WRITE:
-            {
-                if (pc->array_inst.index_slot < n) is_read[pc->array_inst.index_slot] = true;
-                if (pc->array_inst.target_index < n) is_read[pc->array_inst.target_index] = true;
-                if (pc->array_inst.base_index < n) is_read[pc->array_inst.base_index] = true;
-                if (pc->array_inst.size_slot >= 0 && pc->array_inst.size_slot < n)
-                {
-                    is_read[pc->array_inst.size_slot] = true;
-                }
-                break;
-            }
-            case CALL:
-            {
-                for (int i = 0;i < pc->call_inst.num_params;i++)
-                {
-                    if (pc->call_inst.arg_val_slots[i] < n)
-                    {
-                        is_read[pc->call_inst.arg_val_slots[i]] = true;
-                    }
-                }
-                if (pc->call_inst.ret_val_index < n)
-                {
-                    is_read[pc->call_inst.ret_val_index] = true;
-                }
-                break;  
-            }
-            case RET:
-            {
-                if (pc->ret_inst.ret_val_index < n)
-                {
-                    is_read[pc->ret_inst.ret_val_index] = true;
-                }
-                break;
-            }
-            case ALLOC:
-            {
-                if (pc->alloc_inst.size_slot < n) is_read[pc->alloc_inst.size_slot] = true;
-                if (pc->alloc_inst.base_slot < n) is_read[pc->alloc_inst.base_slot] = true;
-                break;
-            }
-            case STRCAT:
-            {
-                if (pc->strcat_inst.left_slot < n) is_read[pc->strcat_inst.left_slot] = true;
-                if (pc->strcat_inst.right_slot < n) is_read[pc->strcat_inst.right_slot] = true;
-                break;
-            }
-            default: break;
-        }
-        pc = pc->next;
-    }
-
-    // Pass 2 - eliminate OPERATOR_NONE assignments to unread slots
-    int eliminated = 0;
-    pc = program;
-    while (pc != nullptr)
-    {
-        if (pc->type == ASSIGN && pc->assign_inst.op == OPERATOR_NONE)
+        if (pc->type == ASSIGN && pc->assign_inst.op == OPERATOR_NONE && !has_side_effects(pc))
         {
             int dst = pc->assign_inst.left_hand_side_index;
             if (dst < n && !is_read[dst])

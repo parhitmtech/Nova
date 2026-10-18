@@ -60,6 +60,9 @@ void dump_liveness(struct InstructionNode*, const LivenessResult&);
 
 // src/opt/tensor_release.cc — insert TENSOR_RELEASE after each tensor slot's last use.
 void insert_tensor_releases(struct InstructionNode* program);
+// Complete g_tensorSlots (propagate tensor-handle slots through copies and calls). Idempotent;
+// insert_tensor_releases() does it too, but optimizer passes need it earlier.
+void mark_tensor_slots(struct InstructionNode* program);
 
 // src/regalloc/coloring.cc
 InterferenceGraph build_interference_graph(struct InstructionNode* program, const LivenessResult& lr);

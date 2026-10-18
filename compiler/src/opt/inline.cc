@@ -23,6 +23,42 @@
 
 using namespace std;
 
+// The inliner only remaps mem[] (int) slots and copies arguments and the return value with int
+// ASSIGNs, so it may only inline calls where everything lives in mem[]. Anything touching fmem[] /
+// dmem[] (float/double), tensors, nested calls or multiple return slots is left as a real CALL.
+static bool is_int_like(VarType t)
+{
+    return t != TYPE_FLOAT && t != TYPE_DOUBLE && t != TYPE_TENSOR;
+}
+
+static bool inlinable_call(struct InstructionNode* call, int bodyNodes)
+{
+    if (!is_int_like(call->call_inst.ret_type) || call->call_inst.num_ret_slots > 1) return false;
+    for (int i = 0; i < call->call_inst.num_params; i++)
+    {
+        if (call->call_inst.param_types && !is_int_like(call->call_inst.param_types[i])) return false;
+        if (call->call_inst.arg_types && !is_int_like(call->call_inst.arg_types[i])) return false;
+    }
+    struct InstructionNode* n = call->call_inst.function_head;
+    for (int i = 0; i < bodyNodes && n != nullptr; i++, n = n->next)
+    {
+        switch (n->type)
+        {
+            case ASSIGN: case IN: case ARRAY_READ: case ARRAY_WRITE: case NOOP:
+                break;
+            case OUT:
+                if (!is_int_like(n->output_inst.value_type)) return false;
+                break;
+            case RET:
+                if (!is_int_like(n->ret_inst.ret_type)) return false;
+                break;
+            default:  // ASSIGN_F/ASSIGN_D/CAST/CALL/TENSOR_CALL/STRCAT/ALLOC/...: not remapped below
+                return false;
+        }
+    }
+    return true;
+}
+
 int inline_functions(struct InstructionNode*& program)
 {
     const int MAX_CALL_SITES = 3;
@@ -112,7 +148,8 @@ int inline_functions(struct InstructionNode*& program)
         }
 
         // check eligibility
-        bool eligible = !isRecursive.count(funcHead) && !hasControlFlow && callSiteCount[funcHead] <= MAX_CALL_SITES && bodySize[funcHead] <= MAX_BODY_NODES;
+        bool eligible = !isRecursive.count(funcHead) && !hasControlFlow && callSiteCount[funcHead] <= MAX_CALL_SITES && bodySize[funcHead] <= MAX_BODY_NODES
+                        && inlinable_call(pc, bodySize[funcHead]);
 
         if (!eligible)
         {

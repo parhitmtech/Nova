@@ -16,6 +16,8 @@ const path        = require("path");
 
 const COMPILER_ROOT = path.resolve(__dirname, "..");  // compiler/: holds build/ and stdlib/
 const BINARY      = process.env.NOVA_COMPILER_PATH || path.join(COMPILER_ROOT, "build", process.platform === "win32" ? "nova.exe" : "nova");
+// Extra compiler flags for every test, e.g. NOVA_TEST_ARGS=--optimize to check the optimizer.
+const EXTRA_ARGS  = (process.env.NOVA_TEST_ARGS || "").split(/\s+/).filter(Boolean);
 const TESTS_DIR   = __dirname;
 const TIMEOUT_MS  = 10000;
 const filter      = process.argv[2] || "";
@@ -39,7 +41,7 @@ function runCompiler(source, inputs) {
     const { tmpDir, tmpFile } = writeTempFile(source);
     let stdout = "", stderr = "";
 
-    const child = spawn(BINARY, [tmpFile], {
+    const child = spawn(BINARY, [...EXTRA_ARGS, tmpFile], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, NOVA_HOME: COMPILER_ROOT },
     });
@@ -102,7 +104,8 @@ const BOLD   = "\x1b[1m";
 let passed = 0, failed = 0, skipped = 0;
 
 (async () => {
-  console.log(`\n${BOLD}NovaComp Test Runner${RESET}  (${novaFiles.length} test${novaFiles.length !== 1 ? "s" : ""})\n`);
+  const flags = EXTRA_ARGS.length ? `  flags: ${EXTRA_ARGS.join(" ")}` : "";
+  console.log(`\n${BOLD}NovaComp Test Runner${RESET}  (${novaFiles.length} test${novaFiles.length !== 1 ? "s" : ""})${flags}\n`);
 
   for (const file of novaFiles) {
     const base     = file.replace(/\.nova$/, "");
