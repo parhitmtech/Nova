@@ -1,0 +1,5 @@
+# Dividing a tensor by a tensor is not defined (yet).
+ignite:
+    Tensor a = ones(2, 2)
+    Tensor b = ones(2, 2)
+    Tensor c = a / b

@@ -45,7 +45,7 @@ string reserved[] = {
     // arrow (new)
     "ARROW", "DOT",
     // more comparisons, remainder and compound assignment
-    "GREATEREQ", "LESSEQ", "MOD",
+    "GREATEREQ", "LESSEQ", "MOD", "AT",
     "PLUSEQ", "MINUSEQ", "MULTEQ", "DIVEQ",
     // literals + misc
     "NUM", "FLOAT_LITERAL", "ID", "STRING", "ERROR"
@@ -593,6 +593,7 @@ Token LexicalAnalyzer::GetTokenMain()
         }
         case '*':   tmp.token_type = NextIs('=') ? MULTEQ : MULT;   return tmp;
         case '%':   tmp.token_type = MOD;       return tmp;
+        case '@':   tmp.token_type = AT;        return tmp;  // matmul operation
         case '=':
         {   
             // "==" is equality in a condition; a single "=" is assignment

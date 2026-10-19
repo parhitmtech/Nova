@@ -48,7 +48,7 @@ typedef enum { END_OF_FILE = 0,
     DOT,
 
     // more comparisons, remainder and compound assignment
-    GREATEREQ, LESSEQ, MOD,
+    GREATEREQ, LESSEQ, MOD, AT,
     PLUSEQ, MINUSEQ, MULTEQ, DIVEQ,
 
     // literals + misc 

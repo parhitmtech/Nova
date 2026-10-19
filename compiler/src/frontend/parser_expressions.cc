@@ -150,6 +150,13 @@ static int int_constant(int v)
 static int emit_negate(int v, VarType t, int line,
                        struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
+    if (t == TYPE_TENSOR)  // -t = t scaled by -1
+    {
+        int minusOne = alloc_double_slot();
+        dmem[minusOne] = -1.0;
+        return emit_tensor_op(TEN_SCALE, "unary '-'", {v, minusOne}, {TYPE_TENSOR, TYPE_DOUBLE}, {}, line, head, tracker);
+    }
+
     if (t == TYPE_FLOAT || t == TYPE_DOUBLE)
     {
         bool isD = (t == TYPE_DOUBLE);
@@ -185,7 +192,8 @@ static int emit_negate(int v, VarType t, int line,
     return dst;
 }
 
-int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
+// A single operand: a literal, variable, call, (expression), -x, ... (tensor postfixes are added by parse_factor)
+static int parse_primary(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     if (token.token_type == MINUS)
     {
@@ -504,6 +512,54 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
     return 0;
 }
 
+// A postfix on a Tensor value: t[i, j, ...] reads one element (a double; one index per dimension),
+// t.T is the transpose, t.rows / t.cols / t.rank are ints.
+static int parse_tensor_postfix(int t, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int line = token.line_no;
+    if (token.token_type == LBRAC)
+    {
+        vector<int> args = {t};
+        vector<VarType> types = {TYPE_TENSOR};
+        token = lexer.GetToken();  // past '['
+        while (token.token_type != RBRAC && token.token_type != END_OF_FILE)
+        {
+            args.push_back(parse_expression(head, tracker));
+            types.push_back(lastExprType);
+            if (token.token_type == COMMA) token = lexer.GetToken();
+        }
+        token = lexer.GetToken();  // past ']'
+        return emit_tensor_op(TEN_GET, "indexing", args, types, {}, line, head, tracker);
+    }
+
+    token = lexer.GetToken();  // past '.'
+    string member = token.lexeme;
+    token = lexer.GetToken();  // past the member name
+    TensorOp op;
+    if (member == "T") op = TEN_T;
+    else if (member == "rows") op = TEN_ROWS;
+    else if (member == "cols") op = TEN_COLS;
+    else if (member == "rank") op = TEN_RANK;
+    else 
+    {
+        report_error(line, "a Tensor has no member '" + member + "' (it has .T, .rows, .cols, and .rank)");
+        lastExprType = TYPE_UNKNOWN;
+        return 0;
+    }
+    return emit_tensor_op(op, "'." + member + "'", {t}, {TYPE_TENSOR}, {}, line, head, tracker);
+}
+
+// A primary followed by any tensor postfixes, so x.T.T, w[0, 1] and matmul(a, b)[0, 0] all work.
+int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int v = parse_primary(head, tracker);
+    while (lastExprType == TYPE_TENSOR && (token.token_type == LBRAC || token.token_type == DOT))
+    {
+        v = parse_tensor_postfix(v, head, tracker);
+    }
+    return v;
+}
+
 int coerce_float_double(int slot, VarType fromType, VarType toType,
                                 struct InstructionNode*& head, struct InstructionNode*& tracker,
                                 int lineNo)
@@ -521,121 +577,150 @@ int coerce_float_double(int slot, VarType fromType, VarType toType,
     return dst; 
 }
 
+// left OP right on numbers: int with int gives int; a float or double on the left needs a float or double on
+// the right (double wins); a string on the left of + concatenates. Sets lastExprType.
+static int emit_arith(ArithmeticOperatorType op, int left, VarType leftType, int right, VarType rightType,
+                      int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (op == OPERATOR_PLUS && leftType == TYPE_STRING)
+    {
+        if (rightType != TYPE_STRING && rightType != TYPE_UNKNOWN)
+        {
+            report_error(line, "cannot concatenate string with " + typeToString(rightType));
+        }
+        int dest = alloc_slot();
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = line;
+        node->type = STRCAT;
+        node->strcat_inst.dest_slot = dest;
+        node->strcat_inst.left_slot = left;
+        node->strcat_inst.right_slot = right;
+        append(head, tracker, node);
+        lastExprType = TYPE_STRING;
+        return dest;
+    }
+    if (leftType == TYPE_FLOAT || leftType == TYPE_DOUBLE)
+    {
+        if (rightType != TYPE_FLOAT && rightType != TYPE_DOUBLE && rightType != TYPE_UNKNOWN)
+        {
+            report_error(line, "arithmetic requires float/double operands, got " + typeToString(rightType));
+        }
+        VarType opType = (leftType == TYPE_DOUBLE || rightType == TYPE_DOUBLE) ? TYPE_DOUBLE : TYPE_FLOAT;
+        int l = coerce_float_double(left, leftType, opType, head, tracker, line);
+        int r = coerce_float_double(right, rightType, opType, head, tracker, line);
+        int tmp = (opType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = line;
+        if (opType == TYPE_DOUBLE)
+        {
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = tmp;
+            node->assign_d_inst.operand1_index = l;
+            node->assign_d_inst.operand2_index = r;
+            node->assign_d_inst.op = op;
+        }
+        else
+        {
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = tmp;
+            node->assign_f_inst.operand1_index = l;
+            node->assign_f_inst.operand2_index = r;
+            node->assign_f_inst.op = op;
+        }
+        append(head, tracker, node);
+        lastExprType = opType;
+        return tmp;
+    }
+    if (leftType != TYPE_UNKNOWN && leftType != TYPE_INT)
+    {
+        report_error(line, "arithmetic requires int operands, got " + typeToString(leftType));
+    }
+    if (rightType != TYPE_UNKNOWN && rightType != TYPE_INT)
+    {
+        report_error(line, "arithmetic requires int operands, got " + typeToString(rightType));
+    }
+    int tmp = alloc_temp();
+    emit_int_assign(tmp, left, op, right, line, head, tracker);
+    lastExprType = TYPE_INT;
+    return tmp;
+}
+
+// a OP b when either side is a Tensor, or OP is @. Two tensors: + - * are element-wise (+ and - also broadcast
+// a 1xN row over every row) and @ is matmul. A tensor and a number: * scales (either order), / divides.
+static int emit_tensor_binary(TokenType op, int left, VarType leftType, int right, VarType rightType,
+                              int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    const char* sym = (op == PLUS) ? "+" : (op == MINUS) ? "-" : (op == MULT) ? "*" :
+                      (op == DIV) ? "/" : (op == MOD) ? "%" : "@";
+    string name = string("'") + sym + "'";
+    bool lT = (leftType == TYPE_TENSOR), rT = (rightType == TYPE_TENSOR);
+
+    if (op == AT)
+    {
+        return emit_tensor_op(TEN_MATMUL, name, {left, right}, {leftType, rightType}, {}, line, head, tracker);
+    }
+    if (lT && rT && (op == PLUS || op == MINUS || op == MULT))
+    {
+        TensorOp t = (op == PLUS) ? TEN_ADD : (op == MINUS) ? TEN_SUB : TEN_MUL;
+        return emit_tensor_op(t, name, {left, right}, {leftType, rightType}, {}, line, head, tracker);
+    }
+    if (op == MULT && lT != rT)  // number * tensor or tensor * number
+    {
+        int t = lT ? left : right, s = lT ? right : left;
+        VarType st = lT ? rightType : leftType;
+        return emit_tensor_op(TEN_SCALE, name, {t, s}, {TYPE_TENSOR, st}, {}, line, head, tracker);
+    }
+    if (op == DIV && lT && !rT) // tensor / number = tensor scaled by 1 / number
+    {
+        int one = alloc_double_slot();
+        dmem[one] = 1.0;
+        int s = coerce_float_double(right, rightType, TYPE_DOUBLE, head, tracker, line);
+        int recip = emit_arith(OPERATOR_DIV, one, TYPE_DOUBLE, s, TYPE_DOUBLE, line, head, tracker);
+        return emit_tensor_op(TEN_SCALE, name, {left, recip}, {TYPE_TENSOR, TYPE_DOUBLE}, {}, line, head, tracker);
+    }
+    report_error(line, name + " is not defined between " + typeToString(leftType) + " and " + typeToString(rightType));
+    lastExprType = TYPE_UNKNOWN;
+    return left;
+}
+
+// * / % and @ (all one precedence level, left to right)
 int parse_term(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int left = parse_factor(head, tracker);
     VarType leftType = lastExprType;
-    while (token.token_type == MULT || token.token_type == DIV || token.token_type == MOD) {
+    while (token.token_type == MULT || token.token_type == DIV || token.token_type == MOD || token.token_type == AT)
+    {
+        TokenType opTok = token.token_type;
         int opLine = token.line_no;
-        if (token.token_type == MOD)
-        {
-            // a % b = a - (a / b) * b on ints (the result has the sign of a, as in C), built from
-            // instructions every back end already runs. b == 0 stops with the division-by-zero error.
-            token = lexer.GetToken();
-            int right = parse_factor(head, tracker);
-            VarType rightType = lastExprType;
-            if ((leftType != TYPE_INT && leftType != TYPE_UNKNOWN) || (rightType != TYPE_INT && rightType != TYPE_UNKNOWN))
-                report_error(opLine, "'%' needs int operands, got " + typeToString(leftType) + " and " + typeToString(rightType));
-            int quotient = alloc_temp(), product = alloc_temp(), rem = alloc_temp();
-            emit_int_assign(quotient, left, OPERATOR_DIV, right, opLine, head, tracker);
-            emit_int_assign(product, quotient, OPERATOR_MULT, right, opLine, head, tracker);
-            emit_int_assign(rem, left, OPERATOR_MINUS, product, opLine, head, tracker);
-            left = rem; leftType = TYPE_INT; lastExprType = TYPE_INT;
-            continue;
-        }
-        ArithmeticOperatorType op = (token.token_type == MULT) ? OPERATOR_MULT : OPERATOR_DIV;
-
-        // if (leftType == TYPE_FLOAT)
-        // {
-        //     token = lexer.GetToken();
-        //     int right = parse_factor(head, tracker);
-        //     int tmp = alloc_float_slot();
-        //     struct InstructionNode* node = new InstructionNode();
-        //     node->line_no = token.line_no;
-        //     node->type = ASSIGN_F;
-        //     node->assign_f_inst.left_hand_side_index = tmp;
-        //     node->assign_f_inst.operand1_index = left;
-        //     node->assign_f_inst.operand2_index = right;
-        //     node->assign_f_inst.op = op;
-        //     append(head, tracker, node);
-        //     left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
-        //     continue;
-        // }
-
-        // if (leftType == TYPE_DOUBLE)
-        // {
-        //     token = lexer.GetToken();
-        //     int right = parse_factor(head, tracker);
-        //     int tmp = alloc_double_slot();
-        //     struct InstructionNode* node = new InstructionNode();
-        //     node->line_no = token.line_no;
-        //     node->type = ASSIGN_D;
-        //     node->assign_d_inst.left_hand_side_index = tmp;
-        //     node->assign_d_inst.operand1_index = left;
-        //     node->assign_d_inst.operand2_index = right;
-        //     node->assign_d_inst.op = op;
-        //     append(head, tracker, node);
-        //     left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
-        //     continue;
-        // }
-
-        if (leftType == TYPE_FLOAT || leftType == TYPE_DOUBLE)
-        {
-            token = lexer.GetToken();
-            int right = parse_factor(head, tracker);
-            VarType rightType = lastExprType;
-
-            if (rightType != TYPE_FLOAT && rightType != TYPE_DOUBLE && rightType != TYPE_UNKNOWN)
-            {
-                report_error(opLine, "arithmetic requires float/double operands, got " + typeToString(rightType));
-            }
-
-            // double wins if either side is double
-            VarType opType = (leftType == TYPE_DOUBLE || rightType == TYPE_DOUBLE) ? TYPE_DOUBLE : TYPE_FLOAT;
-            int leftOperand = coerce_float_double(left, leftType, opType, head, tracker, opLine);
-            int rightOperand = coerce_float_double(right, rightType, opType, head, tracker, opLine);
-
-            int tmp = (opType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            if (opType == TYPE_DOUBLE)
-            {
-                node->type = ASSIGN_D;
-                node->assign_d_inst.left_hand_side_index = tmp;
-                node->assign_d_inst.operand1_index = leftOperand;
-                node->assign_d_inst.operand2_index = rightOperand;
-                node->assign_d_inst.op = op;
-            }
-            else
-            {
-                node->type = ASSIGN_F;
-                node->assign_f_inst.left_hand_side_index = tmp;
-                node->assign_f_inst.operand1_index = leftOperand;
-                node->assign_f_inst.operand2_index = rightOperand;
-                node->assign_f_inst.op = op;
-            }
-            append(head, tracker, node);
-            left = tmp; leftType = opType; lastExprType = opType;
-            continue;
-        }
-
-        if (leftType != TYPE_UNKNOWN && leftType != TYPE_INT) report_error(opLine, "arithmetic requires int operands, got " + typeToString(leftType));
         token = lexer.GetToken();
         int right = parse_factor(head, tracker);
         VarType rightType = lastExprType;
 
-        if (rightType != TYPE_UNKNOWN && rightType != TYPE_INT) report_error(opLine, "arithmetic requires int operands, got " + typeToString(rightType));
-        int tmp = alloc_temp();
-
-        struct InstructionNode* node = new InstructionNode();
-        node->line_no = token.line_no;
-        node->type = ASSIGN;
-        node->assign_inst.left_hand_side_index = tmp;
-        node->assign_inst.operand1_index       = left;
-        node->assign_inst.operand2_index       = right;
-        node->assign_inst.op                   = op;
-        append(head, tracker, node);
-        left = tmp; leftType = TYPE_INT; lastExprType = TYPE_INT;
+        if (opTok == AT || leftType == TYPE_TENSOR || rightType == TYPE_TENSOR)
+        {
+            left = emit_tensor_binary(opTok, left, leftType, right, rightType, opLine, head, tracker);
+        }
+        else if (opTok == MOD)
+        {
+            // a % b = a - (a / b) * b on ints (as in C, the result has the sign of a); b == 0 stops with
+            // the division-by-zero error
+            if ((leftType != TYPE_INT && leftType != TYPE_UNKNOWN) || (rightType != TYPE_INT && rightType != TYPE_UNKNOWN))
+            {
+                report_error(opLine, "'%' needs int operands, got " + typeToString(leftType) + " and " + typeToString(rightType));
+            }
+            int quotient = alloc_temp(), product = alloc_temp(), rem = alloc_temp();
+            emit_int_assign(quotient, left, OPERATOR_DIV, right, opLine, head, tracker);
+            emit_int_assign(product, quotient, OPERATOR_MULT, right, opLine, head, tracker);
+            emit_int_assign(rem, left, OPERATOR_MINUS, product, opLine, head, tracker);
+            left = rem;
+            lastExprType = TYPE_INT;
+        }
+        else
+        {
+            left = emit_arith(opTok == MULT ? OPERATOR_MULT : OPERATOR_DIV, left, leftType, right, rightType,
+                              opLine, head, tracker);
+        }
+        leftType = lastExprType;
     }
     return left;
 }
@@ -645,129 +730,23 @@ static int parse_additive(struct InstructionNode*& head, struct InstructionNode*
 {
     int left = parse_term(head, tracker);
     VarType leftType = lastExprType;
-    while (token.token_type == PLUS || token.token_type == MINUS) 
+    while (token.token_type == PLUS || token.token_type == MINUS)
     {
+        TokenType opTok = token.token_type;
         int opLine = token.line_no;
-        ArithmeticOperatorType op = (token.token_type == PLUS) ? OPERATOR_PLUS : OPERATOR_MINUS;
-
-        if (op == OPERATOR_PLUS && leftType == TYPE_STRING)
-        {
-            token = lexer.GetToken();
-            int right = parse_term(head, tracker);
-            if (lastExprType != TYPE_STRING && lastExprType != TYPE_UNKNOWN)
-            {
-                report_error(opLine, "cannot concatenate string with " + typeToString(lastExprType));
-            }
-            int dest = alloc_slot();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = STRCAT;
-            node->strcat_inst.dest_slot = dest;
-            node->strcat_inst.left_slot = left;
-            node->strcat_inst.right_slot = right;
-            append(head, tracker, node);
-            left = dest; 
-            leftType = TYPE_STRING;
-            lastExprType = TYPE_STRING;
-            continue;
-        }
-
-        // if (leftType == TYPE_FLOAT)
-        // {
-        //     token = lexer.GetToken();
-        //     int right = parse_term(head, tracker);
-        //     int tmp = alloc_float_slot();
-        //     struct InstructionNode* node = new InstructionNode();
-        //     node->line_no = token.line_no;
-        //     node->type = ASSIGN_F;
-        //     node->assign_f_inst.left_hand_side_index = tmp;
-        //     node->assign_f_inst.operand1_index       = left;
-        //     node->assign_f_inst.operand2_index       = right;
-        //     node->assign_f_inst.op                   = op;
-        //     append(head, tracker, node);
-        //     left = tmp; leftType = TYPE_FLOAT; lastExprType = TYPE_FLOAT;
-        //     continue;
-        // }
-
-        // if (leftType == TYPE_DOUBLE)
-        // {
-        //     token = lexer.GetToken();
-        //     int right = parse_term(head, tracker);
-        //     int tmp = alloc_double_slot();
-        //     struct InstructionNode* node = new InstructionNode();
-        //     node->line_no = token.line_no;
-        //     node->type = ASSIGN_D;
-        //     node->assign_d_inst.left_hand_side_index = tmp;
-        //     node->assign_d_inst.operand1_index       = left;
-        //     node->assign_d_inst.operand2_index       = right;
-        //     node->assign_d_inst.op                   = op;
-        //     append(head, tracker, node);
-        //     left = tmp; leftType = TYPE_DOUBLE; lastExprType = TYPE_DOUBLE;
-        //     continue;
-        // }
-
-        if (leftType == TYPE_FLOAT || leftType == TYPE_DOUBLE)
-        {
-            token = lexer.GetToken();
-            int right = parse_term(head, tracker);  // parse_term here, not parse_factor
-            VarType rightType = lastExprType;
-
-            if (rightType != TYPE_FLOAT && rightType != TYPE_DOUBLE && rightType != TYPE_UNKNOWN)
-            {
-                report_error(opLine, "arithmetic requires float/double operands, got " + typeToString(rightType));
-            }
-
-            // double wins if either side is double
-            VarType opType = (leftType == TYPE_DOUBLE || rightType == TYPE_DOUBLE) ? TYPE_DOUBLE : TYPE_FLOAT;
-            // cast each side into opType's array if it isn't there already
-            int leftOperand = coerce_float_double(left, leftType, opType, head, tracker, opLine);
-            int rightOperand = coerce_float_double(right, rightType, opType, head, tracker, opLine);
-
-            int tmp = (opType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_float_slot();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            if (opType == TYPE_DOUBLE)
-            {
-                node->type = ASSIGN_D;
-                node->assign_d_inst.left_hand_side_index = tmp;
-                node->assign_d_inst.operand1_index = leftOperand;
-                node->assign_d_inst.operand2_index = rightOperand;
-                node->assign_d_inst.op = op;
-            }
-            else 
-            {
-                node->type = ASSIGN_F;
-                node->assign_f_inst.left_hand_side_index = tmp;
-                node->assign_f_inst.operand1_index = leftOperand;
-                node->assign_f_inst.operand2_index = rightOperand;
-                node->assign_f_inst.op = op;
-            }
-            append(head, tracker, node);
-            left = tmp; leftType = opType; lastExprType = opType;
-            continue;
-        }
-
-        if (leftType != TYPE_UNKNOWN && leftType != TYPE_INT)
-        {
-            report_error(opLine, "arithmetic requires int operands, got " + typeToString(leftType));
-        }
         token = lexer.GetToken();
         int right = parse_term(head, tracker);
         VarType rightType = lastExprType;
-        if (rightType != TYPE_UNKNOWN && rightType != TYPE_INT) 
+        if (leftType == TYPE_TENSOR || rightType == TYPE_TENSOR)
         {
-            report_error(opLine, "arithmetic requires int operands, got " + typeToString(rightType));
+            left = emit_tensor_binary(opTok, left, leftType, right, rightType, opLine, head, tracker);
         }
-        int tmp = alloc_temp();
-        struct InstructionNode* node = new InstructionNode();
-        node->line_no = token.line_no;
-        node->type = ASSIGN;
-        node->assign_inst.left_hand_side_index = tmp;
-        node->assign_inst.operand1_index       = left;
-        node->assign_inst.operand2_index       = right;
-        node->assign_inst.op                   = op;
-        append(head, tracker, node);
-        left = tmp; leftType = TYPE_INT; lastExprType = TYPE_INT;
+        else
+        {
+            left = emit_arith(opTok == PLUS ? OPERATOR_PLUS : OPERATOR_MINUS, left, leftType, right, rightType,
+                              opLine, head, tracker);
+        }
+        leftType = lastExprType;
     }
     return left;
 }

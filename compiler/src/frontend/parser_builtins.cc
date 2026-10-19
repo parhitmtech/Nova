@@ -13,6 +13,77 @@ static bool is_number_type(VarType t)
     return t == TYPE_INT || t == TYPE_FLOAT || t == TYPE_DOUBLE || t == TYPE_BOOL;
 }
 
+// One tensor built-in call: check each argument's kind against the op's signature, emit the TENSOR_CALL
+// and set lastExprType to its result (Tensor, double, int or nothing for void ops). Used for calls
+// (tensor_add(a, b)) and for operators and members (a + b, t[i, j], t.T). 'name' is what type errors call
+// it, already quoted: "'tensor_add'" or "'+'". argNames[i], if present, names a plain-variable argument.
+int emit_tensor_op(TensorOp op, const string& name, const vector<int>& args, const vector<VarType>& types,
+                   const vector<string>& argNames, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int numArgs = (int)args.size();
+    if (numArgs > 8)
+    {
+        report_error(line, name + " takes at most 8 arguments");
+        numArgs = 8;
+    }
+
+    // Argument kinds: a Tensor where the op takes a tensor, a number where it takes a size, index, or scalar.
+    {
+        const char* sig = tensor_op_signature(op);
+        int len = (int)strlen(sig);
+        bool repeat = (len > 0 && sig[len - 1] == '*');
+        int fixed = repeat ? len - 1 : len;
+        for (int i = 0;i < numArgs; i++)
+        {
+            char want = (i < fixed) ? sig[i] : (repeat ? sig[fixed - 1] : 0);
+            VarType t = types[i];
+            if (want == 0 || t == TYPE_UNKNOWN) continue;
+            string argName = (i < (int)argNames.size()) ? argNames[i] : "";
+            string what = argName.empty() ? "got " + typeToString(t)
+                                          : "but '" + argName + "' is " + typeToString(t);
+            string where = "argument " + to_string(i + 1) + " of " + name;
+            if (want == 'T' && t != TYPE_TENSOR)
+            {
+                report_error(line, where + " must be a Tensor, " + what);
+            } 
+            else if (want == 'n' && !is_number_type(t))
+            {
+                report_error(line, where + " must be a number, " + what);
+            }
+            else if (want == 's' && t != TYPE_STRING)
+            {
+                report_error(line, where + " must be a string, " + what);
+            }
+        }
+    }
+
+    int resultSlot = -1;
+    bool isVoid = TENSOR_VOID_OPS.count(op) > 0;
+    bool isDouble = TENSOR_DOUBLE_OPS.count(op) > 0;
+    if (!isVoid) { resultSlot = isDouble ? alloc_double_slot() : alloc_slot(); }
+
+    struct InstructionNode* node = new InstructionNode();
+    node->line_no = line;
+    node->type = TENSOR_CALL;
+    node->tensor_call_inst.op = op;
+    node->tensor_call_inst.result_slot = resultSlot;
+    node->tensor_call_inst.num_args = numArgs;
+    for (int i = 0;i < numArgs; i++)
+    {
+        node->tensor_call_inst.arg_slots[i] = args[i];
+        node->tensor_call_inst.arg_types[i] = types[i];
+    }
+    append(head, tracker, node);
+
+    bool isInt = TENSOR_INT_OPS.count(op) > 0;
+    lastExprType = isVoid ? TYPE_UNKNOWN
+                        : isDouble ? TYPE_DOUBLE
+                        : isInt ? TYPE_INT
+                        : TYPE_TENSOR;
+    if (!isVoid && !isDouble && !isInt) g_tensorSlots.insert(resultSlot);
+    return isVoid ? alloc_slot() : resultSlot;
+} 
+
 int parse_tensor_call(const string& name, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     TensorOp op = TENSOR_OP_MAP.at(name);
@@ -59,54 +130,10 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
         }
     }
 
-    // Argument kinds: a Tensor where the op takes a tensor, a number where it takes a size, index or scalar.
-    {
-        const char* sig = tensor_op_signature(op);
-        int len = (int)strlen(sig);
-        bool repeat = (len > 0 && sig[len - 1] == '*');
-        int fixed = repeat ? len - 1 : len;
-        for (int i = 0; i < numArgs; i++)
-        {
-            char want = (i < fixed) ? sig[i] : (repeat ? sig[fixed - 1] : 0);
-            VarType t = argTypes[i];
-            if (want == 0 || t == TYPE_UNKNOWN) continue;
-            string what = argNames[i].empty() ? "got " + typeToString(t)
-                                              : "but '" + argNames[i] + "' is " + typeToString(t);
-            string where = "argument " + to_string(i + 1) + " of '" + name + "'";
-            if (want == 'T' && t != TYPE_TENSOR)
-                report_error(token.line_no, where + " must be a Tensor, " + what);
-            else if (want == 'n' && !is_number_type(t))
-                report_error(token.line_no, where + " must be a number, " + what);
-            else if (want == 's' && t != TYPE_STRING)
-                report_error(token.line_no, where + " must be a string, " + what);
-        }
-    }
-
-    int resultSlot = -1;
-    bool isVoid = TENSOR_VOID_OPS.count(op) > 0;
-    bool isDouble = TENSOR_DOUBLE_OPS.count(op) > 0;
-    if (!isVoid) { resultSlot = isDouble ? alloc_double_slot() : alloc_slot(); }
-
-    struct InstructionNode* node = new InstructionNode();
-    node->line_no = token.line_no;
-    node->type = TENSOR_CALL;
-    node->tensor_call_inst.op = op;
-    node->tensor_call_inst.result_slot = resultSlot;
-    node->tensor_call_inst.num_args = numArgs;
-    for (int i = 0; i < numArgs; i++)
-    {
-        node->tensor_call_inst.arg_slots[i] = argSlots[i];
-        node->tensor_call_inst.arg_types[i] = argTypes[i];
-    }
-    append(head, tracker, node);
-
-    bool isInt = TENSOR_INT_OPS.count(op) > 0;
-    lastExprType = isVoid ? TYPE_UNKNOWN 
-                        : isDouble ? TYPE_DOUBLE
-                        : isInt ? TYPE_INT
-                        : TYPE_TENSOR;
-    if (!isVoid && !isDouble && !isInt) g_tensorSlots.insert(resultSlot);  // <-- new line
-    return isVoid ? alloc_slot() : resultSlot;
+    vector<int> args(argSlots, argSlots + numArgs);
+    vector<VarType> types(argTypes, argTypes + numArgs);
+    vector<string> names(argNames, argNames + numArgs);
+    return emit_tensor_op(op, "'" + name + "'", args, types, names, token.line_no, head, tracker);
 }
 
 // ── HuggingFace built-in calls: hf.infer / hf.generate / hf.classify / hf.set_token ──

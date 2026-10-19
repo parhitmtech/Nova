@@ -97,7 +97,13 @@ extern const map<string, TensorOp> TENSOR_OP_MAP = {
     {"tensor_live_count", TEN_LIVE_COUNT},
     {"tensor_rank", TEN_RANK},
     {"tensor_dim", TEN_DIM},
-    {"tensor_reshape", TEN_RESHAPE}
+    {"tensor_reshape", TEN_RESHAPE},
+    // short names
+    {"zeros", TEN_ZEROS},
+    {"ones", TEN_ONES},
+    {"randn", TEN_RANDN},
+    {"xavier", TEN_XAVIER},
+    {"reshape", TEN_RESHAPE}
 };
 
 // ops that don't return a meaningful value (void)

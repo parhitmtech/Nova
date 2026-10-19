@@ -288,7 +288,10 @@ commit.
    check their arguments; a tensor is no longer an `int`; `Tensor h` declares one to assign later.
    `Tensor<dtype>` waits for fp32 storage (M1 stage 4). Also: `nova --check` (type-check only) and
    correct line numbers after an import.
-6. Tensor operators and methods: `+ - * / @` on tensors, `t[i, j]`, `t.T`, `t.shape`, short names.
+6. Tensor operators (done): `a @ b`, element-wise `a + b`, `a - b`, `a * b` (+ and - broadcast a 1xN
+   row), `k * a` / `a * k` / `a / k` scale, `-a`; `t[i, j]` reads and `t[i, j] = v` writes one element;
+   `t.T`, `t.rows`, `t.cols`, `t.rank`; short names `zeros`, `ones`, `randn`, `xavier`, `reshape`. Not yet:
+   tensor plus a number, tensor / tensor, members on `self.W` (use `tensor_T(self.W)`), methods like `t.sum()`.
 7. Constructors, `struct` / `class` field syntax, `orbit`.
 8. Block scoping.
 9. Generics: loose `def` and `class Box<T>` (one compiled copy per type used), then the generic

@@ -725,6 +725,32 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
     string lhs = token.lexeme;
     int lhs_line = token.line_no;
 
+    // t[i, j, ...] = value; store one element of a Tensor (one index per dimension)
+    if (typeTable.count(lhs) && typeTable[lhs] == TYPE_TENSOR && lexer.peek(1).token_type == LBRAC)
+    {
+        vector<int> args = {symbolTable[lhs]};
+        vector<VarType> types = {TYPE_TENSOR};
+        token = lexer.GetToken();  // '['
+        token = lexer.GetToken();  // first index
+        while (token.token_type != RBRAC && token.token_type != END_OF_FILE)
+        {
+            args.push_back(parse_expression(head, tracker));
+            types.push_back(lastExprType);
+            if (token.token_type == COMMA) token = lexer.GetToken();
+        }
+        token = lexer.GetToken();  // past ']'
+        if (token.token_type != EQUAL)
+        {
+            report_error(lhs_line, "expected '=' after '" + lhs + "[...]'");
+            return;
+        }
+        token = lexer.GetToken();  // the value
+        args.push_back(parse_expression(head, tracker));
+        types.push_back(lastExprType);
+        emit_tensor_op(TEN_SET, "element assignment", args, types, {}, lhs_line, head, tracker);
+        return;  // token is now ';'
+    }
+
     // struct field write: p.x = 3.14 ; or L.a.x = 1.0 ;
     if (varStructType.count(lhs) && lexer.peek(1).token_type == DOT)
     {

@@ -368,14 +368,23 @@ tensor_print(A)  # print tensor contents
 
 ### Tensor Arithmetic
 
+Prefer the operators; the named functions do the same thing.
+
 \`\`\`nova
-Tensor C = matmul(A, B)  # matrix multiplication
-Tensor D = tensor_add(A, B)  # element-wise addition
-Tensor E = tensor_sub(A, B)  # element-wise subtraction
-Tensor F = tensor_mul(A, B)  # element-wise (Hadamard) product
-Tensor G = tensor_scale(A, 2.0)  # scalar multiplication
-Tensor H = tensor_T(A)  # transpose
+Tensor C = A @ B          # matrix multiplication (matmul(A, B))
+Tensor D = A + B          # element-wise; B may be a 1xN row added to every row (tensor_add)
+Tensor E = A - B          # element-wise (tensor_sub)
+Tensor F = A * B          # element-wise (Hadamard) product (tensor_mul)
+Tensor G = 2.0 * A        # scale; also A * 2.0 and A / 4 (tensor_scale)
+Tensor N = -A             # negate
+Tensor H = A.T            # transpose (tensor_T)
+double v = A[0, 1]        # one element; A[0, 1] = 5.0 writes one (tensor_get / tensor_set)
+int r = A.rows            # also A.cols, A.rank
+Tensor Z = zeros(2, 3)    # short names: zeros, ones, randn, xavier, reshape
+W = W - lr * dW           # a gradient-descent update
 \`\`\`
+
+Not supported yet: a tensor plus a number (\`A + 1.0\`), tensor / tensor, and \`.T\` / indexing on \`self.W\` (write \`tensor_T(self.W)\`).
 
 ### Reduction / Statistics
 

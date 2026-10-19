@@ -1,0 +1,52 @@
+# Syntax step 6: tensor operators, indexing and members. Each operator must give exactly what the call
+# it stands for gives, with autograd off and on: a @ b = matmul, a + b = tensor_add (also with a 1xN row
+# broadcast), a - b = tensor_sub, a * b = tensor_mul, k * a and a * k = tensor_scale, a / k, -a.
+def same(Tensor x, Tensor y) -> bool:
+    return tensor_sum(tensor_mul(tensor_sub(x, y), tensor_sub(x, y))) < 0.000000001
+
+def check(Tensor a, Tensor b, Tensor c, Tensor row):
+    if (same(a @ b, matmul(a, b)) and same(a + c, tensor_add(a, c)) and same(a + row, tensor_add(a, row))
+        and same(a - c, tensor_sub(a, c)) and same(a * c, tensor_mul(a, c))
+        and same(2.5 * a, tensor_scale(a, 2.5)) and same(a * 2.5, tensor_scale(a, 2.5))
+        and same(a / 4, tensor_scale(a, 0.25)) and same(-a, tensor_scale(a, -1.0))):
+        print("PASS operators")
+    else:
+        print("FAIL operators")
+
+ignite:
+    Tensor a = randn(2, 3)
+    Tensor b = randn(3, 4)
+    Tensor c = randn(2, 3)
+    Tensor row = randn(1, 3)
+    check(a, b, c, row)
+    requires_grad(a)
+    requires_grad(b)
+    check(a, b, c, row)
+
+    # precedence: @ and * bind tighter than + and -, like Python
+    Tensor x = ones(2, 2)
+    Tensor y = x @ x + x * 2.0 - x
+    print(y[0, 0])                          # 2 + 2 - 1 = 3
+
+    # indexing reads and writes one element; += works on an element
+    Tensor m = zeros(2, 3)
+    m[1, 2] = 7.5
+    m[1, 2] += 0.5
+    print(m[1, 2])                          # 8
+    Tensor cube = zeros(2, 3, 4)
+    cube[1, 2, 3] = 5.0
+    print(cube[1, 2, 3])                    # 5
+
+    # members and chaining: .T .rows .cols .rank; a postfix on a call's result
+    print(m.T.rows)                         # 3
+    print(m.cols + cube.rank)               # 3 + 3
+    print(matmul(x, x)[1, 1])               # 2
+    print(-m[1, 2])                         # unary minus applies after the index: -8
+
+    # a training-style update with operators
+    Tensor W = ones(2, 2)
+    Tensor dW = ones(2, 2)
+    double lr = 0.1
+    W = W - lr * dW
+    print(W[0, 1])                          # 0.9
+    print(reshape(cube, 6, -1).rows)        # short name: 6

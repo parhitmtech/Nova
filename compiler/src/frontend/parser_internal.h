@@ -100,6 +100,8 @@ void parse_class_definition();
 void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_tensor_call(const string& name, struct InstructionNode*& head, struct InstructionNode*& tracker);
+int emit_tensor_op(TensorOp, const string& name, const vector<int>& args, const vector<VarType>& type,
+                   const vector<string>& argNames, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_hf_call(const string& method, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_sol_call(const string& method, struct InstructionNode*& head, struct InstructionNode*& tracker);
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker);
