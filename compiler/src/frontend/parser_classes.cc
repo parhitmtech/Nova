@@ -116,11 +116,19 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
 
     if (token.token_type == EQUAL)
     {
-        // literal init: Point p = {3.14, 2.71} ;
-        token = lexer.GetToken();  // '{'
-        token = lexer.GetToken();  // first value
+        // Point p = Point(3, 4): one value per field, in order
+        token = lexer.GetToken();  // the struct name
+        if (token.token_type != ID || token.lexeme != structTypeName || lexer.peek(1).token_type != LPAREN)
+        {
+            report_error(varLine, "a " + structTypeName + " is created with " + structTypeName + "(...), one value per field");
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            return;
+        }
+        token = lexer.GetToken();  // '('
+        token = lexer.GetToken();
 
-        for (int i = 0;i < (int)def.fields.size();i++)
+        int given = 0;  // values read so far
+        for (int i = 0;i < (int)def.fields.size() && token.token_type != RPAREN;i++, given++)
         {
             auto& field = def.fields[i];
             int resultIdx = parse_expression(head, tracker);
@@ -153,8 +161,13 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
 
             if (token.token_type == COMMA) token = lexer.GetToken();
         }
-        // token = '}'
-        token = lexer.GetToken();  // ';'
+        if (token.token_type != RPAREN || given != (int)def.fields.size())
+        {
+            report_error(varLine, structTypeName + " has " + to_string(def.fields.size()) + " field(s); give one value for each");
+            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            return;
+        }
+        token = lexer.GetToken();  // past ')' -> ';'
     }
     // else token = ';'
 }
@@ -473,6 +486,12 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     classFieldTypes[varName] = fieldTypes;
 
     token = lexer.GetToken();  // '=' or ';'
+    // Linear l = Linear(2, 4): the constructor form. Skip "= Linear" so the '(' below runs init.
+    if (token.token_type == EQUAL && lexer.peek(1).token_type == ID && lexer.peek(1).lexeme == className && lexer.peek(2).token_type == LPAREN)
+    {
+        token = lexer.GetToken();  // the class name
+        token = lexer.GetToken();  // '('
+    }
     if (token.token_type == LPAREN)
     {
         // constructor call: MyClass obj(arg1, arg2) ; 
@@ -577,6 +596,26 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                 }
                 callNode->call_inst.param_slots = pSlots;
                 callNode->call_inst.arg_val_slots = aSlots;
+
+                // Parameter and argument types tell the interpreter which slot space (mem / fmem / dmem)
+                // each side lives in. Without them every argument was copied as an int, so a double
+                // argument such as SGD(0.05) arrived as 0.
+                if (argIndices.size() != params.size())
+                    report_error(varLine, "'" + className + "' constructor takes " + to_string(params.size()) +
+                                          " argument(s) but got " + to_string(argIndices.size()));
+                vector<VarType>& storedParamTypes = classMethodParamTypes[className]["init"];
+                VarType* ptypes = new VarType[params.size()];
+                VarType* atypes = new VarType[params.size()];
+                for (int i = 0; i < (int)params.size(); i++)
+                {
+                    ptypes[i] = (i < (int)storedParamTypes.size()) ? storedParamTypes[i] : TYPE_UNKNOWN;
+                    atypes[i] = (i < (int)argTypes.size()) ? argTypes[i] : TYPE_UNKNOWN;
+                    if (i < (int)argTypes.size() && !types_compatible(atypes[i], ptypes[i]))
+                        report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " +
+                                              typeToString(ptypes[i]) + " but got " + typeToString(atypes[i]));
+                }
+                callNode->call_inst.param_types = ptypes;
+                callNode->call_inst.arg_types = atypes;
             }
             else
             {
@@ -628,44 +667,8 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     }
     else if (token.token_type == EQUAL)
     {
-        token = lexer.GetToken();  // '{'
-        token = lexer.GetToken();  // first value
-
-        for (int i = 0; i < (int)def.fields.size(); i++)
-        {
-            auto& field = def.fields[i];
-            int resultIdx = parse_expression(head, tracker);
-            int slot = fieldSlots[field.name];
-
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            if (field.type == TYPE_FLOAT)
-            {
-                node->type = ASSIGN_F;
-                node->assign_f_inst.left_hand_side_index = slot;
-                node->assign_f_inst.operand1_index = resultIdx;
-                node->assign_f_inst.op = OPERATOR_NONE;
-            }
-            else if (field.type == TYPE_DOUBLE)
-            {
-                node->type = ASSIGN_D;
-                node->assign_d_inst.left_hand_side_index = slot;
-                node->assign_d_inst.operand1_index = resultIdx;
-                node->assign_d_inst.op = OPERATOR_NONE;
-            }
-            else
-            {
-                node->type = ASSIGN;
-                node->assign_inst.left_hand_side_index = slot;
-                node->assign_inst.operand1_index = resultIdx;
-                node->assign_inst.op = OPERATOR_NONE;
-            }
-            append(head, tracker, node);
-
-            if (token.token_type == COMMA) token = lexer.GetToken();
-        }
-        // token = '}'
-        token = lexer.GetToken();  // ';'
+        report_error(varLine, "a " + className + " is created with " + className + "(...), which runs its init");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
     }
     else if (token.token_type == SEMICOLON)
     {

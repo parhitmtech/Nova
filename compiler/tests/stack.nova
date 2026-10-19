@@ -1,7 +1,6 @@
-import <collections>
+orbit collections
 ignite:
-    Stack s
-    s.init()
+    Stack s = Stack()
     print(s.isEmpty())
     s.push(10)
     s.push(20)

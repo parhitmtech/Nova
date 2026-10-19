@@ -1,5 +1,5 @@
-import <novatorch.nn>
-import <novatorch.optim>
+orbit novatorch.nn
+orbit novatorch.optim
 
 ignite:
     # Dataset: AND gate — simplest linearly separable binary problem
@@ -21,14 +21,11 @@ ignite:
     tensor_set(Y, 3, 0, 1)
 
     # Model: Linear(2→1) → Sigmoid
-    Linear layer1
-    layer1.init(2, 1)
+    Linear layer1 = Linear(2, 1)
 
-    Sigmoid sig1
-    sig1.init()
+    Sigmoid sig1 = Sigmoid()
 
-    SGD optim
-    optim.init(0.5)
+    SGD optim = SGD(0.5)
 
     int epoch = 0
     Tensor z

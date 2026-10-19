@@ -1,7 +1,6 @@
-import <collections>
+orbit collections
 ignite:
-    Queue q
-    q.init()
+    Queue q = Queue()
     q.enqueue(5)
     q.enqueue(15)
     q.enqueue(25)

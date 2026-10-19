@@ -111,7 +111,7 @@ void run_repl()
                            accumulated.find("def ") != string::npos ||
                            accumulated.find("class ") != string::npos ||
                            accumulated.find("struct ") != string::npos ||
-                           accumulated.find("import ") != string::npos);
+                           accumulated.find("orbit ") != string::npos);
         if (!hasTopLevel)
         {
             // Pure statements - indent them into an ignite block

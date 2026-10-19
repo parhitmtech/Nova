@@ -111,6 +111,19 @@ static string strip_ignite_blocks(const string& src)
     return out;
 }
 
+static bool file_exists(const string& path)
+{
+    ifstream f(path);
+    return f.good();
+}
+
+// Errors in orbit lines stop compilation with the line, like the lexer's layout errors.
+[[noreturn]] static void module_error(int line, const string& msg)
+{
+    fprintf(stderr, "Error at line %d: %s\n", line, msg.c_str());
+    exit(1);
+}
+
 string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported)
 {
     string result;
@@ -126,82 +139,42 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
         size_t start = trimmed.find_first_not_of(" \t");
         if (start != string::npos) trimmed = trimmed.substr(start);
 
-        // mathc: import "file.nova";
-        if (trimmed.size() > 8 && trimmed.substr(0, 7) == "import " && trimmed[7] == '"')
+        // orbit NAME brings in a module. A dotted name is a path: orbit utils.metrics is utils/metrics.nova
+        // next to this file; if there is none, NAME.nova in the standard library (orbit novatorch.nn).
+        // hf and sol are built in, so "orbit hf" / "orbit sol" only say that the program uses them.
+        if (trimmed.compare(0, 6, "orbit ") == 0)
         {
-            size_t close = trimmed.find('"', 8);
-            if (close != string::npos)
+            string name = trimmed.substr(6);
+            size_t nameEnd = name.find_first_of(" \t\r#");
+            if (nameEnd != string::npos) name = name.substr(0, nameEnd);
+            if (name.empty())
             {
-                string filename = trimmed.substr(8, close - 8);
-                string full_path = base_dir + "/" + filename;
-
-                if (already_imported.count(full_path))
-                {
-                    // already included, skip silently
-                    { result += "\n"; continue; }
-                }
-                already_imported.insert(full_path);
-
-                string file_src = read_file(full_path);
-                if (file_src.empty()) { result += "\n"; continue; }
-
-                // get the directory of the imported file for nested imports
-                string imported_dir = full_path;
-                size_t last_slash = imported_dir.find_last_of("/\\");
-                if (last_slash != string::npos)
-                {
-                    imported_dir = imported_dir.substr(0, last_slash);
-                }
-                else
-                {
-                    imported_dir = ".";
-                }
-
-                string inlined = preprocess_import(strip_ignite_blocks(file_src), imported_dir, already_imported);
-                result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
-                continue;
+                module_error(lineNo, "'orbit' needs a module name, e.g. orbit novatorch.nn");
             }
-        }
+            if (name == "hf" || name == "sol") { result += "\n"; continue; }
 
-        // match: import <package> ;
-        if (trimmed.size() > 8 && trimmed.substr(0, 7) == "import " && trimmed[7] == '<')
-        {
-            size_t close = trimmed.find('>', 8);
-            if (close != string::npos)
+            string localName = name;
+            replace(localName.begin(), localName.end(), '.', '/');
+            string localPath = base_dir + "/" + localName + ".nova";
+            string stdlibPath = get_stdlib_path() + "/" + name + ".nova";
+            string full_path = file_exists(localPath) ? localPath : stdlibPath;
+            if (!file_exists(full_path))
             {
-                string pkg_name = trimmed.substr(8, close - 8);
-                string stdlib_dir = get_stdlib_path();
-                if (stdlib_dir.empty()) { result += "\n"; continue; }
-
-                string full_path = stdlib_dir + "/" + pkg_name + ".nova";
-
-                if (already_imported.count(full_path))
-                {
-                    { result += "\n"; continue; }
-                }
-                already_imported.insert(full_path);
-
-                string file_src = read_file(full_path);
-                if (file_src.empty()) { result += "\n"; continue; }
-
-                string inlined = preprocess_import(strip_ignite_blocks(file_src), stdlib_dir, already_imported);
-                result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
-                continue;
+                module_error(lineNo, "cannot find module '" + name + "' (looked for " + localPath + 
+                                     " and " + stdlibPath + ")");
             }
-        }
 
-        // match: import hf  (HuggingFace built-in — hf.xxx() always available)
-        if (trimmed.size() >= 9 && trimmed.substr(0, 9) == "import hf" &&
-            (trimmed.size() == 9 || trimmed[9] == ' ' || trimmed[9] == ';'))
-        {
-            { result += "\n"; continue; }
-        }
+            if (already_imported.count(full_path)) { result += "\n"; continue; } // module is loaded once
+            already_imported.insert(full_path);
 
-        // match: import sol  (SOL cluster built-in — sol.xxx() always available)
-        if (trimmed.size() >= 10 && trimmed.substr(0, 10) == "import sol" &&
-            (trimmed.size() == 10 || trimmed[10] == ' ' || trimmed[10] == ';'))
+            string module_dir = full_path.substr(0, full_path.find_last_of("/\\"));
+            string inlined = preprocess_import(strip_ignite_blocks(read_file(full_path)), module_dir, already_imported);
+            result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
+            continue;
+        }
+        if (trimmed.compare(0, 7, "import ") == 0)
         {
-            { result += "\n"; continue; }
+            module_error(lineNo, "use 'orbit NAME' to bring in a module (e.g. orbit novatorch.nn), not import");
         }
 
         // not an import line - keep it as it is

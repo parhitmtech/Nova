@@ -1,5 +1,5 @@
 # Line numbers stay right after an import (the imported file's text is inlined).
-import <math>
+orbit math
 
 ignite:
     print(max_val(1, 2))

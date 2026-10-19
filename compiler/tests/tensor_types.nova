@@ -26,8 +26,7 @@ ignite:
     print(total(matmul(a, b)))              # a tensor expression as an argument: 4 entries of 3
     print(total(scaled(a, 0.5)))            # 6 entries of 0.5
 
-    Layer layer
-    layer.init(2)
+    Layer layer = Layer(2)
     print(tensor_sum(layer.forward(matmul(a, b))))   # a method's Tensor result inside a tensor op
 
     Tensor top, Tensor bottom = halves(tensor_ones(4, 2))

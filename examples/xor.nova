@@ -1,5 +1,5 @@
 # @ml
-import <novatorch.nn>
+orbit novatorch.nn
 
 ignite:
     Tensor X = tensor_zeros(4, 2)
@@ -18,17 +18,13 @@ ignite:
     tensor_set(Y, 2, 0, 1)
     tensor_set(Y, 3, 0, 0)
 
-    Linear layer1
-    layer1.init(2, 4)
+    Linear layer1 = Linear(2, 4)
 
-    Linear layer2
-    layer2.init(4, 1)
+    Linear layer2 = Linear(4, 1)
 
-    Sigmoid act1
-    act1.init()
+    Sigmoid act1 = Sigmoid()
 
-    Sigmoid act2
-    act2.init()
+    Sigmoid act2 = Sigmoid()
 
     double lr = 0.5
     int epoch = 0

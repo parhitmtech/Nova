@@ -1,0 +1,9 @@
+# A class is created with ClassName(...), which runs its init.
+class Box:
+    int v
+
+    def init(int x):
+        self.v = x
+
+ignite:
+    Box b = 5

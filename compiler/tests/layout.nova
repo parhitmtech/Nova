@@ -24,8 +24,7 @@ def classify(int n) -> int:
         return 2
 
 ignite:
-    Box b
-    b.init(41)
+    Box b = Box(41)
     b.nothing()
     print(b.get() + 1)
 

@@ -1,0 +1,5 @@
+# Modules are brought in with orbit, not import.
+import <math>
+
+ignite:
+    print(1)

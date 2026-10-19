@@ -292,7 +292,9 @@ commit.
    row), `k * a` / `a * k` / `a / k` scale, `-a`; `t[i, j]` reads and `t[i, j] = v` writes one element;
    `t.T`, `t.rows`, `t.cols`, `t.rank`; short names `zeros`, `ones`, `randn`, `xavier`, `reshape`. Not yet:
    tensor plus a number, tensor / tensor, members on `self.W` (use `tensor_T(self.W)`), methods like `t.sum()`.
-7. Constructors, `struct` / `class` field syntax, `orbit`.
+7. Constructors and modules (done): `Linear l = Linear(2, 4)` runs init (`Linear l` runs a no-argument
+   init); `Point p = Point(3, 4)`; `orbit a.b` loads a/b.nova next to the file, else a.b.nova from the
+   stdlib; `import` is an error. Field syntax (`int x` under `struct P:`) already came with step 3.
 8. Block scoping.
 9. Generics: loose `def` and `class Box<T>` (one compiled copy per type used), then the generic
    `std.collections` (`vector<T>`, `map<K, V>`, ...) and `std.algo` written in Nova.

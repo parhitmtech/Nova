@@ -17,8 +17,7 @@ class Counter:
         self.count = 0
 
 ignite:
-    Counter c
-    c.init()
+    Counter c = Counter()
     print(c.get())
     c.increment()
     c.increment()

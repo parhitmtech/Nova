@@ -1,0 +1,45 @@
+# Syntax step 7: constructors and orbit. Cls v = Cls(args) runs init with those arguments (an int, a
+# double and a Tensor here: the double used to arrive as 0); Cls v alone runs a no-argument init;
+# Point p = Point(3, 4) sets struct fields in order. orbit brings in stdlib modules (a dotted name too).
+orbit math
+orbit novatorch.optim
+
+struct Point:
+    int x
+    int y
+
+class Scaler:
+    double factor
+    int calls
+    Tensor base
+
+    def init(double f, int start, Tensor b):
+        self.factor = f
+        self.calls = start
+        self.base = b
+
+    def apply() -> Tensor:
+        self.calls += 1
+        return self.factor * self.base
+
+class Counter:
+    int count
+
+    def init():
+        self.count = 100
+
+ignite:
+    Scaler s = Scaler(0.5, 10, ones(2, 2))
+    print(tensor_sum(s.apply()))          # 4 * 0.5
+    print(s.calls)                         # 11
+
+    Counter c                              # a no-argument init runs by itself
+    print(c.count)
+
+    Point p = Point(3, 4)
+    print(p.x * p.x + p.y * p.y)           # 25
+
+    print(max_val(2, 9))                   # from orbit math
+    SGD opt = SGD(0.1)                     # from orbit novatorch.optim (a dotted module name)
+    Tensor w = ones(2, 2)
+    print(tensor_get(opt.step(w, ones(2, 2)), 0, 0))   # 1 - 0.1

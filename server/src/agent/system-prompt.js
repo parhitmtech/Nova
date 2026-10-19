@@ -316,8 +316,7 @@ class Dog extends Animal:
         return 1
 
 ignite:
-    Dog d
-    d.init(3)
+    Dog d = Dog(3)
     print(d.speak())
     print(d.age)
 \`\`\`
@@ -332,15 +331,15 @@ ignite:
 
 ## Tensor Operations
 
-Tensors are 2D matrices (rows × cols). All tensor ops run on GPU when available.
+Tensors have 1 to 6 dimensions (type Tensor). Most ops work on the 2-D view: the last dimension is the columns, the rest are the rows.
 
-### Import
+### Modules
 
 \`\`\`nova
-import <novatorch.nn>
+orbit novatorch.nn
 \`\`\`
 
-Or just use tensor built-ins directly without an import.
+Or just use tensor built-ins directly without an orbit.
 
 ### Creating Tensors
 
@@ -499,7 +498,7 @@ ignite:
 Run inference on any HuggingFace model without leaving Nova.
 
 \`\`\`nova
-import hf
+orbit hf
 
 ignite:
     hf.set_token("hf_xxxxx")
@@ -535,8 +534,8 @@ ignite:
 Submit fine-tuning jobs to the SOL supercomputer — a high-performance GPU cluster with NVIDIA A100/V100 GPUs and SLURM scheduling. The cluster connection is managed automatically by NovaComp; users do not need to configure SSH keys or know about internal paths.
 
 \`\`\`nova
-import hf
-import sol
+orbit hf
+orbit sol
 
 ignite:
     hf.set_token("hf_xxxxx")
@@ -572,17 +571,17 @@ Supported tasks: \`"text-classification"\`, \`"summarization"\`, \`"question-ans
 
 ---
 
-## Import Syntax
+## Modules: orbit
 
 \`\`\`nova
-import hf                     # HuggingFace API
-import sol                    # SOL HPC cluster
-import <novatorch.nn>         # Nova standard ML library
+orbit hf  # HuggingFace API
+orbit sol  # SOL HPC cluster
+orbit novatorch.nn  # Nova standard ML library
 \`\`\`
 
-Two forms:
-- \`import moduleName\` for hf, sol
-- \`import <module.submodule>\` for standard library paths
+- \`orbit a.b\` loads \`a/b.nova\` next to the current file, or else \`a.b.nova\` from the standard library (e.g. \`orbit novatorch.nn\`, \`orbit collections\`, \`orbit math\`)
+- A module is loaded once; its \`ignite\` block does not run
+- \`import\` is no longer valid: write \`orbit\`
 
 ---
 
@@ -597,7 +596,7 @@ Two forms:
 | Tanh | \`tanh_t()\` not \`tanh()\` |
 | Print arity | Exactly one argument |
 | Input return | Always int |
-| Constructor | Named \`init\`, not \`__init__\` or the class name |
+| Constructor | The method is named \`init\`; create an object with \`Linear l = Linear(2, 4)\`, which runs it (\`Linear l\` alone runs a no-argument init). Structs: \`Point p = Point(3, 4)\`, one value per field |
 | Self | Lowercase \`self\` |
 | @ml | Just a comment — no effect on compilation |
 | Memoization | Automatic for pure recursive functions |

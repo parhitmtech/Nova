@@ -35,7 +35,7 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
       'class',
       'extends',
       'self',
-      'import',
+      'orbit',
       'ignite',
       'break',
       'continue',

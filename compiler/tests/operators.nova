@@ -54,8 +54,7 @@ ignite:
     arr[1] = 7
     arr[1] += 3
     print(arr[1])
-    Acc acc
-    acc.init()
+    Acc acc = Acc()
     acc.add(4)
     acc.add(6)
     print(acc.get())

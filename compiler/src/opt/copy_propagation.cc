@@ -193,6 +193,10 @@ int copy_propagate(struct InstructionNode* program)
                     int p = pc->call_inst.param_slots[i];
                     if (p < n) copy_map[p] = -1;
                 }
+                // The callee can write any slot (a method writes its self slots, which are then copied
+                // back into the object), and those writes are not counted in write_count. So no copy
+                // recorded before the call still holds after it.
+                std::fill(copy_map.begin(), copy_map.end(), -1);
                 break;
             }
             case RET:

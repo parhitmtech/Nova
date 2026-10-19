@@ -1,5 +1,5 @@
-import <novatorch.nn>
-import <novatorch.optim>
+orbit novatorch.nn
+orbit novatorch.optim
 
 ignite:
     # Dataset: 3-class problem (6 samples, 2 features, 3 classes)
@@ -31,17 +31,13 @@ ignite:
     tensor_set(Y, 5, 2, 1)
 
     # Model: Linear(2→8) → ReLU → Linear(8→3) → Softmax (implicit in CE loss)
-    Linear layer1
-    layer1.init(2, 8)
+    Linear layer1 = Linear(2, 8)
 
-    ReLU act1
-    act1.init()
+    ReLU act1 = ReLU()
 
-    Linear layer2
-    layer2.init(8, 3)
+    Linear layer2 = Linear(8, 3)
 
-    SGD optim
-    optim.init(0.05)
+    SGD optim = SGD(0.05)
 
     int epoch = 0
     Tensor h1
