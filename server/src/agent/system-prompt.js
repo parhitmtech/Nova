@@ -376,6 +376,8 @@ Tensor E = A - B          # element-wise (tensor_sub)
 Tensor F = A * B          # element-wise (Hadamard) product (tensor_mul)
 Tensor G = 2.0 * A        # scale; also A * 2.0 and A / 4 (tensor_scale)
 Tensor N = -A             # negate
+Tensor S = A + 1.0        # a number with + - * in either order: A + 1.0, 1.0 - A, 2.0 * A
+Tensor Q = A / B          # element-wise divide (same shape); A / 2.0 divides by a number
 Tensor H = A.T            # transpose (tensor_T)
 double v = A[0, 1]        # one element; A[0, 1] = 5.0 writes one (tensor_get / tensor_set)
 int r = A.rows            # also A.cols, A.rank
@@ -383,7 +385,7 @@ Tensor Z = zeros(2, 3)    # short names: zeros, ones, randn, xavier, reshape
 W = W - lr * dW           # a gradient-descent update
 \`\`\`
 
-Not supported yet: a tensor plus a number (\`A + 1.0\`), tensor / tensor, and \`.T\` / indexing on \`self.W\` (write \`tensor_T(self.W)\`).
+Element-wise ops need the same shape, except that a 1xN row (a bias) broadcasts over a matrix: \`X @ W + b\`, \`b + X\`, \`X - b\` (not \`b - X\`). Postfixes work on fields: \`self.W.T\`, \`self.W[0, 1] = v\`, \`layer.W.rows\`. A number divided by a tensor (\`1.0 / A\`) is not supported.
 
 ### Reduction / Statistics
 

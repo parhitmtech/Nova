@@ -123,6 +123,8 @@ int ag_add(int a, int b);
 int ag_sub(int a, int b);
 int ag_mul(int a, int b); // Hadamard
 int ag_scale(int a, double s);
+int ag_add_scalar(int a, double k);
+int ag_div(int a, int b);  // element-wise
 int ag_relu(int a);
 int ag_sigmoid(int a);
 int ag_tanh_t(int a);

@@ -1,0 +1,4 @@
+# A number divided by a tensor is not defined (tensor / number and tensor / tensor are).
+def main():
+    Tensor t = ones(2, 2)
+    Tensor u = 1.0 / t

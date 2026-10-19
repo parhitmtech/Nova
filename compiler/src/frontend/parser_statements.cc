@@ -6,6 +6,32 @@
 // Statements: declarations, print, assignment, conditions, if/while/do/for/switch. Split out of parser.cc.
 #include "parser_internal.h"
 
+// t[i, j, ...] = value with token on '[': store one element of the Tensor in slot t (one index per dimension). Shared 
+// by a local (w[0, 1] = v), a self field (self.W[0, 1] = v) and an object field.
+static void parse_tensor_element_store(int t, const string& name, int line,
+                                       struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    vector<int> args = {t};
+    vector<VarType> types = {TYPE_TENSOR};
+    token = lexer.GetToken();  // past '[' -> first index
+    while (token.token_type != RBRAC && token.token_type != END_OF_FILE)
+    {
+        args.push_back(parse_expression(head, tracker));
+        types.push_back(lastExprType);
+        if (token.token_type == COMMA) token = lexer.GetToken();
+    }
+    token = lexer.GetToken();  // past ']'
+    if (token.token_type != EQUAL)
+    {
+        report_error(line, "expected '=' after '" + name + "[...]'");
+        return;
+    }
+    token = lexer.GetToken();  // all the value
+    args.push_back(parse_expression(head, tracker));
+    types.push_back(lastExprType);
+    emit_tensor_op(TEN_SET, "element assignment", args, types, {}, line, head , tracker);
+}
+
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     VarType declType = TYPE_UNKNOWN;
@@ -477,12 +503,20 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         }
         token = lexer.GetToken();  // consume SELF → '.'
         string fieldPath = "";
-        while (token.token_type == DOT)
+        bool tensorField = false;
+        while (token.token_type == DOT && !tensorField)
         {
             token = lexer.GetToken();  // consume '.' → field segment
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
+            tensorField = currentSelfFieldTypes.count(fieldPath) && currentSelfFieldTypes[fieldPath] == TYPE_TENSOR;
+        }
+        // self.W[i, j] = value (element of a Tensor field)
+        if (token.token_type == LBRAC && tensorField)
+        {
+            parse_tensor_element_store(currentSelfFieldSlots[fieldPath], "self." + fieldPath, token.line_no, head, tracker);
+            return;
         }
         // self.field[index] = value (array write)
         if (token.token_type == LBRAC)
@@ -596,6 +630,14 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             }
             else
             {
+                // obj.W[i, j] = value (element of a Tensor field)
+                if (token.token_type == LBRAC && classFieldTypes.count(name) && classFieldTypes[name].count(memberName) 
+                    && classFieldTypes[name][memberName] == TYPE_TENSOR)
+                {
+                    parse_tensor_element_store(classFieldSlots[name][memberName], name + "." + memberName, objLine,
+                                               head, tracker);
+                    return;
+                }
                 // field assignment
                 if (token.token_type != EQUAL)
                 {
@@ -728,26 +770,8 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
     // t[i, j, ...] = value; store one element of a Tensor (one index per dimension)
     if (typeTable.count(lhs) && typeTable[lhs] == TYPE_TENSOR && lexer.peek(1).token_type == LBRAC)
     {
-        vector<int> args = {symbolTable[lhs]};
-        vector<VarType> types = {TYPE_TENSOR};
         token = lexer.GetToken();  // '['
-        token = lexer.GetToken();  // first index
-        while (token.token_type != RBRAC && token.token_type != END_OF_FILE)
-        {
-            args.push_back(parse_expression(head, tracker));
-            types.push_back(lastExprType);
-            if (token.token_type == COMMA) token = lexer.GetToken();
-        }
-        token = lexer.GetToken();  // past ']'
-        if (token.token_type != EQUAL)
-        {
-            report_error(lhs_line, "expected '=' after '" + lhs + "[...]'");
-            return;
-        }
-        token = lexer.GetToken();  // the value
-        args.push_back(parse_expression(head, tracker));
-        types.push_back(lastExprType);
-        emit_tensor_op(TEN_SET, "element assignment", args, types, {}, lhs_line, head, tracker);
+        parse_tensor_element_store(symbolTable[lhs], lhs, lhs_line, head, tracker);
         return;  // token is now ';'
     }
 

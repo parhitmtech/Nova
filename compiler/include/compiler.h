@@ -116,6 +116,8 @@ enum TensorOp {
     TEN_RANK,  // tensor_rank(t) -> int: number of dimensions
     TEN_DIM,  // tensor_dim(t, i) -> int: size of dimension i (0 = outermost)
     TEN_RESHAPE,  // tensor_reshape(t, d0, d1, ...) -> handle; one dimension may be -1 (inferred)
+    TEN_ADD_SCALAR, // t + k: k added to every element (also t - k, k + t, k - t via the parser)
+    TEN_DIV,   // a / b element-wise, same shape
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────

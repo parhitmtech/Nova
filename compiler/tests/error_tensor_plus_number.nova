@@ -1,4 +1,0 @@
-# Adding a number to a tensor is not defined (yet).
-ignite:
-    Tensor t = ones(2, 2)
-    Tensor u = t + 1.0

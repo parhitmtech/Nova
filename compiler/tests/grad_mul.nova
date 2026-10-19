@@ -55,3 +55,27 @@ ignite:
         ui = ui + 1
     if (maxdiff < tol): print("PASS mul")
     else: print("FAIL mul")
+
+    # ── the same product, grad wrt B (accum_grad used to run inside the per-element loop) ──
+    requires_grad(muB)
+    Tensor muL2 = mse_loss(muA * muB, muT)
+    backward(muL2)
+    Tensor muGB = tensor_grad(muB)
+
+    maxdiff = 0.0
+    int vi = 0
+    while (vi < 2):
+        int vj = 0
+        while (vj < 2):
+            double origB = muB[vi, vj]
+            muB[vi, vj] = origB + eps
+            double lossPB = mse_loss(muA * muB, muT)[0, 0]
+            muB[vi, vj] = origB - eps
+            double lossMB = mse_loss(muA * muB, muT)[0, 0]
+            muB[vi, vj] = origB
+            d = dabs((lossPB - lossMB) / (2.0 * eps) - muGB[vi, vj])
+            if (d > maxdiff): maxdiff = d
+            vj = vj + 1
+        vi = vi + 1
+    if (maxdiff < tol): print("PASS mul wrt B")
+    else: print("FAIL mul wrt B")

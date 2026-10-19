@@ -431,15 +431,18 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         }
         token = lexer.GetToken();  // consume SELF → '.'
         string fieldPath = "";
-        while (token.token_type == DOT)
+        bool tensorField = false;
+        while (token.token_type == DOT && !tensorField)
         {
             token = lexer.GetToken();  // consume '.' → field segment
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
+            // a Tensor field ends the path: a '.' or '[' after it is a tensor postfix (self.W.T, self.W[0, 1])
+            tensorField = currentSelfFieldTypes.count(fieldPath) && currentSelfFieldTypes[fieldPath] == TYPE_TENSOR;
         }
         // self.field[index] (array read)
-        if (token.token_type == LBRAC)
+        if (token.token_type == LBRAC && !tensorField)
         {
             if (!currentSelfFieldSlots.count(fieldPath))
             {
@@ -659,9 +662,9 @@ static int emit_tensor_binary(TokenType op, int left, VarType leftType, int righ
     {
         return emit_tensor_op(TEN_MATMUL, name, {left, right}, {leftType, rightType}, {}, line, head, tracker);
     }
-    if (lT && rT && (op == PLUS || op == MINUS || op == MULT))
+    if (lT && rT && (op == PLUS || op == MINUS || op == MULT || op == DIV))
     {
-        TensorOp t = (op == PLUS) ? TEN_ADD : (op == MINUS) ? TEN_SUB : TEN_MUL;
+        TensorOp t = (op == PLUS) ? TEN_ADD : (op == MINUS) ? TEN_SUB : (op == MULT) ? TEN_MUL : TEN_DIV;
         return emit_tensor_op(t, name, {left, right}, {leftType, rightType}, {}, line, head, tracker);
     }
     if (op == MULT && lT != rT)  // number * tensor or tensor * number
@@ -677,6 +680,15 @@ static int emit_tensor_binary(TokenType op, int left, VarType leftType, int righ
         int s = coerce_float_double(right, rightType, TYPE_DOUBLE, head, tracker, line);
         int recip = emit_arith(OPERATOR_DIV, one, TYPE_DOUBLE, s, TYPE_DOUBLE, line, head, tracker);
         return emit_tensor_op(TEN_SCALE, name, {left, recip}, {TYPE_TENSOR, TYPE_DOUBLE}, {}, line, head, tracker);
+    }
+    if ((op == PLUS || op == MINUS) && lT != rT)
+    {
+        // t + k and k + t add k to every element; t - k = t + (-k); k - t = (-t) + k
+        int t = lT ? left : right, k = lT ? right : left;
+        VarType kt = lT ? rightType : leftType;
+        if (op == MINUS && lT) k = emit_negate(k, kt, line, head, tracker);
+        if (op == MINUS && rT) t= emit_negate(t, TYPE_TENSOR, line, head, tracker);
+        return emit_tensor_op(TEN_ADD_SCALAR, name, {t, k}, {TYPE_TENSOR, kt}, {}, line, head, tracker);
     }
     report_error(line, name + " is not defined between " + typeToString(leftType) + " and " + typeToString(rightType));
     lastExprType = TYPE_UNKNOWN;

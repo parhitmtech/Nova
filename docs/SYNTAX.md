@@ -207,9 +207,11 @@ Precedence, lowest to highest:
 | 7 | unary `-` |
 | 8 | call `f(x)`, index `t[i, j]`, attribute `a.b`, `t.T` |
 
-On tensors: `+ - * /` are element-wise (with the existing row broadcasting), `@` is matmul,
-`t[i, j, k]` reads or writes one element, `t.T` is the transpose, `t.shape` and `t.rank` give the
-shape. A tensor and a number can be combined: `lr * dW`.
+On tensors: `+ - * /` are element-wise on tensors of the same shape (an MxN matrix `+` or `-` a 1xN row
+broadcasts the row, e.g. a bias; `+` takes the row on either side), `@` is matmul, `t[i, j, k]` reads or
+writes one element, `t.T` is the transpose, `t.shape` and `t.rank` give the shape. These work on fields
+too: `self.W.T`, `layer.W[0, 1] = v`. A tensor and a number combine with `+ - *` in either order
+(`lr * dW`, `t + 1.0`, `1.0 - t`) and with `/` when the number is on the right.
 
 ## 9. Built-ins
 
@@ -290,8 +292,10 @@ commit.
    correct line numbers after an import.
 6. Tensor operators (done): `a @ b`, element-wise `a + b`, `a - b`, `a * b` (+ and - broadcast a 1xN
    row), `k * a` / `a * k` / `a / k` scale, `-a`; `t[i, j]` reads and `t[i, j] = v` writes one element;
-   `t.T`, `t.rows`, `t.cols`, `t.rank`; short names `zeros`, `ones`, `randn`, `xavier`, `reshape`. Not yet:
-   tensor plus a number, tensor / tensor, members on `self.W` (use `tensor_T(self.W)`), methods like `t.sum()`.
+   `t.T`, `t.rows`, `t.cols`, `t.rank`; short names `zeros`, `ones`, `randn`, `xavier`, `reshape`.
+   Follow-up (done): `t + k`, `k + t`, `t - k`, `k - t`; element-wise `a / b` (and `tensor_div`); postfixes
+   and element stores on fields (`self.W.T`, `self.W[i, j] = v`, `obj.W[0, 0]`); shape mismatches are a
+   runtime error instead of reading past the end. Not yet: `k / t`, methods like `t.sum()`.
 7. Constructors and modules (done): `Linear l = Linear(2, 4)` runs init (`Linear l` runs a no-argument
    init); `Point p = Point(3, 4)`; `orbit a.b` loads a/b.nova next to the file, else a.b.nova from the
    stdlib; `import` is an error. Field syntax (`int x` under `struct P:`) already came with step 3.

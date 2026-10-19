@@ -1,0 +1,5 @@
+# Element-wise ops on tensors of different shapes stop with a clear error (they used to read past the end).
+def main():
+    Tensor a = ones(2, 3)
+    Tensor b = ones(1, 2)
+    Tensor c = a * b

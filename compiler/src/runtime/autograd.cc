@@ -254,7 +254,7 @@ int ag_add(int a, int b)
                     {
                         for (int j = 0;j <  aC;j++)
                         {
-                            dB[j] = gOut[i * aC + j];
+                            dB[j] += gOut[i * aC + j];
                         }
                     }
                     accum_grad(b, dB);
@@ -370,8 +370,8 @@ int ag_mul(int a, int b)
                 for (int i = 0;i < size;i++)
                 {
                     dB[i] = gOut[i] * tensor_heap[a].data[i];
-                    accum_grad(b, dB);
                 }
+                accum_grad(b, dB);
             }
         }});
         tensor_retain(h);
@@ -405,6 +405,68 @@ int ag_scale(int a, double s)
         }});
         tensor_retain(h);
         tensor_retain(a);
+    }
+    return h;
+}
+
+int ag_add_scalar(int a, double k)
+{
+    int size = (int)tensor_heap[a].data.size();
+    int h = alloc_tensor_like(a);
+    for (int i = 0;i < size;i++)
+    {
+        tensor_heap[h].data[i] = tensor_heap[a].data[i] + k;
+    }
+    grad_heap_ensure(h);
+    if (grad_mode && grad_heap[a].requires_grad)
+    {
+        grad_heap[h].requires_grad = true;
+        grad_tape.push_back({"add_scalar", h, {a}, [a](int out) {
+            accum_grad(a, grad_heap[out].data);  // d(t + k)/dt = 1
+        }});
+        tensor_retain(h);
+        tensor_retain(a);
+    }
+    return h;
+}
+
+int ag_div(int a, int b)
+{
+    int size = (int)tensor_heap[a].data.size();
+    int h = alloc_tensor_like(a);
+    for (int i = 0;i < size;i++)
+    {
+        tensor_heap[h].data[i] = tensor_heap[a].data[i] / tensor_heap[b].data[i];
+    }
+    grad_heap_ensure(h);
+    if (grad_mode && (grad_heap[a].requires_grad || grad_heap[b].requires_grad))
+    {
+        grad_heap[h].requires_grad = true;
+        grad_tape.push_back({"div", h, {a, b}, [a, b, size](int out) {
+            vector<double>& gOut = grad_heap[out].data;
+            if (grad_heap[a].requires_grad)
+            {
+                vector<double> dA(size);
+                for (int i = 0;i < size;i++)
+                {
+                    dA[i] = gOut[i] / tensor_heap[b].data[i];
+                }
+                accum_grad(a, dA);
+            }
+            if (grad_heap[b].requires_grad)
+            {
+                vector<double> dB(size);
+                for (int i = 0;i < size; i++)
+                {
+                    double bv = tensor_heap[b].data[i];
+                    dB[i] = -gOut[i] * tensor_heap[a].data[i] / (bv * bv);
+                }
+                accum_grad(b, dB);
+            }
+        }});
+        tensor_retain(h);
+        tensor_retain(a);
+        tensor_retain(b);
     }
     return h;
 }

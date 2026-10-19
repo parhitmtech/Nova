@@ -11,6 +11,7 @@ using std::string;
 
 size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int line);
 void require_2d(int h, const char* op, int line);
+void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast);
 [[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
 bool slot_owns(int i);
@@ -27,6 +28,8 @@ int ten_sub(int a, int b);
 int ten_sum_axis0(int a);
 int ten_mul(int a, int b);
 int ten_scale(int a, double s);
+int ten_add_scalar(int a, double k);
+int ten_div(int a, int b);
 int ten_transpose(int a);
 int ten_clip(int a, double lo, double hi);
 int ten_relu(int a);

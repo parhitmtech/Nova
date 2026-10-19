@@ -227,14 +227,19 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_ADD: 
                 {
+                    // + commutes, so a row on the left (b + x) moves to the right, the side that broadcasts
+                    int x = mem[a[0]], y = mem[a[1]];
+                    if (tensor_heap[x].rows == 1 && tensor_heap[y].rows > 1) std::swap(x, y);
+                    require_elementwise(x, y, "+", pc->line_no, true);
                     if (grad_mode)
-                        res = ag_add(mem[a[0]], mem[a[1]]);
+                        res = ag_add(x, y);
                     else
-                        res = ten_add(mem[a[0]], mem[a[1]]); 
+                        res = ten_add(x, y); 
                     break;
                 }
                 case TEN_SUB:
                 { 
+                    require_elementwise(mem[a[0]], mem[a[1]], "-", pc->line_no, true);
                     if (grad_mode)
                         res = ag_sub(mem[a[0]], mem[a[1]]);
                     else
@@ -243,6 +248,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_MUL: 
                 {
+                    require_elementwise(mem[a[0]], mem[a[1]], "*", pc->line_no, false);
                     if (grad_mode)
                         res = ag_mul(mem[a[0]], mem[a[1]]);
                     else
@@ -255,6 +261,31 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                         res = ag_scale(mem[a[0]], getScalar(1));
                     else
                         res = ten_scale(mem[a[0]], getScalar(1)); 
+                    break;
+                }
+                case TEN_ADD_SCALAR:
+                {
+                    if (grad_mode)
+                    {
+                        res = ag_add_scalar(mem[a[0]], getScalar(1));
+                    }
+                    else
+                    {
+                        res = ten_add_scalar(mem[a[0]], getScalar(1));
+                    }
+                    break;
+                }
+                case TEN_DIV:
+                {
+                    require_elementwise(mem[a[0]], mem[a[1]], "/", pc->line_no, false);
+                    if (grad_mode)
+                    {
+                        res = ag_div(mem[a[0]], mem[a[1]]);
+                    }
+                    else
+                    {
+                        res = ten_div(mem[a[0]], mem[a[1]]);
+                    }
                     break;
                 }
                 case TEN_T: 

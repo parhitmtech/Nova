@@ -63,6 +63,7 @@ extern const map<string, TensorOp> TENSOR_OP_MAP = {
     {"tensor_add", TEN_ADD},
     {"tensor_sub", TEN_SUB},
     {"tensor_mul", TEN_MUL},
+    {"tensor_div", TEN_DIV},
     {"tensor_scale", TEN_SCALE},
     {"tensor_T", TEN_T},
     {"tensor_sum", TEN_SUM},

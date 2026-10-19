@@ -1,0 +1,58 @@
+# Gradients of element-wise a / b, against central finite differences, with respect to a and to b.
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
+
+def loss(Tensor a, Tensor b, Tensor t) -> double:
+    return mse_loss(a / b, t)[0, 0]
+
+def main():
+    double eps = 0.0001
+    Tensor a = zeros(2, 2)
+    a[0, 0] = 1.0
+    a[0, 1] = -2.0
+    a[1, 0] = 0.5
+    a[1, 1] = 3.0
+    Tensor b = zeros(2, 2)
+    b[0, 0] = 0.8
+    b[0, 1] = 1.5
+    b[1, 0] = -1.2
+    b[1, 1] = 2.5
+    Tensor t = zeros(2, 2)
+    t[0, 1] = 0.2
+    t[1, 1] = -0.4
+
+    requires_grad(a)
+    requires_grad(b)
+    backward(mse_loss(a / b, t))
+    Tensor ga = tensor_grad(a)
+    Tensor gb = tensor_grad(b)
+
+    double worstA = 0.0
+    double worstB = 0.0
+    int i = 0
+    int j = 0
+    for (i = 0 ; i < 2 ; i += 1):
+        for (j = 0 ; j < 2 ; j += 1):
+            double orig = a[i, j]
+            a[i, j] = orig + eps
+            double lp = loss(a, b, t)
+            a[i, j] = orig - eps
+            double lm = loss(a, b, t)
+            a[i, j] = orig
+            double d = dabs((lp - lm) / (2.0 * eps) - ga[i, j])
+            if (d > worstA): worstA = d
+
+            orig = b[i, j]
+            b[i, j] = orig + eps
+            lp = loss(a, b, t)
+            b[i, j] = orig - eps
+            lm = loss(a, b, t)
+            b[i, j] = orig
+            d = dabs((lp - lm) / (2.0 * eps) - gb[i, j])
+            if (d > worstB): worstB = d
+    if (worstA < 0.001): print("PASS div wrt a")
+    else: print("FAIL div wrt a")
+    if (worstB < 0.001): print("PASS div wrt b")
+    else: print("FAIL div wrt b")

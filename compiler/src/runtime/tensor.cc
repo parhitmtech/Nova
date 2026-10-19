@@ -120,6 +120,21 @@ void require_2d(int h, const char* op, int line)
     }
 }
 
+// Element-wise ops need equal shapes; + and - also accept an MxN matrix with a 1xN row on the right (a bias).
+void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast)
+{
+    const Tensor& A = tensor_heap[a];
+    const Tensor& B = tensor_heap[b];
+    if (A.shape == B.shape) return;
+    if (rowBroadcast && A.ndim() <= 2 && B.ndim() <= 2 && A.cols == B.cols && B.rows == 1) return;
+    auto str = [](const Tensor& T) {
+        std::string s = "(";
+        for (size_t k = 0;k < T.shape.size();k++) s += (k ? ", " : "") + std::to_string(T.shape[k]);
+        return s + ")";
+    };
+    tensor_shape_error(line, std::string("'") + op + "' needs tensors of the same shape, got " + str(A) + " and " + str(B));
+}
+
 // tensor_reshape(t, d0, d1, ...): a new tensor with the same elements in the same order. One dimension
 // may be -1 and is inferred from the element count.
 int ten_reshape(int a, std::vector<int> shape, int line)
@@ -231,10 +246,10 @@ const char* tensor_op_signature(TensorOp op)
         case TEN_ALLOC: case TEN_XAVIER: case TEN_RAND_INT:
         case TEN_PROGRESS_BAR:                                    return "nn";
         case TEN_GET: case TEN_SET: case TEN_RESHAPE:             return "Tn*";
-        case TEN_MATMUL: case TEN_ADD: case TEN_SUB: case TEN_MUL:
+        case TEN_MATMUL: case TEN_ADD: case TEN_SUB: case TEN_MUL: case TEN_DIV:
         case TEN_MSE_LOSS: case TEN_MSE_GRAD: case TEN_BCE_GRAD:
         case TEN_CE_LOSS: case TEN_CE_GRAD:                       return "TT";
-        case TEN_SCALE: case TEN_GET_ROW: case TEN_GRAD_STEP:
+        case TEN_SCALE: case TEN_GET_ROW: case TEN_GRAD_STEP: case TEN_ADD_SCALAR:
         case TEN_DIM:                                             return "Tn";
         case TEN_CLIP: case TEN_SLICE_ROWS:                       return "Tnn";
         case TEN_SET_ROW:                                         return "TnT";
@@ -381,6 +396,28 @@ int ten_scale(int a, double s)
     int h = alloc_tensor_like(a);
     for (int i = 0; i < sz; i++)
         tensor_heap[h].data[i] = tensor_heap[a].data[i] * s;
+    return h;
+}
+
+int ten_add_scalar(int a, double k)
+{
+    int sz = (int)tensor_heap[a].data.size();
+    int h = alloc_tensor_like(a);
+    for (int i = 0; i < sz; i++)
+    {
+        tensor_heap[h].data[i] = tensor_heap[a].data[i] + k;
+    }
+    return h;
+}
+
+int ten_div(int a, int b)
+{
+    int sz = (int)tensor_heap[a].data.size();
+    int h = alloc_tensor_like(a);
+    for (int i = 0; i < sz; i++)
+    {
+        tensor_heap[h].data[i] = tensor_heap[a].data[i] / tensor_heap[b].data[i];
+    }
     return h;
 }
 
