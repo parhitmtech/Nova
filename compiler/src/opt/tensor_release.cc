@@ -225,6 +225,23 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
         get_successors(n, succs);
         for (auto sx : succs) preds[sx].push_back(n);
     }
+    // Unreachable code (e.g. the "skip the else" jump after an if-body that ends in break,
+    // continue or return) is not a real predecessor: as one, it would assign nothing and wipe out
+    // every slot at the join, so no edge release could happen anywhere after it.
+    std::unordered_set<struct InstructionNode*> reachable;
+    {
+        std::vector<struct InstructionNode*> work = {bodyHead};
+        reachable.insert(bodyHead);
+        while (!work.empty())
+        {
+            struct InstructionNode* n = work.back();
+            work.pop_back();
+            std::vector<struct InstructionNode*> succs;
+            get_successors(n, succs);
+            for (auto sx : succs)
+                if (reachable.insert(sx).second) work.push_back(sx);
+        }
+    }
     std::unordered_map<struct InstructionNode*, std::unordered_set<int>> assignedOut;
     std::unordered_set<struct InstructionNode*> computed;
     bool daChanged = true;
@@ -239,7 +256,7 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
                 bool first = true;
                 for (auto p : preds[n])
                 {
-                    if (!computed.count(p)) continue;  // not visited yet = "everything"
+                    if (!computed.count(p) || !reachable.count(p)) continue;  // not visited yet = "everything"
                     if (first) { in = assignedOut[p]; first = false; }
                     else 
                     {

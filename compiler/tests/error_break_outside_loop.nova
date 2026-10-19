@@ -1,0 +1,4 @@
+# break and continue only make sense inside a loop.
+ignite:
+    int x = 1
+    if (x > 0): break

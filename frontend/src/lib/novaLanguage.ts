@@ -37,6 +37,8 @@ export function registerNovaLanguage(monaco: typeof MonacoType) {
       'self',
       'import',
       'ignite',
+      'break',
+      'continue',
       'pass',
       'and',
       'or',

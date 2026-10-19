@@ -1,0 +1,64 @@
+# Syntax step 4: break leaves the innermost loop, continue starts its next iteration
+# (while: the condition; for: the update, then the condition; do-while: the condition).
+ignite:
+    # while: skip odd numbers, stop at 8
+    int i = 0
+    int sum = 0
+    while (i < 100):
+        i += 1
+        if (i % 2 == 1): continue
+        if (i > 8): break
+        sum += i
+    print(sum)
+
+    # for: continue still runs the update (no endless loop), break stops early
+    int total = 0
+    int j = 0
+    for (j = 0 ; j < 10 ; j += 1):
+        if (j == 3): continue
+        if (j == 6): break
+        total += j
+    print(total)
+
+    # do-while: continue goes to the condition
+    int k = 0
+    int seen = 0
+    do:
+        k += 1
+        if (k == 2): continue
+        seen += k
+    while (k < 4)
+    print(seen)
+
+    # nested loops: break leaves only the inner loop
+    int pairs = 0
+    int a = 0
+    while (a < 3):
+        int b = 0
+        while (true):
+            if (b == a): break
+            pairs += 1
+            b += 1
+        a += 1
+    print(pairs)
+
+    # a switch is not a loop: break inside a case leaves the enclosing loop
+    int n = 0
+    while (n < 10):
+        switch (n):
+            case 2:
+                break
+            default:
+                n += 1
+    print(n)
+
+    # tensors made inside a loop are still freed when break or continue skips the rest of the body
+    int before = tensor_live_count()
+    int m = 0
+    while (m < 50):
+        int t = tensor_ones(2, 2)
+        m += 1
+        if (m == 20): break
+        if (m % 3 == 0): continue
+        t = tensor_add(t, t)
+    print(tensor_live_count() - before)

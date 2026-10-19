@@ -336,6 +336,8 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     // token = ';'
 }
 
+static void parse_loop_jump(struct InstructionNode*& head, struct InstructionNode*& tracker);
+
 void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE || 
@@ -380,10 +382,14 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
     {
         parse_for_statement(head, tracker);
     } 
-    else if (token.token_type == SWITCH) 
+    else if (token.token_type == SWITCH)
     {
         parse_switch_statement(head, tracker);
-    } 
+    }
+    else if (token.token_type == BREAK || token.token_type == CONTINUE)
+    {
+        parse_loop_jump(head, tracker);
+    }
     else if (token.token_type == RETURN) 
     {
         if (!insideFunction) 
@@ -1028,6 +1034,36 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     }
 }
 
+// The loops enclosing the statement being parsed, innermost last: where 'break' jumps (just past
+// the loop) and where 'continue' jumps (the next iteration: while's condition, for's update,
+// do-while's condition). A 'switch' is not a loop: Nova's cases never fall through, so a 'break'
+// inside a switch leaves the enclosing loop.
+struct LoopTargets
+{
+    struct InstructionNode* breakTo;
+    struct InstructionNode* continueTo;
+};
+static vector<LoopTargets> g_loops;
+
+// break / continue: one jump to the innermost loop's exit or next iteration.
+static void parse_loop_jump(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    bool isBreak = (token.token_type == BREAK);
+    if (g_loops.empty())
+    {
+        report_error(token.line_no, string("'") + (isBreak ? "break" : "continue") + "' is only allowed inside a loop");
+    }
+    else
+    {
+        struct InstructionNode* jmp = new InstructionNode();
+        jmp->line_no = token.line_no;
+        jmp->type = JMP;
+        jmp->jmp_inst.target = isBreak ? g_loops.back().breakTo : g_loops.back().continueTo;
+        append(head, tracker, jmp);
+    }
+    token = lexer.GetToken();  // the ';' ending the statement
+}
+
 void parse_while_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     struct InstructionNode* noOpNode = new InstructionNode(); noOpNode->type = NOOP;
@@ -1040,7 +1076,9 @@ void parse_while_statement(struct InstructionNode*& head, struct InstructionNode
     parse_condition(head, tracker, noOpNode);
     expect_condition_rparen("while");         // token is now '{'
     token = lexer.GetToken();
+    g_loops.push_back({noOpNode, condStart});
     while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+    g_loops.pop_back();
     struct InstructionNode* jmpNode = new InstructionNode();
     jmpNode->line_no = token.line_no;
     jmpNode->type = JMP; jmpNode->jmp_inst.target = condStart;
@@ -1063,11 +1101,18 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
     token = lexer.GetToken();  // consume '{'
     token = lexer.GetToken();  // first token inside body
 
+    // 'continue' goes to the condition test after the body
+    struct InstructionNode* condLabel = new InstructionNode();
+    condLabel->line_no = token.line_no;
+    condLabel->type = NOOP;
+    g_loops.push_back({noOpNode, condLabel});
     while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
     {
         parse_statement(head, tracker);
         token = lexer.GetToken();
     }
+    g_loops.pop_back();
+    append(head, tracker, condLabel);
     // token = '}'
 
     token = lexer.GetToken();  // must be WHILE
@@ -1113,7 +1158,9 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
     if (token.token_type == ID && symbolTable.count(token.lexeme)) {
         parse_assignment_for_statement(updateNode, updateTracker);
         token = lexer.GetToken(); token = lexer.GetToken();
+        g_loops.push_back({noOpNode, updateNode});  // 'continue' runs the update, then the condition
         while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+        g_loops.pop_back();
         struct InstructionNode* jmpNode = new InstructionNode();
         jmpNode->line_no = token.line_no;
         jmpNode->type = JMP; jmpNode->jmp_inst.target = condStart;

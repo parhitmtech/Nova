@@ -34,6 +34,7 @@ string reserved[] = {
     "TRUE", "FALSE",
     // struct and class keywords
     "STRUCT", "CLASS", "EXTENDS", "SELF", "IMPORT",
+    "BREAK", "CONTINUE",
     // arithmetic
     "PLUS", "MINUS", "DIV", "MULT",
     // punctuation
@@ -57,13 +58,6 @@ string reserved[] = {
     exit(1);
 }
 
-// FOR IF ELIF WHILE SWITCH CASE DEFAULT      (7)
-// INPUT ARRAY PRINT                          (3)
-// DEF RETURN ELSE                            (3)
-// AND OR NOT                                 (3)
-// INT_TYPE BOOL_TYPE STRING_TYPE             (3)  ← new
-// TRUE FALSE                                 (2)  ← new
-#define KEYWORDS_COUNT 29
 
 void Token::Print()
 {
@@ -419,10 +413,13 @@ int LexicalAnalyzer::FindKeywordIndex(string s)
         // 22–23  ← new bool literals
         "true", "false",
         // 24 - struct keyword
-        "struct", "class", "extends", "self", "import"
+        "struct", "class", "extends", "self", "import",
+        "break", "continue"
     };
 
-    for (int i = 0; i < KEYWORDS_COUNT; i++) {
+    // the count comes from the array, so adding a keyword cannot leave it out
+    const int keywordCount = (int)(sizeof(keyword) / sizeof(keyword[0]));
+    for (int i = 0; i < keywordCount; i++) {
         if (s == keyword[i]) {
             return i + 1;  // +1 because END_OF_FILE = 0
         }

@@ -31,6 +31,7 @@ typedef enum { END_OF_FILE = 0,
     FLOAT_TYPE, DOUBLE_TYPE,
     TRUE, FALSE,
     STRUCT, CLASS, EXTENDS, SELF, IMPORT,
+    BREAK, CONTINUE,
 
     // operators 
     PLUS, MINUS, DIV, MULT,

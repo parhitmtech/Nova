@@ -282,7 +282,8 @@ commit.
    imported file's `ignite` block does not run.
 3. Indentation (done): `:` blocks with indented bodies, one-line bodies, `pass`; no braces, no
    semicolons, `#` comments only; the REPL reads a block until a blank line.
-4. `break` and `continue`.
+4. `break` and `continue` (done): in `for`, `while` and `do`-`while`; inside a `switch` they act on the
+   enclosing loop (cases never fall through, so a switch needs no `break` of its own).
 5. `Tensor` / `Tensor<dtype>` as a real type (no more `int` tensors).
 6. Tensor operators and methods: `+ - * / @` on tensors, `t[i, j]`, `t.T`, `t.shape`, short names.
 7. Constructors, `struct` / `class` field syntax, `orbit`.

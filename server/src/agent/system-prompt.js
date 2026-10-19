@@ -144,6 +144,21 @@ ignite:
     while (i < 5)
 \`\`\`
 
+### break / continue
+
+\`\`\`nova
+ignite:
+    int i = 0
+    while (i < 100):
+        i += 1
+        if (i % 2 == 1): continue   # skip to the next iteration
+        if (i > 8): break           # leave the loop
+        print(i)
+\`\`\`
+
+- Work in \`while\`, \`for\` (continue still runs the update) and \`do ... while\` (continue goes to the condition)
+- Using them outside a loop is a compile error
+
 ### switch / case / default
 
 \`\`\`nova
@@ -159,7 +174,7 @@ ignite:
 \`\`\`
 
 - Case values must be integer literals
-- No \`break\` needed — execution stops after matching case
+- No \`break\` needed — execution stops after matching case. A \`break\` inside a case leaves the enclosing loop, not just the switch
 
 ---
 
