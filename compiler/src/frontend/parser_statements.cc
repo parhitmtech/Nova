@@ -9,11 +9,7 @@
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     VarType declType = TYPE_UNKNOWN;
-    if      (token.token_type == INT_TYPE)    declType = TYPE_INT;
-    else if (token.token_type == BOOL_TYPE)   declType = TYPE_BOOL;
-    else if (token.token_type == STRING_TYPE) declType = TYPE_STRING;
-    else if (token.token_type == FLOAT_TYPE) declType = TYPE_FLOAT;
-    else if (token.token_type == DOUBLE_TYPE) declType = TYPE_DOUBLE;
+    if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) declType = type_of_keyword(token.token_type);
 
     token = lexer.GetToken();
     string name = token.lexeme;
@@ -23,6 +19,33 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
     {
         report_error(nameLine, "redeclaration of '" + name + "'");
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+        return;
+    }
+
+    // A declaration without a value ("Tensor h", assigned later, e.g. inside a loop). Numbers start
+    // at 0; a Tensor starts as the invalid handle -1, so using it before assigning one is a clear
+    // runtime error instead of silently reading tensor 0.
+    if (lexer.peek(1).token_type == SEMICOLON)
+    {
+        if (declType == TYPE_STRING)
+            report_error(nameLine, "string '" + name + "' needs an initial value, e.g. string " + name + " = \"\"");
+        if (declType == TYPE_FLOAT)       floatSymbolTable[name]  = alloc_float_slot();
+        else if (declType == TYPE_DOUBLE) doubleSymbolTable[name] = alloc_double_slot();
+        else                              symbolTable[name]       = alloc_slot();
+        typeTable[name] = declType;
+        if (declType == TYPE_TENSOR)
+        {
+            int invalid = alloc_slot();
+            mem[invalid] = -1;
+            struct InstructionNode* node = new InstructionNode();
+            node->line_no = nameLine;
+            node->type = ASSIGN;
+            node->assign_inst.left_hand_side_index = symbolTable[name];
+            node->assign_inst.operand1_index       = invalid;
+            node->assign_inst.op                   = OPERATOR_NONE;
+            append(head, tracker, node);
+        }
+        token = lexer.GetToken();  // ';'
         return;
     }
 
@@ -128,9 +151,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
 
     int resultIdx = parse_expression(head, tracker);
     VarType rhsType = lastExprType;
-    // TYPE_TENSOR is allowed on the RHS of int declarations — tensor handles are integers
-    bool tensorToInt = (rhsType == TYPE_TENSOR && declType == TYPE_INT);
-    if (rhsType != TYPE_UNKNOWN && rhsType != declType && !tensorToInt)
+    if (!types_compatible(rhsType, declType))
     {
         report_error(nameLine, "cannot assign " + typeToString(rhsType) + " to " + typeToString(declType) + " variable '" + name + "'");
     }
@@ -141,10 +162,8 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
     node->assign_inst.operand1_index       = resultIdx;
     node->assign_inst.op                   = OPERATOR_NONE;
     append(head, tracker, node);
-    // Propogate tensor_slot-ness through a plain copy: "int x = someTensorVar ;"
-    // (tensorToInt covers "int x = tensor_zeros(...)" directly, but resultIdx is already tagged by 
-    // parse_tensor_call in that  case too, so this one check covers both - a fresh tensor-call result
-    // and a copy of an existing one).
+    // Propagate tensor-slot-ness through a plain copy: "Tensor x = someTensorVar" (a fresh tensor-call
+    // result is already tagged by parse_tensor_call, so this one check covers both).
     if (g_tensorSlots.count(resultIdx)) g_tensorSlots.insert(symbolTable[name]);
 }
 
@@ -159,11 +178,7 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     while (true)
     {
         VarType vt = TYPE_UNKNOWN;
-        if (token.token_type == INT_TYPE) vt = TYPE_INT;
-        else if (token.token_type == BOOL_TYPE) vt = TYPE_BOOL;
-        else if (token.token_type == STRING_TYPE) vt = TYPE_STRING;
-        else if (token.token_type == FLOAT_TYPE) vt = TYPE_FLOAT;
-        else if (token.token_type == DOUBLE_TYPE) vt = TYPE_DOUBLE;
+        if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) vt = type_of_keyword(token.token_type);
 
         token = lexer.GetToken();  // variable name
         string vname = token.lexeme;
@@ -340,9 +355,7 @@ static void parse_loop_jump(struct InstructionNode*& head, struct InstructionNod
 
 void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE || 
-        token.token_type == STRING_TYPE || token.token_type == FLOAT_TYPE || 
-        token.token_type == DOUBLE_TYPE) 
+    if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) 
     {
         // multi-return: TYPE ID, TYPE ID = func() ;    
         if (lexer.peek(2).token_type == COMMA)
@@ -401,11 +414,14 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         {
             token = lexer.GetToken();
             vector<int> retExprs;
+            vector<VarType> retExprTypes;
             retExprs.push_back(parse_expression(head, tracker));
+            retExprTypes.push_back(lastExprType);
             while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
+                retExprTypes.push_back(lastExprType);
             }
             int nExpected = currentFuncRetSlots.empty() ? 1 : (int)currentFuncRetSlots.size();
             if ((int)retExprs.size() != nExpected)
@@ -416,6 +432,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             {
                 int rSlot = (i < (int)currentFuncRetSlots.size()) ? currentFuncRetSlots[i] : currentFuncRetIdx;
                 VarType rt = (i < (int)currentFuncRetTypes.size()) ? currentFuncRetTypes[i] : currentFuncRetType;
+                check_return_type(retExprTypes[i], rt, token.line_no);
                 struct InstructionNode* an = new InstructionNode();
                 an->line_no = token.line_no;
                 if (rt == TYPE_FLOAT)
@@ -511,6 +528,9 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         }
         int slot = currentSelfFieldSlots[fieldPath];
         VarType fType = currentSelfFieldTypes[fieldPath];
+        if (fType != TYPE_CLASS && !types_compatible(lastExprType, fType))
+            report_error(token.line_no, "cannot assign " + typeToString(lastExprType) + " to " + typeToString(fType) +
+                         " field '" + fieldPath + "' of class '" + currentSelfClassName + "'");
         struct InstructionNode* node = new InstructionNode();
         node->line_no = token.line_no;
         if (fType == TYPE_FLOAT)
@@ -593,6 +613,9 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                 }
                 int slot = classFieldSlots[name][memberName];
                 VarType fType = classFieldTypes[name][memberName];
+                if (fType != TYPE_CLASS && !types_compatible(lastExprType, fType))
+                    report_error(token.line_no, "cannot assign " + typeToString(lastExprType) + " to " + typeToString(fType) +
+                                 " field '" + memberName + "' of class '" + varClassType[name] + "'");
                 struct InstructionNode* node = new InstructionNode();
                 node->line_no = token.line_no;
                 if (fType == TYPE_FLOAT)
@@ -947,8 +970,7 @@ void parse_assignment_statement(struct InstructionNode*& head, struct Instructio
     // Infer type from RHS for auto-declared variables (no explicit type annotation)
     if (lhsType == TYPE_UNKNOWN && rhsType != TYPE_UNKNOWN)
         typeTable[lhs] = lhsType = rhsType;
-    bool tensorToInt = (rhsType == TYPE_TENSOR && lhsType == TYPE_INT);
-    if (lhsType != TYPE_UNKNOWN && rhsType != TYPE_UNKNOWN && lhsType != rhsType && !tensorToInt)
+    if (!types_compatible(rhsType, lhsType))
         report_error(lhs_line, "cannot assign " + typeToString(rhsType) + " to " + typeToString(lhsType) + " variable '" + lhs + "'");
 
     struct InstructionNode* node = new InstructionNode();

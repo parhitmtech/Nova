@@ -2,7 +2,7 @@
 # tensor-free pass used to treat it as a predecessor, so no branch after it freed tensors
 # (this leaked one tensor per even k).
 def f(int k) -> int:
-    int t = tensor_ones(2, 2)
+    Tensor t = tensor_ones(2, 2)
     if (k > 50): return 1
     if (k % 2 == 0): return 0
     t = tensor_add(t, t)

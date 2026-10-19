@@ -57,6 +57,25 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
             };
 
+            // Every tensor argument must be a live handle. A Tensor declared without a value holds -1,
+            // and a freed one is marked freed: either is a clear error here, not a read outside tensor_heap.
+            {
+                const char* sig = tensor_op_signature(tc.op);
+                int len = (int)strlen(sig);
+                bool repeat = (len > 0 && sig[len - 1] == '*');
+                int fixed = repeat ? len - 1 : len;
+                for (int i = 0; i < tc.num_args; i++)
+                {
+                    char want = (i < fixed) ? sig[i] : (repeat ? sig[fixed - 1] : 0);
+                    if (want == 'T' && !tensor_is_live(mem[a[i]]))
+                    {
+                        fprintf(stderr, "Runtime error at line %d: tensor argument %d is not set or was already "
+                                        "freed (handle %d)\n", pc->line_no, i + 1, mem[a[i]]);
+                        exit(1);
+                    }
+                }
+            }
+
             switch (tc.op)
             {
                 case TEN_ALLOC:

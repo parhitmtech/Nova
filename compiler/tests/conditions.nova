@@ -50,7 +50,7 @@ ignite:
     else: print(0)
 
     # loop conditions with calls, tensors and grouping
-    int t = tensor_zeros(1, 4)
+    Tensor t = tensor_zeros(1, 4)
     int k = 0
     while (k < tensor_cols(t) and not (k == 2)):
         k += 1

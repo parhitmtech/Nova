@@ -10,27 +10,27 @@ ignite:
     double d = 0.0
 
     # ── sub: C = A - B, grad wrt A ─────────────────────────────────────────
-    int suA = tensor_zeros(2, 2)
+    Tensor suA = tensor_zeros(2, 2)
     tensor_set(suA, 0, 0, 1.0)
     tensor_set(suA, 0, 1, (0.0 - 2.0))
     tensor_set(suA, 1, 0, 0.5)
     tensor_set(suA, 1, 1, 3.0)
-    int suB = tensor_zeros(2, 2)
+    Tensor suB = tensor_zeros(2, 2)
     tensor_set(suB, 0, 0, 0.3)
     tensor_set(suB, 0, 1, 1.0)
     tensor_set(suB, 1, 0, (0.0 - 1.5))
     tensor_set(suB, 1, 1, 0.7)
-    int suT = tensor_zeros(2, 2)
+    Tensor suT = tensor_zeros(2, 2)
     tensor_set(suT, 0, 0, 0.1)
     tensor_set(suT, 0, 1, 0.2)
     tensor_set(suT, 1, 0, (0.0 - 0.3))
     tensor_set(suT, 1, 1, 0.4)
 
     requires_grad(suA)
-    int suY = tensor_sub(suA, suB)
-    int suL = mse_loss(suY, suT)
+    Tensor suY = tensor_sub(suA, suB)
+    Tensor suL = mse_loss(suY, suT)
     backward(suL)
-    int suG = tensor_grad(suA)
+    Tensor suG = tensor_grad(suA)
 
     maxdiff = 0.0
     int si = 0
@@ -39,12 +39,12 @@ ignite:
         while (sj < 2):
             double orig = tensor_get(suA, si, sj)
             tensor_set(suA, si, sj, orig + eps)
-            int yP3 = tensor_sub(suA, suB)
-            int lP3 = mse_loss(yP3, suT)
+            Tensor yP3 = tensor_sub(suA, suB)
+            Tensor lP3 = mse_loss(yP3, suT)
             double lossP = tensor_get(lP3, 0, 0)
             tensor_set(suA, si, sj, orig - eps)
-            int yM3 = tensor_sub(suA, suB)
-            int lM3 = mse_loss(yM3, suT)
+            Tensor yM3 = tensor_sub(suA, suB)
+            Tensor lM3 = mse_loss(yM3, suT)
             double lossM = tensor_get(lM3, 0, 0)
             tensor_set(suA, si, sj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

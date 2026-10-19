@@ -6,27 +6,27 @@
 import <novatorch.nn>
 
 class Holder:
-    int t
+    Tensor t
 
     def init():
-        self.t = 0
+        pass
 
-    def set(int x):
+    def set(Tensor x):
         self.t = x
 
-    def get() -> int:
+    def get() -> Tensor:
         return self.t
 
-    def doubled() -> int:
+    def doubled() -> Tensor:
         return tensor_add(self.t, self.t)
 
 ignite:
-    int base = tensor_ones(2, 2)
+    Tensor base = tensor_ones(2, 2)
     Holder a
     Holder b
     int i = 0
     while (i < 50):
-        int x = tensor_add(base, base)
+        Tensor x = tensor_add(base, base)
         a.set(x)
         b.set(a.doubled())
         i = i + 1
@@ -38,7 +38,7 @@ ignite:
     # Tanh.backward calls tensor_rows/tensor_cols; their int results used to be "released" as if they
     # were tensor handles.
     Tanh th
-    int y = th.forward(base)
-    int g = th.backward(base)
+    Tensor y = th.forward(base)
+    Tensor g = th.backward(base)
     print(tensor_get(g, 0, 0))
     print(tensor_get(base, 0, 0))

@@ -24,6 +24,7 @@
 using namespace std;
 
 extern unordered_set<InstructionNode*> pure_functions;
+extern map<string, vector<int>> functionReturnSlots;  // parser_state.cc: each function's return slots
 
 // ── Compiler-inserted tensor frees ──────────────────────────────────────────
 //
@@ -201,7 +202,10 @@ static bool is_object_slot(int s)
     return g_fieldSlots.count(s)  || g_selfSlots.count(s);
 }
 
-static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
+// ownReturn: this function's own return slots. They hand their tensors to the caller (which releases
+// them after copying), so they are never released here; RET names only the first of them, so liveness
+// alone would think a second return value dead right after it is computed.
+static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead, const std::unordered_set<int>& ownReturn)
 {
     if (bodyHead == nullptr || g_tensorSlots.empty()) return ;
     LivenessResult lr = compute_liveness(bodyHead);
@@ -293,7 +297,7 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
         const auto& assigned = assignedOut[n];
         for (int s : out)
         {
-            if (!g_tensorSlots.count(s) || is_object_slot(s) || !assigned.count(s)) continue;
+            if (!g_tensorSlots.count(s) || is_object_slot(s) || ownReturn.count(s) || !assigned.count(s)) continue;
             if (!inFall.count(s)) ep.fallRel.push_back(s);  // dies on fall-through
             if (!inJump.count(s)) ep.jumpRel.push_back(s);  // dies on the jump
         }
@@ -310,14 +314,14 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead)
         std::vector<int> toRelease;
         for (int s : defs)
         {
-            if (g_tensorSlots.count(s) && !is_object_slot(s) && !liveOut.count(s))
+            if (g_tensorSlots.count(s) && !is_object_slot(s) && !ownReturn.count(s) && !liveOut.count(s))
             {
                 toRelease.push_back(s);
             }
         }
         for (int s : uses)
         {
-            if (g_tensorSlots.count(s) && !is_object_slot(s) && !liveOut.count(s) && 
+            if (g_tensorSlots.count(s) && !is_object_slot(s) && !ownReturn.count(s) && !liveOut.count(s) && 
                 std::find(toRelease.begin(), toRelease.end(), s) == toRelease.end())
             {
                 toRelease.push_back(s);
@@ -436,8 +440,16 @@ void insert_tensor_releases(struct InstructionNode* program)
     {
         pure_functions.erase(fhead);
     }
+    // each function body's own return slots (all of them, for a function returning several values)
+    std::unordered_map<struct InstructionNode*, std::unordered_set<int>> ownReturns;
+    for (auto& kv : functionTable)
+    {
+        auto rs = functionReturnSlots.find(kv.first);
+        if (kv.second != nullptr && rs != functionReturnSlots.end())
+            ownReturns[kv.second].insert(rs->second.begin(), rs->second.end());
+    }
     for (auto bodyHead : allBodies)
     {
-        insert_tensor_releases_in_body(bodyHead);
+        insert_tensor_releases_in_body(bodyHead, ownReturns[bodyHead]);
     }
 }

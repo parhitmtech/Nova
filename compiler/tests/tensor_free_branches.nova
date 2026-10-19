@@ -4,12 +4,12 @@
 # A wrong release here would instead free a tensor too early and stop with a "freed tensor handle" error,
 # so this test also guards against over-releasing. Keep must survive the loop untouched
 ignite:
-    int keep = tensor_ones(2, 2)
+    Tensor keep = tensor_ones(2, 2)
     double acc = 0.0
     int i = 0
     while (i < 6):
-        int t = tensor_add(keep, keep)
-        int u = tensor_add(keep, keep)
+        Tensor t = tensor_add(keep, keep)
+        Tensor u = tensor_add(keep, keep)
         if (i < 3):
             acc = acc + tensor_get(t, 0, 0)
         if (i > 3):

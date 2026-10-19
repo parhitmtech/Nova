@@ -4,7 +4,14 @@
  * Do not share this file with anyone
  */
 // Built-in calls: tensor_* operations, hf.* (HuggingFace) and sol.* (SOL cluster). Split out of parser.cc.
+#include <cstring>
 #include "parser_internal.h"
+#include "tensor_ops.h"
+
+static bool is_number_type(VarType t)
+{
+    return t == TYPE_INT || t == TYPE_FLOAT || t == TYPE_DOUBLE || t == TYPE_BOOL;
+}
 
 int parse_tensor_call(const string& name, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
@@ -12,7 +19,7 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
     token = lexer.GetToken();  // consume '(' → token is now first arg (or ')')
 
     // collect arguments
-    int argSlots[8]; VarType argTypes[8]; int numArgs = 0;
+    int argSlots[8]; VarType argTypes[8]; string argNames[8]; int numArgs = 0;
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
     {
         if (numArgs == 8)
@@ -21,6 +28,9 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
             while (token.token_type != RPAREN && token.token_type != END_OF_FILE) token = lexer.GetToken();
             break;
         }
+        // a plain variable argument is named in type errors
+        TokenType after = lexer.peek(1).token_type;
+        argNames[numArgs] = (token.token_type == ID && (after == COMMA || after == RPAREN)) ? token.lexeme : "";
         argSlots[numArgs] = parse_expression(head, tracker);
         argTypes[numArgs] = lastExprType;
         numArgs++;
@@ -46,6 +56,29 @@ int parse_tensor_call(const string& name, struct InstructionNode*& head, struct 
         {
             report_error(token.line_no, "'" + name + "' takes " + to_string(lo) + " to " + to_string(hi) + 
                          " arguments, got " + to_string(numArgs));
+        }
+    }
+
+    // Argument kinds: a Tensor where the op takes a tensor, a number where it takes a size, index or scalar.
+    {
+        const char* sig = tensor_op_signature(op);
+        int len = (int)strlen(sig);
+        bool repeat = (len > 0 && sig[len - 1] == '*');
+        int fixed = repeat ? len - 1 : len;
+        for (int i = 0; i < numArgs; i++)
+        {
+            char want = (i < fixed) ? sig[i] : (repeat ? sig[fixed - 1] : 0);
+            VarType t = argTypes[i];
+            if (want == 0 || t == TYPE_UNKNOWN) continue;
+            string what = argNames[i].empty() ? "got " + typeToString(t)
+                                              : "but '" + argNames[i] + "' is " + typeToString(t);
+            string where = "argument " + to_string(i + 1) + " of '" + name + "'";
+            if (want == 'T' && t != TYPE_TENSOR)
+                report_error(token.line_no, where + " must be a Tensor, " + what);
+            else if (want == 'n' && !is_number_type(t))
+                report_error(token.line_no, where + " must be a number, " + what);
+            else if (want == 's' && t != TYPE_STRING)
+                report_error(token.line_no, where + " must be a string, " + what);
         }
     }
 

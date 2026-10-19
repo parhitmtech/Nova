@@ -10,22 +10,22 @@ ignite:
     double d = 0.0
 
     # ── tanh ────────────────────────────────────────────────────────────────
-    int thA = tensor_zeros(2, 2)
+    Tensor thA = tensor_zeros(2, 2)
     tensor_set(thA, 0, 0, 1.5)
     tensor_set(thA, 0, 1, (0.0 - 2.0))
     tensor_set(thA, 1, 0, 0.7)
     tensor_set(thA, 1, 1, (0.0 - 0.3))
-    int thT = tensor_zeros(2, 2)
+    Tensor thT = tensor_zeros(2, 2)
     tensor_set(thT, 0, 0, 0.1)
     tensor_set(thT, 0, 1, (0.0 - 0.2))
     tensor_set(thT, 1, 0, 0.3)
     tensor_set(thT, 1, 1, (0.0 - 0.4))
 
     requires_grad(thA)
-    int thY = tanh_t(thA)
-    int thL = mse_loss(thY, thT)
+    Tensor thY = tanh_t(thA)
+    Tensor thL = mse_loss(thY, thT)
     backward(thL)
-    int thG = tensor_grad(thA)
+    Tensor thG = tensor_grad(thA)
 
     maxdiff = 0.0
     int ti = 0
@@ -34,12 +34,12 @@ ignite:
         while (tj < 2):
             double orig = tensor_get(thA, ti, tj)
             tensor_set(thA, ti, tj, orig + eps)
-            int yP8 = tanh_t(thA)
-            int lP8 = mse_loss(yP8, thT)
+            Tensor yP8 = tanh_t(thA)
+            Tensor lP8 = mse_loss(yP8, thT)
             double lossP = tensor_get(lP8, 0, 0)
             tensor_set(thA, ti, tj, orig - eps)
-            int yM8 = tanh_t(thA)
-            int lM8 = mse_loss(yM8, thT)
+            Tensor yM8 = tanh_t(thA)
+            Tensor lM8 = mse_loss(yM8, thT)
             double lossM = tensor_get(lM8, 0, 0)
             tensor_set(thA, ti, tj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

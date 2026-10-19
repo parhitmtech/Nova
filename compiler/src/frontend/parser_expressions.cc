@@ -30,7 +30,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     if (functionParamTypes.count(funcName)) {
         vector<VarType>& pTypes = functionParamTypes[funcName];
         for (int i = 0; i < (int)argTypes.size() && i < (int)pTypes.size(); i++) {
-            if (argTypes[i] != TYPE_UNKNOWN && pTypes[i] != TYPE_UNKNOWN && argTypes[i] != pTypes[i])
+            if (!types_compatible(argTypes[i], pTypes[i]))
                 report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + typeToString(pTypes[i]) + " but got " + typeToString(argTypes[i]));
         }
     }

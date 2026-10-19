@@ -15,7 +15,40 @@ string typeToString(VarType t)
         case TYPE_FLOAT: return "float";
         case TYPE_DOUBLE: return "double";
         case TYPE_CLASS: return "class";
+        case TYPE_TENSOR: return "Tensor";
         default: return "unknown";
+    }
+}
+
+// May a value of type 'value' be stored where 'declared' is expected (a variable, field, parameter or
+// return value)? Same type, or either side unknown (untyped), or a float widening to double. A Tensor
+// is no longer an int: it only goes where Tensor is declared.
+bool types_compatible(VarType value, VarType declared)
+{
+    if (value == TYPE_UNKNOWN || declared == TYPE_UNKNOWN || value == declared) return true;
+    return value == TYPE_FLOAT && declared == TYPE_DOUBLE;
+}
+
+// A returned value must fit the function's declared return type.
+void check_return_type(VarType value, VarType declared, int line)
+{
+    if (!types_compatible(value, declared))
+        report_error(line, "'" + currentFunctionLabel + "' returns " + typeToString(value) +
+                           " but is declared '-> " + typeToString(declared) + "'");
+}
+
+// The type a type keyword names (int, bool, string, float, double, Tensor), or TYPE_UNKNOWN.
+VarType type_of_keyword(TokenType t)
+{
+    switch (t)
+    {
+        case INT_TYPE:    return TYPE_INT;
+        case BOOL_TYPE:   return TYPE_BOOL;
+        case STRING_TYPE: return TYPE_STRING;
+        case FLOAT_TYPE:  return TYPE_FLOAT;
+        case DOUBLE_TYPE: return TYPE_DOUBLE;
+        case TENSOR_TYPE: return TYPE_TENSOR;
+        default:          return TYPE_UNKNOWN;
     }
 }
 

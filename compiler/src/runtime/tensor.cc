@@ -220,6 +220,32 @@ struct ProgressBar {
 
 static vector<ProgressBar> progress_heap;
 
+// What each argument of a tensor built-in must be: 'T' a Tensor, 'n' a number (int, float, double
+// or bool), 's' a string. A trailing '*' repeats the previous kind for any further arguments (one
+// argument per dimension: tensor_zeros(2, 3, 4), tensor_get(t, i, j, k)).
+const char* tensor_op_signature(TensorOp op)
+{
+    switch (op)
+    {
+        case TEN_ZEROS: case TEN_ONES: case TEN_RANDN:            return "n*";
+        case TEN_ALLOC: case TEN_XAVIER: case TEN_RAND_INT:
+        case TEN_PROGRESS_BAR:                                    return "nn";
+        case TEN_GET: case TEN_SET: case TEN_RESHAPE:             return "Tn*";
+        case TEN_MATMUL: case TEN_ADD: case TEN_SUB: case TEN_MUL:
+        case TEN_MSE_LOSS: case TEN_MSE_GRAD: case TEN_BCE_GRAD:
+        case TEN_CE_LOSS: case TEN_CE_GRAD:                       return "TT";
+        case TEN_SCALE: case TEN_GET_ROW: case TEN_GRAD_STEP:
+        case TEN_DIM:                                             return "Tn";
+        case TEN_CLIP: case TEN_SLICE_ROWS:                       return "Tnn";
+        case TEN_SET_ROW:                                         return "TnT";
+        case TEN_LOAD_CSV:                                        return "snn";
+        case TEN_PROGRESS_UPDATE:                                 return "nnn";
+        case TEN_PROGRESS_DONE:                                   return "n";
+        case TEN_LIVE_COUNT:                                      return "";
+        default:                                                  return "T";  // one tensor
+    }
+}
+
 int ten_zeros(const std::vector<int>& shape) { return alloc_tensor_nd(shape); }
 
 int ten_ones(const std::vector<int>& shape)

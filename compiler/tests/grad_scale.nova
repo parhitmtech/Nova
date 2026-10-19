@@ -10,12 +10,12 @@ ignite:
     double d = 0.0
 
     # ── scale: C = A * s (constant s), grad wrt A ──────────────────────────
-    int scA = tensor_zeros(2, 2)
+    Tensor scA = tensor_zeros(2, 2)
     tensor_set(scA, 0, 0, 1.0)
     tensor_set(scA, 0, 1, (0.0 - 2.0))
     tensor_set(scA, 1, 0, 0.5)
     tensor_set(scA, 1, 1, 3.0)
-    int scT = tensor_zeros(2, 2)
+    Tensor scT = tensor_zeros(2, 2)
     tensor_set(scT, 0, 0, 0.1)
     tensor_set(scT, 0, 1, 0.2)
     tensor_set(scT, 1, 0, (0.0 - 0.3))
@@ -23,10 +23,10 @@ ignite:
     double scS = 2.5
 
     requires_grad(scA)
-    int scY = tensor_scale(scA, scS)
-    int scL = mse_loss(scY, scT)
+    Tensor scY = tensor_scale(scA, scS)
+    Tensor scL = mse_loss(scY, scT)
     backward(scL)
-    int scG = tensor_grad(scA)
+    Tensor scG = tensor_grad(scA)
 
     maxdiff = 0.0
     int ci = 0
@@ -35,12 +35,12 @@ ignite:
         while (cj < 2):
             double orig = tensor_get(scA, ci, cj)
             tensor_set(scA, ci, cj, orig + eps)
-            int yP5 = tensor_scale(scA, scS)
-            int lP5 = mse_loss(yP5, scT)
+            Tensor yP5 = tensor_scale(scA, scS)
+            Tensor lP5 = mse_loss(yP5, scT)
             double lossP = tensor_get(lP5, 0, 0)
             tensor_set(scA, ci, cj, orig - eps)
-            int yM5 = tensor_scale(scA, scS)
-            int lM5 = mse_loss(yM5, scT)
+            Tensor yM5 = tensor_scale(scA, scS)
+            Tensor lM5 = mse_loss(yM5, scT)
             double lossM = tensor_get(lM5, 0, 0)
             tensor_set(scA, ci, cj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

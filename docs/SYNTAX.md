@@ -284,7 +284,10 @@ commit.
    semicolons, `#` comments only; the REPL reads a block until a blank line.
 4. `break` and `continue` (done): in `for`, `while` and `do`-`while`; inside a `switch` they act on the
    enclosing loop (cases never fall through, so a switch needs no `break` of its own).
-5. `Tensor` / `Tensor<dtype>` as a real type (no more `int` tensors).
+5. `Tensor` as a real type (done): variables, parameters, returns, fields and multiple returns; tensor ops
+   check their arguments; a tensor is no longer an `int`; `Tensor h` declares one to assign later.
+   `Tensor<dtype>` waits for fp32 storage (M1 stage 4). Also: `nova --check` (type-check only) and
+   correct line numbers after an import.
 6. Tensor operators and methods: `+ - * / @` on tensors, `t[i, j]`, `t.T`, `t.shape`, short names.
 7. Constructors, `struct` / `class` field syntax, `orbit`.
 8. Block scoping.

@@ -1,4 +1,4 @@
-def tensor_fill_val(int t, double val) -> int:
+def tensor_fill_val(Tensor t, double val) -> Tensor:
     int r = tensor_rows(t)
     int c = tensor_cols(t)
     int i = 0

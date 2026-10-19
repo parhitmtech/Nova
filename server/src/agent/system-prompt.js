@@ -23,7 +23,7 @@ Nova compiles to native code via LLVM, with a CUDA backend for tensor operations
 | float    | 32-bit floating point                    | 3.14                |
 | double   | 64-bit floating point                    | 2.718               |
 | string   | Immutable string                         | "hello"             |
-| tensor   | GPU/CPU matrix handle (rows × cols)      | declared separately |
+| Tensor   | N-D tensor (1 to 6 dimensions); tensor ops take and return it | Tensor W = tensor_zeros(2, 3) |
 
 Type casting: \`int(x)\`, \`float(x)\`, \`double(x)\`
 
@@ -232,7 +232,7 @@ Arrays are heap-allocated with \`array(n)\` and accessed with \`[]\` indexing. S
 
 \`\`\`nova
 ignite:
-    int nums = array(6)
+    nums = array(6)
     int i = 0
     while (i < 6):
         nums[i] = i * 2
@@ -247,7 +247,7 @@ Dynamic size from variable:
 
 \`\`\`nova
 def fill(int n) -> int:
-    int arr = array(n)
+    arr = array(n)
     int i = 0
     while (i < n):
         arr[i] = i * i
@@ -273,9 +273,9 @@ struct Point:
     int x
     int y
 
-def distance(Point a, Point b) -> int:
-    int dx = a.x - b.x
-    int dy = a.y - b.y
+def distance(int ax, int ay, int bx, int by) -> int:
+    int dx = ax - bx
+    int dy = ay - by
     return dx * dx + dy * dy
 
 ignite:
@@ -285,7 +285,7 @@ ignite:
     Point q
     q.x = 0
     q.y = 0
-    print(distance(p, q))
+    print(distance(p.x, p.y, q.x, q.y))
 \`\`\`
 
 - Declare with \`StructName varName ;\` then assign fields
@@ -345,15 +345,13 @@ Or just use tensor built-ins directly without an import.
 ### Creating Tensors
 
 \`\`\`nova
-tensor A[32]  # 32×32 matrix (shorthand)
-tensor B = tensor(4, 8)  # 4×8 matrix, uninitialized
-tensor Z = tensor_zeros(4, 4)  # all zeros
-tensor O = tensor_ones(4, 4)  # all ones
-tensor R = tensor_randn(4, 4)  # random normal distribution
-tensor X = tensor_xavier(4, 4)  # Xavier initialization (for weights)
+Tensor B = tensor(4, 8)  # 4×8 matrix, uninitialized
+Tensor Z = tensor_zeros(4, 4)  # all zeros
+Tensor O = tensor_ones(4, 4)  # all ones
+Tensor R = tensor_randn(4, 4)  # random normal distribution
+Tensor X = tensor_xavier(4, 4)  # Xavier initialization (for weights)
 \`\`\`
 
-Note: \`tensor A[32] ;\` is shorthand for a 32×32 matrix.
 
 ### Accessing and Modifying Tensors
 
@@ -362,21 +360,21 @@ double v = tensor_get(A, 0, 1)  # get element at row 0, col 1
 tensor_set(A, 0, 1, 3.14)  # set element at row 0, col 1
 int r = tensor_rows(A)  # number of rows
 int c = tensor_cols(A)  # number of cols
-tensor row = tensor_get_row(A, 2)  # extract row 2
+Tensor row = tensor_get_row(A, 2)  # extract row 2
 tensor_set_row(A, 2, row)  # set row 2
-tensor S = tensor_slice_rows(A, 1, 4)  # rows 1..3 (exclusive end)
+Tensor S = tensor_slice_rows(A, 1, 4)  # rows 1..3 (exclusive end)
 tensor_print(A)  # print tensor contents
 \`\`\`
 
 ### Tensor Arithmetic
 
 \`\`\`nova
-tensor C = matmul(A, B)  # matrix multiplication
-tensor D = tensor_add(A, B)  # element-wise addition
-tensor E = tensor_sub(A, B)  # element-wise subtraction
-tensor F = tensor_mul(A, B)  # element-wise (Hadamard) product
-tensor G = tensor_scale(A, 2.0)  # scalar multiplication
-tensor H = tensor_T(A)  # transpose
+Tensor C = matmul(A, B)  # matrix multiplication
+Tensor D = tensor_add(A, B)  # element-wise addition
+Tensor E = tensor_sub(A, B)  # element-wise subtraction
+Tensor F = tensor_mul(A, B)  # element-wise (Hadamard) product
+Tensor G = tensor_scale(A, 2.0)  # scalar multiplication
+Tensor H = tensor_T(A)  # transpose
 \`\`\`
 
 ### Reduction / Statistics
@@ -385,24 +383,24 @@ tensor H = tensor_T(A)  # transpose
 double s = tensor_sum(A)  # sum of all elements
 double m = tensor_mean(A)  # mean of all elements
 double mx = tensor_max(A)  # max element
-tensor rs = tensor_sum_rows(A)  # row-wise sum → 1×N tensor
-tensor cl = tensor_clip(A, 0.0, 1.0)  # clamp all values to [0, 1]
+Tensor rs = tensor_sum_rows(A)  # row-wise sum → 1×N tensor
+Tensor cl = tensor_clip(A, 0.0, 1.0)  # clamp all values to [0, 1]
 \`\`\`
 
 ### Activation Functions
 
 \`\`\`nova
-tensor R = relu(A)  # ReLU: max(0, x)
-tensor Si = sigmoid(A)  # sigmoid: 1/(1+e^-x)
-tensor T = tanh_t(A)  # tanh  (NOTE: spelled tanh_t, not tanh)
-tensor Sm = softmax(A)  # row-wise softmax
+Tensor R = relu(A)  # ReLU: max(0, x)
+Tensor Si = sigmoid(A)  # sigmoid: 1/(1+e^-x)
+Tensor T = tanh_t(A)  # tanh  (NOTE: spelled tanh_t, not tanh)
+Tensor Sm = softmax(A)  # row-wise softmax
 \`\`\`
 
 ### Activation Gradients
 
 \`\`\`nova
-tensor rg = relu_grad(A)  # gradient of ReLU
-tensor sg = sigmoid_grad(A)  # gradient of sigmoid
+Tensor rg = relu_grad(A)  # gradient of ReLU
+Tensor sg = sigmoid_grad(A)  # gradient of sigmoid
 \`\`\`
 
 ### Loss Functions
@@ -415,9 +413,9 @@ double loss2 = cross_entropy_loss(logits, y)  # cross-entropy
 ### Loss Gradients
 
 \`\`\`nova
-tensor g1 = mse_grad(pred, target)  # MSE gradient
-tensor g2 = bce_grad(pred, target)  # binary cross-entropy gradient
-tensor g3 = cross_entropy_grad(logits, y)  # CE gradient
+Tensor g1 = mse_grad(pred, target)  # MSE gradient
+Tensor g2 = bce_grad(pred, target)  # binary cross-entropy gradient
+Tensor g3 = cross_entropy_grad(logits, y)  # CE gradient
 \`\`\`
 
 ### Autograd
@@ -425,9 +423,9 @@ tensor g3 = cross_entropy_grad(logits, y)  # CE gradient
 \`\`\`nova
 requires_grad(W)  # mark W for gradient tracking
 backward(loss_val)  # compute gradients (pass scalar double)
-tensor g = tensor_grad(W)  # retrieve gradient of W
+Tensor g = tensor_grad(W)  # retrieve gradient of W
 zero_grad(W)  # zero out W's gradients before next step
-tensor W2 = grad_step(W, 0.01)  # W = W - lr * grad(W)
+Tensor W2 = grad_step(W, 0.01)  # W = W - lr * grad(W)
 \`\`\`
 
 ### Progress Bar
@@ -445,7 +443,7 @@ progress_done(pb)
 ### Load CSV
 
 \`\`\`nova
-tensor data = tensor_load_csv("data.csv")
+Tensor data = tensor_load_csv("data.csv")
 \`\`\`
 
 ### Random Int
@@ -458,10 +456,10 @@ int r = rand_int(10)  # random int in [0, 10)
 
 \`\`\`nova
 ignite:
-    tensor X = tensor_randn(100, 4)
-    tensor y = tensor_zeros(100, 1)
-    tensor W = tensor_xavier(4, 1)
-    tensor b = tensor_zeros(1, 1)
+    Tensor X = tensor_randn(100, 4)
+    Tensor y = tensor_zeros(100, 1)
+    Tensor W = tensor_xavier(4, 1)
+    Tensor b = tensor_zeros(1, 1)
 
     requires_grad(W)
     requires_grad(b)
@@ -469,16 +467,15 @@ ignite:
     double lr = 0.01
     int epoch = 0
     while (epoch < 100):
-        tensor pred = matmul(X, W)
+        Tensor pred = matmul(X, W)
         pred = tensor_add(pred, b)
         pred = sigmoid(pred)
 
-        double loss = mse_loss(pred, y)
-        tensor g = mse_grad(pred, y)
+        Tensor loss = mse_loss(pred, y)
 
         backward(loss)
-        W = grad_step(W, lr)
-        b = grad_step(b, lr)
+        grad_step(W, lr)
+        grad_step(b, lr)
         zero_grad(W)
         zero_grad(b)
 
@@ -586,6 +583,7 @@ Two forms:
 |---|---|
 | Blocks | \`:\` plus indentation (spaces); one statement per line, no \`;\` |
 | Conditions | Always in parentheses: \`if (x != 0):\`, \`while (i <= n):\` |
+| Tensors | Type \`Tensor\` everywhere: \`Tensor W = tensor_zeros(2, 3)\`, \`def f(Tensor x) -> Tensor:\`, fields \`Tensor W\`. A tensor is not an int. \`Tensor h\` declares one to assign later |
 | Comments | \`#\` only |
 | Tanh | \`tanh_t()\` not \`tanh()\` |
 | Print arity | Exactly one argument |
@@ -594,8 +592,7 @@ Two forms:
 | Self | Lowercase \`self\` |
 | @ml | Just a comment — no effect on compilation |
 | Memoization | Automatic for pure recursive functions |
-| Arrays | \`int arr = array(n)\` then \`arr[i]\` |
-| Tensor shorthand | \`tensor A[32]\` = 32×32 matrix |
+| Arrays | \`arr = array(n)\` (no type) then \`arr[i]\` |
 | Multi-return assign | \`int a, double b = func()\` |
 
 ---

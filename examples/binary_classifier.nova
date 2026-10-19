@@ -4,7 +4,7 @@ import <novatorch.optim>
 ignite:
     # Dataset: AND gate — simplest linearly separable binary problem
     # Input: 4x2,  Label: 1 only when both inputs are 1
-    int X = tensor_zeros(4, 2)
+    Tensor X = tensor_zeros(4, 2)
     tensor_set(X, 0, 0, 0)
     tensor_set(X, 0, 1, 0)
     tensor_set(X, 1, 0, 0)
@@ -14,7 +14,7 @@ ignite:
     tensor_set(X, 3, 0, 1)
     tensor_set(X, 3, 1, 1)
 
-    int Y = tensor_zeros(4, 1)
+    Tensor Y = tensor_zeros(4, 1)
     tensor_set(Y, 0, 0, 0)
     tensor_set(Y, 1, 0, 0)
     tensor_set(Y, 2, 0, 0)
@@ -31,8 +31,8 @@ ignite:
     optim.init(0.5)
 
     int epoch = 0
-    int z    = 0
-    int pred = 0
+    Tensor z
+    Tensor pred
 
     while (epoch < 10000):
         # Forward
@@ -40,9 +40,9 @@ ignite:
         pred = sig1.forward(z)
 
         # Backward — BCE grad (sigmoid cancels cleanly, pred - Y)
-        int grad = bce_grad(pred, Y)
-        int dW        = layer1.get_dW(grad)
-        int db        = tensor_sum_rows(grad)
+        Tensor grad = bce_grad(pred, Y)
+        Tensor dW        = layer1.get_dW(grad)
+        Tensor db        = tensor_sum_rows(grad)
 
         layer1.W = optim.step(layer1.W, dW)
         layer1.b = optim.step(layer1.b, db)

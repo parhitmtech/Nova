@@ -10,22 +10,22 @@ ignite:
     double d = 0.0
 
     # ── relu ────────────────────────────────────────────────────────────────
-    int reA = tensor_zeros(2, 2)
+    Tensor reA = tensor_zeros(2, 2)
     tensor_set(reA, 0, 0, 1.5)
     tensor_set(reA, 0, 1, (0.0 - 2.0))
     tensor_set(reA, 1, 0, 0.7)
     tensor_set(reA, 1, 1, (0.0 - 0.3))
-    int reT = tensor_zeros(2, 2)
+    Tensor reT = tensor_zeros(2, 2)
     tensor_set(reT, 0, 0, 0.1)
     tensor_set(reT, 0, 1, 0.2)
     tensor_set(reT, 1, 0, (0.0 - 0.3))
     tensor_set(reT, 1, 1, 0.4)
 
     requires_grad(reA)
-    int reY = relu(reA)
-    int reL = mse_loss(reY, reT)
+    Tensor reY = relu(reA)
+    Tensor reL = mse_loss(reY, reT)
     backward(reL)
-    int reG = tensor_grad(reA)
+    Tensor reG = tensor_grad(reA)
 
     maxdiff = 0.0
     int ri = 0
@@ -34,12 +34,12 @@ ignite:
         while (rj < 2):
             double orig = tensor_get(reA, ri, rj)
             tensor_set(reA, ri, rj, orig + eps)
-            int yP6 = relu(reA)
-            int lP6 = mse_loss(yP6, reT)
+            Tensor yP6 = relu(reA)
+            Tensor lP6 = mse_loss(yP6, reT)
             double lossP = tensor_get(lP6, 0, 0)
             tensor_set(reA, ri, rj, orig - eps)
-            int yM6 = relu(reA)
-            int lM6 = mse_loss(yM6, reT)
+            Tensor yM6 = relu(reA)
+            Tensor lM6 = mse_loss(yM6, reT)
             double lossM = tensor_get(lM6, 0, 0)
             tensor_set(reA, ri, rj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

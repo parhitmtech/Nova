@@ -19,22 +19,22 @@ def dabs(double v) -> double:
 # time (tensor_scale never mutates in place) -- threads a different
 # tensor handle through scaleN's own parameter and return slot on every
 # recursive call.
-def scaleN(int t, int n) -> int:
+def scaleN(Tensor t, int n) -> Tensor:
     if (n < 1):
         return t
-    int scaled = tensor_scale(t, 2.0)
+    Tensor scaled = tensor_scale(t, 2.0)
     return scaleN(scaled, n - 1)
 
 # Returns a brand-new tensor (sum of a and b), independent of either input
 # handle, so callers must track the handle actually returned, not just the
 # ones passed in.
-def addTensors(int a, int b) -> int:
+def addTensors(Tensor a, Tensor b) -> Tensor:
     return tensor_add(a, b)
 
 ignite:
     double tol = 0.0001
 
-    int x = tensor_zeros(2, 2)
+    Tensor x = tensor_zeros(2, 2)
     tensor_set(x, 0, 0, 1.0)
     tensor_set(x, 0, 1, 2.0)
     tensor_set(x, 1, 0, 3.0)
@@ -43,18 +43,18 @@ ignite:
     # x scaled by 2^3 = 8 via 3 recursive calls, threading a tensor handle
     # through scaleN's own parameter and return slot each time -- each call
     # returns a DIFFERENT handle than the one it received.
-    int y = scaleN(x, 3)
+    Tensor y = scaleN(x, 3)
 
     double y00 = tensor_get(y, 0, 0)
     double y11 = tensor_get(y, 1, 1)
 
-    int z = tensor_zeros(2, 2)
+    Tensor z = tensor_zeros(2, 2)
     tensor_set(z, 0, 0, 100.0)
     tensor_set(z, 1, 1, 100.0)
 
     # addTensors allocates and returns a tensor independent of y/z, so y and
     # z must both still be valid (not prematurely released) when this runs.
-    int w = addTensors(y, z)
+    Tensor w = addTensors(y, z)
     double w00 = tensor_get(w, 0, 0)
     double w11 = tensor_get(w, 1, 1)
 

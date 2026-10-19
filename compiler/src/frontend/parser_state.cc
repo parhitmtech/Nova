@@ -15,8 +15,8 @@ map<string, int> floatSymbolTable;
 map<string, int> doubleSymbolTable;
 
 // mem[] slots known to hold a tensor handle (as opposed to an ordinary int).
-// Nova types tensor handles as plain TYPE_INT (see the tensorToInt coercions below), so this is the
-// only place that distinction is tracked - it exists purely to drive the compiler-inserted tensor-free 
+// Tensors have their own type (Tensor) in the language, but at run time a handle is an int in a mem[]
+// slot, and temporaries have no declared type, so the slots are tracked here; this drives the compiler-inserted tensor-free
 // pass (insert_tensor_releases in compiler.cc), which must never release a slot that isn't actually 
 // a tensor handle. Populated at every tensor-call result, and propogated through plain copies (declaration and 
 // reassignments); extended across function calls by propagate_tensor_slots_across_calls() after 
@@ -143,3 +143,4 @@ map<string, vector<int>>functionReturnSlots;  // multi-return slots per function
 map<string, vector<VarType>> functionReturnTypesList;  // multi-return types per function
 vector<int> currentFuncRetSlots;  // active function's return slots
 vector<VarType> currentFuncRetTypes;  // active function's return types
+string currentFunctionLabel;  // the function or method being parsed, for messages: "f" or "Linear.forward"

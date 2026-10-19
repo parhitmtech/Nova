@@ -21,6 +21,7 @@ int ten_randn(const std::vector<int>& shape);
 int ten_rand_int(int lo, int hi);
 int ten_xavier(int r, int c);
 int ten_matmul(int a, int b);
+const char* tensor_op_signature(TensorOp op);  // per argument: 'T' tensor, 'n' number, 's' string; '*' repeats
 int ten_add(int a, int b);
 int ten_sub(int a, int b);
 int ten_sum_axis0(int a);

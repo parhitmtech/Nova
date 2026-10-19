@@ -10,14 +10,14 @@ ignite:
     double d = 0.0
 
     # ── transpose ───────────────────────────────────────────────────────────
-    int trA = tensor_zeros(2, 3)
+    Tensor trA = tensor_zeros(2, 3)
     tensor_set(trA, 0, 0, 1.0)
     tensor_set(trA, 0, 1, (0.0 - 2.0))
     tensor_set(trA, 0, 2, 0.5)
     tensor_set(trA, 1, 0, 0.3)
     tensor_set(trA, 1, 1, 1.2)
     tensor_set(trA, 1, 2, (0.0 - 0.8))
-    int trT = tensor_zeros(3, 2)
+    Tensor trT = tensor_zeros(3, 2)
     tensor_set(trT, 0, 0, 0.1)
     tensor_set(trT, 0, 1, 0.2)
     tensor_set(trT, 1, 0, (0.0 - 0.3))
@@ -26,10 +26,10 @@ ignite:
     tensor_set(trT, 2, 1, (0.0 - 0.6))
 
     requires_grad(trA)
-    int trY = tensor_T(trA)
-    int trL = mse_loss(trY, trT)
+    Tensor trY = tensor_T(trA)
+    Tensor trL = mse_loss(trY, trT)
     backward(trL)
-    int trG = tensor_grad(trA)
+    Tensor trG = tensor_grad(trA)
 
     maxdiff = 0.0
     int pi = 0
@@ -38,12 +38,12 @@ ignite:
         while (pj < 3):
             double orig = tensor_get(trA, pi, pj)
             tensor_set(trA, pi, pj, orig + eps)
-            int yP10 = tensor_T(trA)
-            int lP10 = mse_loss(yP10, trT)
+            Tensor yP10 = tensor_T(trA)
+            Tensor lP10 = mse_loss(yP10, trT)
             double lossP = tensor_get(lP10, 0, 0)
             tensor_set(trA, pi, pj, orig - eps)
-            int yM10 = tensor_T(trA)
-            int lM10 = mse_loss(yM10, trT)
+            Tensor yM10 = tensor_T(trA)
+            Tensor lM10 = mse_loss(yM10, trT)
             double lossM = tensor_get(lM10, 0, 0)
             tensor_set(trA, pi, pj, orig)
             double diff = lossP - lossM

@@ -1,0 +1,4 @@
+# Tensor operations need tensors.
+ignite:
+    int n = 3
+    tensor_print(n)

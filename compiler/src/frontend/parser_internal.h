@@ -75,6 +75,9 @@ extern map<string, vector<int>> functionReturnSlots;
 extern map<string, vector<VarType>> functionReturnTypesList;
 extern vector<int> currentFuncRetSlots;
 extern vector<VarType> currentFuncRetTypes;
+extern string currentFunctionLabel;
+bool types_compatible(VarType value, VarType declared);  // may a value of this type go where that type is declared?
+void check_return_type(VarType value, VarType declared, int line);  // error naming currentFunctionLabel
 
 // ── Functions (parser_util.cc, parser_classes.cc, parser_builtins.cc, parser_statements.cc,
 //    parser_expressions.cc, parser.cc) and imports.cc ───────────────────────────
@@ -82,6 +85,7 @@ string read_file(const string& path);
 string get_stdlib_path();
 string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported);
 string typeToString(VarType t);
+VarType type_of_keyword(TokenType t);  // int/bool/string/float/double/Tensor -> its type, else TYPE_UNKNOWN
 void report_error(int line, string message);
 bool check_declared(string name, int line);
 bool check_bounds(string arrName, int index, int line);

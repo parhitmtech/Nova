@@ -10,27 +10,27 @@ ignite:
     double d = 0.0
 
     # ── mul (Hadamard): C = A * B, grad wrt A ──────────────────────────────
-    int muA = tensor_zeros(2, 2)
+    Tensor muA = tensor_zeros(2, 2)
     tensor_set(muA, 0, 0, 1.0)
     tensor_set(muA, 0, 1, (0.0 - 2.0))
     tensor_set(muA, 1, 0, 0.5)
     tensor_set(muA, 1, 1, 3.0)
-    int muB = tensor_zeros(2, 2)
+    Tensor muB = tensor_zeros(2, 2)
     tensor_set(muB, 0, 0, 0.3)
     tensor_set(muB, 0, 1, 1.0)
     tensor_set(muB, 1, 0, (0.0 - 1.5))
     tensor_set(muB, 1, 1, 0.7)
-    int muT = tensor_zeros(2, 2)
+    Tensor muT = tensor_zeros(2, 2)
     tensor_set(muT, 0, 0, 0.1)
     tensor_set(muT, 0, 1, 0.2)
     tensor_set(muT, 1, 0, (0.0 - 0.3))
     tensor_set(muT, 1, 1, 0.4)
 
     requires_grad(muA)
-    int muY = tensor_mul(muA, muB)
-    int muL = mse_loss(muY, muT)
+    Tensor muY = tensor_mul(muA, muB)
+    Tensor muL = mse_loss(muY, muT)
     backward(muL)
-    int muG = tensor_grad(muA)
+    Tensor muG = tensor_grad(muA)
 
     maxdiff = 0.0
     int ui = 0
@@ -39,12 +39,12 @@ ignite:
         while (uj < 2):
             double orig = tensor_get(muA, ui, uj)
             tensor_set(muA, ui, uj, orig + eps)
-            int yP4 = tensor_mul(muA, muB)
-            int lP4 = mse_loss(yP4, muT)
+            Tensor yP4 = tensor_mul(muA, muB)
+            Tensor lP4 = mse_loss(yP4, muT)
             double lossP = tensor_get(lP4, 0, 0)
             tensor_set(muA, ui, uj, orig - eps)
-            int yM4 = tensor_mul(muA, muB)
-            int lM4 = mse_loss(yM4, muT)
+            Tensor yM4 = tensor_mul(muA, muB)
+            Tensor lM4 = mse_loss(yM4, muT)
             double lossM = tensor_get(lM4, 0, 0)
             tensor_set(muA, ui, uj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

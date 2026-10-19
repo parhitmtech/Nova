@@ -56,7 +56,7 @@ ignite:
     int before = tensor_live_count()
     int m = 0
     while (m < 50):
-        int t = tensor_ones(2, 2)
+        Tensor t = tensor_ones(2, 2)
         m += 1
         if (m == 20): break
         if (m % 3 == 0): continue

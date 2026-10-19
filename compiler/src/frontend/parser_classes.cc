@@ -28,11 +28,7 @@ void parse_struct_definition()
         VarType fieldType = TYPE_UNKNOWN;
         string fieldStructType = "";
 
-        if (token.token_type == INT_TYPE) { fieldType = TYPE_INT; token = lexer.GetToken(); }
-        else if (token.token_type == BOOL_TYPE) { fieldType = TYPE_BOOL; token = lexer.GetToken(); }
-        else if (token.token_type == STRING_TYPE) { fieldType = TYPE_STRING; token = lexer.GetToken(); }
-        else if (token.token_type == FLOAT_TYPE) { fieldType = TYPE_FLOAT; token = lexer.GetToken(); }
-        else if (token.token_type == DOUBLE_TYPE) { fieldType = TYPE_DOUBLE; token = lexer.GetToken(); }
+        if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { fieldType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
         else if (token.token_type == ID && structTable.count(token.lexeme))
         {
             fieldStructType = token.lexeme;
@@ -224,11 +220,7 @@ void parse_class_definition()
             while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
             {
                 VarType pType = TYPE_UNKNOWN;
-                if (token.token_type == INT_TYPE) { pType = TYPE_INT; token = lexer.GetToken(); }
-                else if (token.token_type == BOOL_TYPE) { pType = TYPE_BOOL; token = lexer.GetToken(); }
-                else if (token.token_type == STRING_TYPE) { pType = TYPE_STRING; token = lexer.GetToken(); }
-                else if (token.token_type == FLOAT_TYPE) { pType = TYPE_FLOAT; token = lexer.GetToken(); }
-                else if (token.token_type == DOUBLE_TYPE) { pType = TYPE_DOUBLE; token = lexer.GetToken(); }
+                if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { pType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
                 if (token.token_type == ID)
                 {
                     params.push_back(token.lexeme);
@@ -252,11 +244,7 @@ void parse_class_definition()
             if (token.token_type == ARROW)
             {
                 token = lexer.GetToken();
-                if (token.token_type == INT_TYPE) retType = TYPE_INT;
-                else if (token.token_type == BOOL_TYPE) retType = TYPE_BOOL;
-                else if (token.token_type == STRING_TYPE) retType = TYPE_STRING;
-                else if (token.token_type == FLOAT_TYPE) retType = TYPE_FLOAT;
-                else if (token.token_type == DOUBLE_TYPE) retType = TYPE_DOUBLE;
+                if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) retType = type_of_keyword(token.token_type);
                 else if (token.token_type == ID && classTable.count(token.lexeme)) retType = TYPE_CLASS;
                 token = lexer.GetToken();  // '{'
             }
@@ -292,6 +280,7 @@ void parse_class_definition()
             bool savedInsideFunc = insideFunction;
             int savedRetIdx = currentFuncRetIdx;
             VarType savedRetType = currentFuncRetType;
+            string savedFunctionLabel = currentFunctionLabel;
             string savedSelfClass = currentSelfClassName;
             map<string, int> savedSelfSlots = currentSelfFieldSlots;
             map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
@@ -300,6 +289,7 @@ void parse_class_definition()
             insideFunction = true;
             currentFuncRetIdx = retIdx;
             currentFuncRetType = retType;
+            currentFunctionLabel = className + "." + methodName;
             currentSelfClassName = className;
             currentSelfFieldSlots = selfSlots;
             currentSelfFieldTypes = selfTypes;
@@ -316,6 +306,7 @@ void parse_class_definition()
                 {
                     token = lexer.GetToken();
                     int resultIdx = parse_expression(mhead, mtracker);
+                    check_return_type(lastExprType, retType, token.line_no);
 
                     struct InstructionNode* an = new InstructionNode();
                     an->line_no = token.line_no;
@@ -361,6 +352,7 @@ void parse_class_definition()
             insideFunction = savedInsideFunc;
             currentFuncRetIdx = savedRetIdx;
             currentFuncRetType = savedRetType;
+            currentFunctionLabel = savedFunctionLabel;
             currentSelfClassName = savedSelfClass;
             currentSelfFieldSlots = savedSelfSlots;
             currentSelfFieldTypes = savedSelfTypes;
@@ -381,16 +373,10 @@ void parse_class_definition()
             classMethodTable[className][methodName] = mhead;
             token = lexer.GetToken();  // advance past method body '}'
         }
-        else if (token.token_type == INT_TYPE || token.token_type == BOOL_TYPE ||
-                 token.token_type == STRING_TYPE || token.token_type == FLOAT_TYPE ||
-                 token.token_type == DOUBLE_TYPE)
+        else if (type_of_keyword(token.token_type) != TYPE_UNKNOWN)
         {
             VarType fieldType = TYPE_UNKNOWN;
-            if      (token.token_type == INT_TYPE)    fieldType = TYPE_INT;
-            else if (token.token_type == BOOL_TYPE)   fieldType = TYPE_BOOL;
-            else if (token.token_type == STRING_TYPE) fieldType = TYPE_STRING;
-            else if (token.token_type == FLOAT_TYPE)  fieldType = TYPE_FLOAT;
-            else if (token.token_type == DOUBLE_TYPE) fieldType = TYPE_DOUBLE;
+            if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) fieldType = type_of_keyword(token.token_type);
 
             token = lexer.GetToken();  // field name
             ClassFieldInfo fi;
@@ -907,9 +893,15 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         vector<VarType>& storedParamTypes = classMethodParamTypes[lookupClass][methodName];
         for (int i = 0; i < (int)params.size(); i++)
             ptypes[i] = (i < (int)storedParamTypes.size()) ? storedParamTypes[i] : TYPE_UNKNOWN;
+        for (int i = 0; i < (int)argTypes.size() && i < (int)storedParamTypes.size(); i++)
+        {
+            if (!types_compatible(argTypes[i], storedParamTypes[i]))
+                report_error(token.line_no, "argument " + to_string(i + 1) + " of '" + lookupClass + "." + methodName +
+                             "' expects " + typeToString(storedParamTypes[i]) + " but got " + typeToString(argTypes[i]));
+        }
 
         VarType* atypes = new VarType[params.size()];
-        for (int i = 0; i < (int)argTypes.size(); i++)
+        for (int i = 0; i < (int)params.size(); i++)  // params.size(): the array's length
             atypes[i] = (i < (int)argTypes.size()) ? argTypes[i] : TYPE_UNKNOWN;
 
         callNode->call_inst.param_types   = ptypes;
@@ -989,5 +981,6 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         copyRet->assign_inst.op = OPERATOR_NONE;
     }
     append(head, tracker, copyRet);
+    lastExprType = mRetType;  // the call's value has the method's declared return type
     return freshSlot;
 }

@@ -29,7 +29,7 @@ string reserved[] = {
     // type keywords (new)
     "INT_TYPE", "BOOL_TYPE", "STRING_TYPE",
     // float/double type keywords
-    "FLOAT_TYPE", "DOUBLE_TYPE",
+    "FLOAT_TYPE", "DOUBLE_TYPE", "TENSOR_TYPE",
     // bool literals (new)
     "TRUE", "FALSE",
     // struct and class keywords
@@ -216,6 +216,8 @@ void LexicalAnalyzer::ApplyLayout()
                 layout_error(t.line_no, "Nova does not use ';' to end statements: start a new line instead");
             else if (t.token_type == LBRACE || t.token_type == RBRACE)
                 layout_error(t.line_no, "blocks are written with ':' and an indented body, not braces");
+            else if (t.token_type == TENSOR_TYPE && end + 1 < n && tokenList[end + 1].token_type == LESS)
+                layout_error(t.line_no, "Tensor<dtype> comes with fp32 storage (M1 stage 4); write Tensor for now");
             else if (depth == 0 && t.token_type == COLON && colon < 0)
                 colon = (int)end;
         }
@@ -409,7 +411,7 @@ int LexicalAnalyzer::FindKeywordIndex(string s)
         // 17–19  ← new type keywords
         "int", "bool", "string",
         // 20-21 float/double type keywords
-        "float", "double",
+        "float", "double", "Tensor",
         // 22–23  ← new bool literals
         "true", "false",
         // 24 - struct keyword
@@ -647,10 +649,18 @@ Token LexicalAnalyzer::GetTokenMain()
         // ── Python-style comments: # ... ──────────────────────────────────────
         case '#': {
             // comment to the end of the line; the next token starts a new line
+            string text;
             char ch;
             input.GetChar(ch);
             while (!input.EndOfInput() && ch != '\n')
+            {
+                text += ch;
                 input.GetChar(ch);
+            }
+            // "#@line N": inserted after an imported file's text, so the next line is line N of the
+            // importing file again and error messages point at the right line
+            if (text.compare(0, 6, "@line ") == 0)
+                line_no = atoi(text.c_str() + 6) - 1;
             line_no++;
             atLineStart = true;
             column = 0;

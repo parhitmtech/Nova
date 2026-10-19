@@ -116,9 +116,11 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
     string result;
     istringstream stream(src);
     string line;
+    int lineNo = 0;  // line number in src of the line being processed
 
     while (getline(stream, line))
     {
+        lineNo++;
         // trim leading whitespace for matching
         string trimmed = line;
         size_t start = trimmed.find_first_not_of(" \t");
@@ -136,12 +138,12 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
                 if (already_imported.count(full_path))
                 {
                     // already included, skip silently
-                    continue;
+                    { result += "\n"; continue; }
                 }
                 already_imported.insert(full_path);
 
                 string file_src = read_file(full_path);
-                if (file_src.empty()) continue;
+                if (file_src.empty()) { result += "\n"; continue; }
 
                 // get the directory of the imported file for nested imports
                 string imported_dir = full_path;
@@ -156,7 +158,7 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
                 }
 
                 string inlined = preprocess_import(strip_ignite_blocks(file_src), imported_dir, already_imported);
-                result += inlined + "\n";
+                result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
                 continue;
             }
         }
@@ -169,21 +171,21 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
             {
                 string pkg_name = trimmed.substr(8, close - 8);
                 string stdlib_dir = get_stdlib_path();
-                if (stdlib_dir.empty()) continue;
+                if (stdlib_dir.empty()) { result += "\n"; continue; }
 
                 string full_path = stdlib_dir + "/" + pkg_name + ".nova";
 
                 if (already_imported.count(full_path))
                 {
-                    continue;
+                    { result += "\n"; continue; }
                 }
                 already_imported.insert(full_path);
 
                 string file_src = read_file(full_path);
-                if (file_src.empty()) continue;
+                if (file_src.empty()) { result += "\n"; continue; }
 
                 string inlined = preprocess_import(strip_ignite_blocks(file_src), stdlib_dir, already_imported);
-                result += inlined + "\n";
+                result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
                 continue;
             }
         }
@@ -192,14 +194,14 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
         if (trimmed.size() >= 9 && trimmed.substr(0, 9) == "import hf" &&
             (trimmed.size() == 9 || trimmed[9] == ' ' || trimmed[9] == ';'))
         {
-            continue;
+            { result += "\n"; continue; }
         }
 
         // match: import sol  (SOL cluster built-in — sol.xxx() always available)
         if (trimmed.size() >= 10 && trimmed.substr(0, 10) == "import sol" &&
             (trimmed.size() == 10 || trimmed[10] == ' ' || trimmed[10] == ';'))
         {
-            continue;
+            { result += "\n"; continue; }
         }
 
         // not an import line - keep it as it is

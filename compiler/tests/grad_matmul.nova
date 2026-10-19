@@ -10,27 +10,27 @@ ignite:
     double d = 0.0
 
     # ── matmul: C = A @ B, grad wrt A ──────────────────────────────────────
-    int mmA = tensor_zeros(2, 2)
+    Tensor mmA = tensor_zeros(2, 2)
     tensor_set(mmA, 0, 0, 1.0)
     tensor_set(mmA, 0, 1, (0.0 - 2.0))
     tensor_set(mmA, 1, 0, 0.5)
     tensor_set(mmA, 1, 1, 3.0)
-    int mmB = tensor_zeros(2, 2)
+    Tensor mmB = tensor_zeros(2, 2)
     tensor_set(mmB, 0, 0, 0.3)
     tensor_set(mmB, 0, 1, 1.0)
     tensor_set(mmB, 1, 0, (0.0 - 1.5))
     tensor_set(mmB, 1, 1, 0.7)
-    int mmT = tensor_zeros(2, 2)
+    Tensor mmT = tensor_zeros(2, 2)
     tensor_set(mmT, 0, 0, 0.1)
     tensor_set(mmT, 0, 1, 0.2)
     tensor_set(mmT, 1, 0, (0.0 - 0.3))
     tensor_set(mmT, 1, 1, 0.4)
 
     requires_grad(mmA)
-    int mmY = matmul(mmA, mmB)
-    int mmL = mse_loss(mmY, mmT)
+    Tensor mmY = matmul(mmA, mmB)
+    Tensor mmL = mse_loss(mmY, mmT)
     backward(mmL)
-    int mmG = tensor_grad(mmA)
+    Tensor mmG = tensor_grad(mmA)
 
     maxdiff = 0.0
     int mi = 0
@@ -39,12 +39,12 @@ ignite:
         while (mj < 2):
             double orig = tensor_get(mmA, mi, mj)
             tensor_set(mmA, mi, mj, orig + eps)
-            int yP1 = matmul(mmA, mmB)
-            int lP1 = mse_loss(yP1, mmT)
+            Tensor yP1 = matmul(mmA, mmB)
+            Tensor lP1 = mse_loss(yP1, mmT)
             double lossP = tensor_get(lP1, 0, 0)
             tensor_set(mmA, mi, mj, orig - eps)
-            int yM1 = matmul(mmA, mmB)
-            int lM1 = mse_loss(yM1, mmT)
+            Tensor yM1 = matmul(mmA, mmB)
+            Tensor lM1 = mse_loss(yM1, mmT)
             double lossM = tensor_get(lM1, 0, 0)
             tensor_set(mmA, mi, mj, orig)
             double numeric = (lossP - lossM) / (2.0 * eps)

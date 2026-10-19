@@ -22,11 +22,7 @@ void parse_function_definition()
     token = lexer.GetToken(); token = lexer.GetToken();
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
         VarType paramType = TYPE_UNKNOWN;
-        if      (token.token_type == INT_TYPE)    { paramType = TYPE_INT;    token = lexer.GetToken(); }
-        else if (token.token_type == BOOL_TYPE)   { paramType = TYPE_BOOL;   token = lexer.GetToken(); }
-        else if (token.token_type == STRING_TYPE) { paramType = TYPE_STRING; token = lexer.GetToken(); }
-        else if (token.token_type == FLOAT_TYPE)  { paramType = TYPE_FLOAT;  token = lexer.GetToken(); }
-        else if (token.token_type == DOUBLE_TYPE) { paramType = TYPE_DOUBLE; token = lexer.GetToken(); }
+        if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { paramType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
         if (token.token_type == ID) 
         {
             params.push_back(token.lexeme);
@@ -66,11 +62,7 @@ void parse_function_definition()
         while (true)
         {
             VarType rt = TYPE_UNKNOWN;
-            if      (token.token_type == INT_TYPE)    rt = TYPE_INT;
-            else if (token.token_type == BOOL_TYPE)   rt = TYPE_BOOL;
-            else if (token.token_type == STRING_TYPE) rt = TYPE_STRING;
-            else if (token.token_type == FLOAT_TYPE) rt = TYPE_FLOAT;
-            else if (token.token_type == DOUBLE_TYPE) rt = TYPE_DOUBLE;
+            if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) rt = type_of_keyword(token.token_type);
             else report_error(token.line_no, "expected type after '->' or ','");
             retTypes.push_back(rt);
             int rs = (rt == TYPE_FLOAT) ? alloc_float_slot() : 
@@ -97,6 +89,7 @@ void parse_function_definition()
 
     struct InstructionNode* head = nullptr, *tracker = nullptr;
     insideFunction     = true;
+    currentFunctionLabel = funcName;
     currentFuncRetIdx  = retSlots[0];
     currentFuncRetType = retTypes[0];
     currentFuncRetSlots = retSlots;
@@ -109,11 +102,14 @@ void parse_function_definition()
         {
             token = lexer.GetToken();
             vector<int> retExprs;
+            vector<VarType> retExprTypes;
             retExprs.push_back(parse_expression(head, tracker));
+            retExprTypes.push_back(lastExprType);
             while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
+                retExprTypes.push_back(lastExprType);
             }
             if (retExprs.size() != retSlots.size())
             {
@@ -121,12 +117,7 @@ void parse_function_definition()
             }
             for (int i = 0;i < (int)retExprs.size() && i < (int)retSlots.size();i++)
             {
-                VarType exprType = (i == 0) ? lastExprType : TYPE_UNKNOWN;
-                bool tensorToInt = (exprType == TYPE_TENSOR && retTypes[i] == TYPE_INT);
-                if (retTypes[i] != TYPE_UNKNOWN && exprType != TYPE_UNKNOWN && exprType != retTypes[i] && !tensorToInt)
-                {
-                    report_error(token.line_no, "return value " + to_string(i+1) + " type mismatch in '" + funcName + "'");
-                }
+                check_return_type(retExprTypes[i], retTypes[i], token.line_no);
                 struct InstructionNode* an = new InstructionNode();
                 an->line_no = token.line_no;
                 if (retTypes[i] == TYPE_FLOAT)
@@ -171,6 +162,7 @@ void parse_function_definition()
     }
 
     insideFunction = false; 
+    currentFunctionLabel.clear();
     currentFuncRetIdx = -1; 
     currentFuncRetType = TYPE_UNKNOWN;
     currentFuncRetSlots.clear();
