@@ -127,7 +127,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                      && !jit_deoptimized.count(fhead)
                      && pc->call_inst.num_params <= 1)  // JIT only handles single-param functions
             {
-    #if defined(_WIN32) && !defined(NOVA_NO_JIT)  // -DNOVA_NO_JIT: always interpret
+    #if defined(NOVA_JIT) && (defined(__x86_64__) || defined(_M_X64))  // opt-in: -DNOVA_JIT (x86-64 only, experimental)
                 jit_compiled[fhead] = jit_compile_function(fhead);
 
                 if (!jit_compiled[fhead])

@@ -358,7 +358,7 @@ int main(int argc, char* argv[])
     // normal single execution
     input_replay_index = -1;  // live stdin mode
 
-#if defined(_WIN32) && !defined(NOVA_NO_JIT)
+#if defined(NOVA_JIT) && (defined(__x86_64__) || defined(_M_X64))  // opt-in: -DNOVA_JIT (x86-64 only, experimental)
     // Pre-compute colorings for all functions so JIT can reuse them
     for (auto& kv : functionTable)
     {

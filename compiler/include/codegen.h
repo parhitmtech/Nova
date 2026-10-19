@@ -16,8 +16,8 @@ void generate_cuda(struct InstructionNode* program, const std::string& outputFil
 void generate_x86(struct InstructionNode* program, const std::string& outputFile,
                   const ColoringResult* coloring = nullptr);
 
-// src/codegen/jit.cc — native code for simple single-parameter int functions (Windows only at
-// runtime; -DNOVA_NO_JIT disables it). Returns nullptr when a function cannot be compiled.
+// src/codegen/jit.cc — native code for simple single-parameter int functions (experimental: off unless
+// built with -DNOVA_JIT, x86-64 only). Returns nullptr when a function cannot be compiled.
 void* jit_compile_function(struct InstructionNode* head);
 
 // JIT state shared with the interpreter's CALL handler (defined in compiler.cc).

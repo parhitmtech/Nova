@@ -304,7 +304,7 @@ Nova source code
       ▼
    Code Generation
       ├── Interpreter (tree-walk)
-      ├── JIT (x86-64 machine code, mmap + SEH deoptimization fallback)
+      ├── JIT (experimental, off by default; build with -DNOVA_JIT)
       ├── x86-64 native codegen via NASM
       └── Bytecode (bytecode.cc → .nbc files)
       │
@@ -325,7 +325,7 @@ Nova source code
 - Built-in tensor operations (30+): creation, arithmetic, activations, autograd, loss functions
 - `import hf` — HuggingFace dataset and model API
 - `import sol` — SOL HPC GPU cluster API
-- JIT compilation (x86-64, Chaitin-Briggs register allocation, K=12)
+- Experimental x86-64 JIT (off by default: build with `-DNOVA_JIT`; it miscompiles general code)
 - Bytecode export (`.nbc`)
 
 ---
