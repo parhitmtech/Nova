@@ -2,21 +2,21 @@
 orbit novatorch.nn
 
 ignite:
-    Tensor X = tensor_zeros(4, 2)
-    tensor_set(X, 0, 0, 0)
-    tensor_set(X, 0, 1, 0)
-    tensor_set(X, 1, 0, 0)
-    tensor_set(X, 1, 1, 1)
-    tensor_set(X, 2, 0, 1)
-    tensor_set(X, 2, 1, 0)
-    tensor_set(X, 3, 0, 1)
-    tensor_set(X, 3, 1, 1)
+    Tensor X = zeros(4, 2)
+    X[0, 0] = 0
+    X[0, 1] = 0
+    X[1, 0] = 0
+    X[1, 1] = 1
+    X[2, 0] = 1
+    X[2, 1] = 0
+    X[3, 0] = 1
+    X[3, 1] = 1
 
-    Tensor Y = tensor_zeros(4, 1)
-    tensor_set(Y, 0, 0, 0)
-    tensor_set(Y, 1, 0, 1)
-    tensor_set(Y, 2, 0, 1)
-    tensor_set(Y, 3, 0, 0)
+    Tensor Y = zeros(4, 1)
+    Y[0, 0] = 0
+    Y[1, 0] = 1
+    Y[2, 0] = 1
+    Y[3, 0] = 0
 
     Linear layer1 = Linear(2, 4)
 
@@ -42,7 +42,7 @@ ignite:
         pred = act2.forward(h2)
 
         Tensor grad  = mse_grad(pred, Y)
-        double loss = tensor_get(mse_loss(pred, Y), 0, 0)
+        double loss = mse_loss(pred, Y)[0, 0]
         progress_update(bar, epoch, loss)
         Tensor g2    = act2.backward(grad)
         Tensor dW2   = layer2.get_dW(g2)
@@ -55,10 +55,10 @@ ignite:
         Tensor db1   = tensor_sum_rows(ga1)
 
         # Update all weights after all gradients are computed
-        layer2.W  = tensor_sub(layer2.W, tensor_scale(dW2, lr))
-        layer2.b  = tensor_sub(layer2.b, tensor_scale(db2, lr))
-        layer1.W  = tensor_sub(layer1.W, tensor_scale(dW1, lr))
-        layer1.b  = tensor_sub(layer1.b, tensor_scale(db1, lr))
+        layer2.W = layer2.W - lr * dW2
+        layer2.b = layer2.b - lr * db2
+        layer1.W = layer1.W - lr * dW1
+        layer1.b = layer1.b - lr * db1
 
         epoch = epoch + 1
     progress_done(bar)

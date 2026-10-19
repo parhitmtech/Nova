@@ -4,21 +4,21 @@ orbit novatorch.optim
 ignite:
     # Dataset: AND gate — simplest linearly separable binary problem
     # Input: 4x2,  Label: 1 only when both inputs are 1
-    Tensor X = tensor_zeros(4, 2)
-    tensor_set(X, 0, 0, 0)
-    tensor_set(X, 0, 1, 0)
-    tensor_set(X, 1, 0, 0)
-    tensor_set(X, 1, 1, 1)
-    tensor_set(X, 2, 0, 1)
-    tensor_set(X, 2, 1, 0)
-    tensor_set(X, 3, 0, 1)
-    tensor_set(X, 3, 1, 1)
+    Tensor X = zeros(4, 2)
+    X[0, 0] = 0
+    X[0, 1] = 0
+    X[1, 0] = 0
+    X[1, 1] = 1
+    X[2, 0] = 1
+    X[2, 1] = 0
+    X[3, 0] = 1
+    X[3, 1] = 1
 
-    Tensor Y = tensor_zeros(4, 1)
-    tensor_set(Y, 0, 0, 0)
-    tensor_set(Y, 1, 0, 0)
-    tensor_set(Y, 2, 0, 0)
-    tensor_set(Y, 3, 0, 1)
+    Tensor Y = zeros(4, 1)
+    Y[0, 0] = 0
+    Y[1, 0] = 0
+    Y[2, 0] = 0
+    Y[3, 0] = 1
 
     # Model: Linear(2→1) → Sigmoid
     Linear layer1 = Linear(2, 1)

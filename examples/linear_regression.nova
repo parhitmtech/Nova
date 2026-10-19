@@ -3,19 +3,19 @@ orbit novatorch.optim
 
 ignite:
     # Dataset: y = 2x + 1
-    Tensor X = tensor_zeros(5, 1)
-    tensor_set(X, 0, 0, 1)
-    tensor_set(X, 1, 0, 2)
-    tensor_set(X, 2, 0, 3)
-    tensor_set(X, 3, 0, 4)
-    tensor_set(X, 4, 0, 5)
+    Tensor X = zeros(5, 1)
+    X[0, 0] = 1
+    X[1, 0] = 2
+    X[2, 0] = 3
+    X[3, 0] = 4
+    X[4, 0] = 5
 
-    Tensor Y = tensor_zeros(5, 1)
-    tensor_set(Y, 0, 0, 3)
-    tensor_set(Y, 1, 0, 5)
-    tensor_set(Y, 2, 0, 7)
-    tensor_set(Y, 3, 0, 9)
-    tensor_set(Y, 4, 0, 11)
+    Tensor Y = zeros(5, 1)
+    Y[0, 0] = 3
+    Y[1, 0] = 5
+    Y[2, 0] = 7
+    Y[3, 0] = 9
+    Y[4, 0] = 11
 
     Linear layer1 = Linear(1, 1)
 

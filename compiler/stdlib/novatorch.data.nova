@@ -8,7 +8,7 @@ class DataLoader:
     def init(Tensor d, Tensor l, int bs):
         self.data = d
         self.labels = l
-        self.n_samples = tensor_rows(d)
+        self.n_samples = d.rows
         self.batch_size = bs
         self.current = 0
 
@@ -48,38 +48,38 @@ class DataLoader:
         self.current = 0
 
 def normalize(Tensor t) -> Tensor:
-    int cols = tensor_cols(t)
-    int rows = tensor_rows(t)
-    Tensor out = tensor_zeros(rows, cols)
+    int cols = t.cols
+    int rows = t.rows
+    Tensor out = zeros(rows, cols)
     int col = 0
     while (col < cols):
-        double mn = tensor_get(t, 0, col)
-        double mx = tensor_get(t, 0, col)
+        double mn = t[0, col]
+        double mx = t[0, col]
         int row = 1
         while (row < rows):
-            double v = tensor_get(t, row, col)
+            double v = t[row, col]
             if (v < mn): mn = v
             if (v > mx): mx = v
             row = row + 1
         double range = mx - mn
         row = 0
         while (row < rows):
-            double v = tensor_get(t, row, col)
+            double v = t[row, col]
             double norm = 0.0
             if (range > 0.0):
                 norm = (v - mn) / range
-            tensor_set(out, row, col, norm)
+            out[row, col] = norm
             row = row + 1
         col = col + 1
     return out
 
 def one_hot(int label, int n_classes) -> Tensor:
-    Tensor out = tensor_zeros(1, n_classes)
-    tensor_set(out, 0, label, 1)
+    Tensor out = zeros(1, n_classes)
+    out[0, label] = 1
     return out
 
 def train_test_split(Tensor data, Tensor labels, double test_ratio) -> Tensor, Tensor, Tensor, Tensor:
-    int n = tensor_rows(data)
+    int n = data.rows
     int n_test = int(double(n) * test_ratio)
     int n_train = n - n_test
     Tensor x_train = tensor_slice_rows(data, 0, n_train)

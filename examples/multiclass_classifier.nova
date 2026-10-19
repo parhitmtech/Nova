@@ -4,31 +4,31 @@ orbit novatorch.optim
 ignite:
     # Dataset: 3-class problem (6 samples, 2 features, 3 classes)
     # Class 0: top-left, Class 1: top-right, Class 2: bottom-center
-    Tensor X = tensor_zeros(6, 2)
-    tensor_set(X, 0, 0, 0)
-    tensor_set(X, 0, 1, 1)
-    tensor_set(X, 1, 0, 0)
-    tensor_set(X, 1, 1, 2)
-    tensor_set(X, 2, 0, 2)
-    tensor_set(X, 2, 1, 1)
-    tensor_set(X, 3, 0, 2)
-    tensor_set(X, 3, 1, 2)
-    tensor_set(X, 4, 0, 1)
-    tensor_set(X, 4, 1, 0)
-    tensor_set(X, 5, 0, 1)
-    tensor_set(X, 5, 1, 0)
+    Tensor X = zeros(6, 2)
+    X[0, 0] = 0
+    X[0, 1] = 1
+    X[1, 0] = 0
+    X[1, 1] = 2
+    X[2, 0] = 2
+    X[2, 1] = 1
+    X[3, 0] = 2
+    X[3, 1] = 2
+    X[4, 0] = 1
+    X[4, 1] = 0
+    X[5, 0] = 1
+    X[5, 1] = 0
 
     # One-hot labels: 6x3
     # rows 0,1 = class 0 → [1,0,0]
     # rows 2,3 = class 1 → [0,1,0]
     # rows 4,5 = class 2 → [0,0,1]
-    Tensor Y = tensor_zeros(6, 3)
-    tensor_set(Y, 0, 0, 1)
-    tensor_set(Y, 1, 0, 1)
-    tensor_set(Y, 2, 1, 1)
-    tensor_set(Y, 3, 1, 1)
-    tensor_set(Y, 4, 2, 1)
-    tensor_set(Y, 5, 2, 1)
+    Tensor Y = zeros(6, 3)
+    Y[0, 0] = 1
+    Y[1, 0] = 1
+    Y[2, 1] = 1
+    Y[3, 1] = 1
+    Y[4, 2] = 1
+    Y[5, 2] = 1
 
     # Model: Linear(2→8) → ReLU → Linear(8→3) → Softmax (implicit in CE loss)
     Linear layer1 = Linear(2, 8)

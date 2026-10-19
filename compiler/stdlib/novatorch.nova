@@ -1,11 +1,11 @@
 def tensor_fill_val(Tensor t, double val) -> Tensor:
-    int r = tensor_rows(t)
-    int c = tensor_cols(t)
+    int r = t.rows
+    int c = t.cols
     int i = 0
     while (i < r):
         int j = 0
         while (j < c):
-            tensor_set(t, i, j, val)
+            t[i, j] = val
             j = j + 1
         i = i + 1
     return t

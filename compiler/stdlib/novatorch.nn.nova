@@ -6,21 +6,21 @@ class Linear:
     Tensor last_input
 
     def init(int in_features, int out_features):
-        self.W = tensor_xavier(in_features, out_features)
-        self.b = tensor_zeros(1, out_features)
+        self.W = xavier(in_features, out_features)
+        self.b = zeros(1, out_features)
         self.in_f = in_features
         self.out_f = out_features
 
     def forward(Tensor x) -> Tensor:
         self.last_input = x
-        Tensor z = matmul(x, self.W)
-        return tensor_add(z, self.b)
+        Tensor z = x @ self.W
+        return z + self.b
 
     def backward(Tensor grad_out) -> Tensor:
-        return matmul(grad_out, tensor_T(self.W))
+        return grad_out @ tensor_T(self.W)
 
     def get_dW(Tensor grad_out) -> Tensor:
-        return matmul(tensor_T(self.last_input), grad_out)
+        return tensor_T(self.last_input) @ grad_out
 
 class ReLU:
     Tensor last_input
@@ -34,7 +34,7 @@ class ReLU:
 
     def backward(Tensor grad_out) -> Tensor:
         Tensor mask = relu_grad(self.last_input)
-        return tensor_mul(grad_out, mask)
+        return grad_out * mask
 
 class Sigmoid:
     Tensor last_input
@@ -48,7 +48,7 @@ class Sigmoid:
 
     def backward(Tensor grad_out) -> Tensor:
         Tensor mask = sigmoid_grad(self.last_input)
-        return tensor_mul(grad_out, mask)
+        return grad_out * mask
 
 class Tanh:
     Tensor last_input
@@ -62,7 +62,7 @@ class Tanh:
 
     def backward(Tensor grad_out) -> Tensor:
         Tensor out = tanh_t(self.last_input)
-        Tensor sq  = tensor_mul(out, out)
-        Tensor one = tensor_ones(tensor_rows(sq), tensor_cols(sq))
-        Tensor mask = tensor_sub(one, sq)
-        return tensor_mul(grad_out, mask)
+        Tensor sq = out * out
+        Tensor one = ones(sq.rows, sq.cols)
+        Tensor mask = one - sq
+        return grad_out * mask
