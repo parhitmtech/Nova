@@ -32,6 +32,19 @@ static void parse_tensor_element_store(int t, const string& name, int line,
     emit_tensor_op(TEN_SET, "element assignment", args, types, {}, line, head , tracker);
 }
 
+// The statements of one block, from its first element to its '}' (token ends on the '}'). The names it
+// declares are gone after it.
+static void parse_block_body(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    enter_block();
+    while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
+    {
+        parse_statement(head, tracker);
+        token = lexer.GetToken();
+    }
+    exit_block();
+}
+
 void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     VarType declType = TYPE_UNKNOWN;
@@ -41,7 +54,7 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
     string name = token.lexeme;
     int nameLine = token.line_no;
 
-    if (symbolTable.count(name) || arrayTable.count(name)) 
+    if (name_is_declared(name)) 
     {
         report_error(nameLine, "redeclaration of '" + name + "'");
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
@@ -59,18 +72,38 @@ void parse_typed_declaration(struct InstructionNode*& head, struct InstructionNo
         else if (declType == TYPE_DOUBLE) doubleSymbolTable[name] = alloc_double_slot();
         else                              symbolTable[name]       = alloc_slot();
         typeTable[name] = declType;
-        if (declType == TYPE_TENSOR)
+        // Set the starting value each time the declaration runs, not only once at compile time: a loop body
+        // declares the variable again on every pass. Numbers start at 0, a Tensor at the invalid handle -1.
+        struct InstructionNode* node = new InstructionNode();
+        node->line_no = nameLine;
+        if (declType == TYPE_FLOAT)
         {
-            int invalid = alloc_slot();
-            mem[invalid] = -1;
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = nameLine;
+            int zero = alloc_float_slot();
+            fmem[zero] = 0.0f;
+            node->type = ASSIGN_F;
+            node->assign_f_inst.left_hand_side_index = floatSymbolTable[name];
+            node->assign_f_inst.operand1_index = zero;
+            node->assign_f_inst.op = OPERATOR_NONE;
+        }
+        else if (declType == TYPE_DOUBLE)
+        {
+            int zero = alloc_double_slot();
+            dmem[zero] = 0.0;
+            node->type = ASSIGN_D;
+            node->assign_d_inst.left_hand_side_index = doubleSymbolTable[name];
+            node->assign_d_inst.operand1_index = zero;
+            node->assign_d_inst.op = OPERATOR_NONE;
+        }
+        else
+        {
+            int start = alloc_slot();
+            mem[start] = (declType == TYPE_TENSOR) ? -1 : 0;
             node->type = ASSIGN;
             node->assign_inst.left_hand_side_index = symbolTable[name];
-            node->assign_inst.operand1_index       = invalid;
-            node->assign_inst.op                   = OPERATOR_NONE;
-            append(head, tracker, node);
+            node->assign_inst.operand1_index = start;
+            node->assign_inst.op = OPERATOR_NONE;
         }
+        append(head, tracker, node);
         token = lexer.GetToken();  // ';'
         return;
     }
@@ -1070,10 +1103,9 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     parse_condition(head, tracker, condFailNode);
     expect_condition_rparen(keyword);         // token is now '{'
     token = lexer.GetToken();
-    while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
-    { 
-        parse_statement(head, tracker); token = lexer.GetToken(); 
-    }
+    
+    parse_block_body(head, tracker);
+
     struct InstructionNode* skipJmp = new InstructionNode();
     skipJmp->line_no = token.line_no;
     skipJmp->type = JMP; skipJmp->jmp_inst.target = noOpNode;
@@ -1094,10 +1126,7 @@ void parse_if_statement(struct InstructionNode*& head, struct InstructionNode*& 
     else if (peeked.token_type == ELSE) 
     {
         token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
-        while (token.token_type != RBRACE && token.token_type != END_OF_FILE) 
-        { 
-            parse_statement(head, tracker); token = lexer.GetToken(); 
-        }
+        parse_block_body(head, tracker);
         tracker->next = noOpNode; tracker = noOpNode;
     } 
     else 
@@ -1149,7 +1178,7 @@ void parse_while_statement(struct InstructionNode*& head, struct InstructionNode
     expect_condition_rparen("while");         // token is now '{'
     token = lexer.GetToken();
     g_loops.push_back({noOpNode, condStart});
-    while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+    parse_block_body(head, tracker);
     g_loops.pop_back();
     struct InstructionNode* jmpNode = new InstructionNode();
     jmpNode->line_no = token.line_no;
@@ -1178,11 +1207,9 @@ void parse_do_while_statement(struct InstructionNode*& head, struct InstructionN
     condLabel->line_no = token.line_no;
     condLabel->type = NOOP;
     g_loops.push_back({noOpNode, condLabel});
-    while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
-    {
-        parse_statement(head, tracker);
-        token = lexer.GetToken();
-    }
+
+    parse_block_body(head, tracker);
+
     g_loops.pop_back();
     append(head, tracker, condLabel);
     // token = '}'
@@ -1231,7 +1258,7 @@ void parse_for_statement(struct InstructionNode*& head, struct InstructionNode*&
         parse_assignment_for_statement(updateNode, updateTracker);
         token = lexer.GetToken(); token = lexer.GetToken();
         g_loops.push_back({noOpNode, updateNode});  // 'continue' runs the update, then the condition
-        while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(head, tracker); token = lexer.GetToken(); }
+        parse_block_body(head, tracker);
         g_loops.pop_back();
         struct InstructionNode* jmpNode = new InstructionNode();
         jmpNode->line_no = token.line_no;
@@ -1279,7 +1306,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
                 if (head == nullptr) { head = tracker = caseNode; } else { tracker->next = caseNode; tracker = caseNode; }
                 token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
                 struct InstructionNode* bodyHead = nullptr, *bodyTracker = nullptr;
-                while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
+                parse_block_body(bodyHead, bodyTracker);
                 caseNode->cjmp_inst.target = bodyHead;
                 struct InstructionNode* jmpNode = new InstructionNode();
                 jmpNode->line_no = token.line_no;
@@ -1297,7 +1324,7 @@ void parse_switch_statement(struct InstructionNode*& head, struct InstructionNod
             if (head == nullptr) { head = tracker = defaultNode; } else { tracker->next = defaultNode; tracker = defaultNode; }
             token = lexer.GetToken(); token = lexer.GetToken(); token = lexer.GetToken();
             struct InstructionNode* bodyHead = nullptr, *bodyTracker = nullptr;
-            while (token.token_type != RBRACE && token.token_type != END_OF_FILE) { parse_statement(bodyHead, bodyTracker); token = lexer.GetToken(); }
+            parse_block_body(bodyHead, bodyTracker);
             defaultNode->jmp_inst.target = bodyHead;
             struct InstructionNode* jmpNode = new InstructionNode();
             jmpNode->line_no = token.line_no;

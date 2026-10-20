@@ -6,6 +6,47 @@
 // Parser helpers: error reporting, declaration/bounds/bracket checks, IR list append. Split out of parser.cc.
 #include "parser_internal.h"
 
+bool name_is_declared(const string& name)
+{
+    return symbolTable.count(name) || floatSymbolTable.count(name) || doubleSymbolTable.count(name)
+        || arrayTable.count(name) || varStructType.count(name) || varClassType.count(name);
+}
+
+// Block scoping. A variable declared in a block (an if / elif / else, loop or case body) is gone after the 
+// block, so a later block can declare the name again. enter_block() remembers which names exist and 
+// exit_block() removes every name declared since. A name that is already visible cannot be declared again
+// (no shadowing), so removing the new names restores the enclosing scope exactly.
+static vector<set<string>> blockNames;
+
+// Every table keyed by a variable's name.
+template <class F> static void for_each_variable_table(F f)
+{
+    f(symbolTable); f(floatSymbolTable); f(doubleSymbolTable); f(typeTable);
+    f(arrayTable); f(arraySizeTable); f(arrayDynamic);
+    f(varStructType); f(structFieldSlots); f(structFieldTypes);
+    f(varClassType); f(classFieldSlots); f(classFieldTypes);
+}
+
+void enter_block()
+{
+    set<string> names;
+    for_each_variable_table([&](auto& table) { for (auto& kv : table) names.insert(kv.first); });
+    blockNames.push_back(names);
+}
+
+void exit_block()
+{
+    if (blockNames.empty()) return;
+    const set<string>& before = blockNames.back();
+    for_each_variable_table([&](auto& table) {
+        for (auto it = table.begin(); it != table.end();)
+        {
+            it = before.count(it->first) ? std::next(it) : table.erase(it);
+        }
+    });
+    blockNames.pop_back();
+}
+
 string typeToString(VarType t)
 {
     switch (t) {

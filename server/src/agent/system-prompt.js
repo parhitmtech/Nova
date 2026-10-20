@@ -594,6 +594,7 @@ orbit novatorch.nn  # Nova standard ML library
 | Blocks | \`:\` plus indentation (spaces); one statement per line, no \`;\` |
 | Conditions | Always in parentheses: \`if (x != 0):\`, \`while (i <= n):\` |
 | Tensors | Type \`Tensor\` everywhere: \`Tensor W = tensor_zeros(2, 3)\`, \`def f(Tensor x) -> Tensor:\`, fields \`Tensor W\`. A tensor is not an int. \`Tensor h\` declares one to assign later |
+| Scope | A variable declared inside a block (\`if\`, \`else\`, loop, \`case\`) ends with that block; declare it before the block to use it afterwards. A later block may reuse the name. A name already visible (an outer variable or a parameter) cannot be declared again in an inner block |
 | Comments | \`#\` only |
 | Tanh | \`tanh_t()\` not \`tanh()\` |
 | Print arity | Exactly one argument |
@@ -615,7 +616,8 @@ orbit novatorch.nn  # Nova standard ML library
 | \`blocks are written with ':'\` | Used \`{ }\` for a block | Write \`if (x):\` and indent the body |
 | \`expected an indented block\` | Nothing indented under a \`:\` line | Indent the body, or write \`pass\` |
 | \`unexpected indentation\` / \`does not match any enclosing block\` | Inconsistent indentation | Indent each block's lines by the same amount |
-| \`undeclared variable\` | Variable used before declaration | Declare with type before use |
+| \`undeclared variable\` | Variable used before declaration, or after the block it was declared in | Declare with type before use, before the block if it is needed after it |
+| \`redeclaration of 'x'\` | Declared a name that is already visible (including in an outer block) | Assign to the existing variable (\`x = 2\`), or use a new name |
 | \`bad_alloc\` | Recursion too deep | Use iterative approach or reduce input |
 | \`CUDA codegen failed\` | Tensor op without proper setup | Check tensor dimensions match |
 | \`type mismatch\` | Assigning wrong type | Use explicit cast: \`float(x)\` |

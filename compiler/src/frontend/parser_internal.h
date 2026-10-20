@@ -88,6 +88,9 @@ string typeToString(VarType t);
 VarType type_of_keyword(TokenType t);  // int/bool/string/float/double/Tensor -> its type, else TYPE_UNKNOWN
 void report_error(int line, string message);
 bool check_declared(string name, int line);
+bool name_is_declared(const string& name);  // a variable, array, struct or object with this name is visible
+void enter_block();  // block scoping: names declared after this call ...
+void exit_block();  // ... are removed by the matching exit_block()
 bool check_bounds(string arrName, int index, int line);
 bool check_balanced_parens();
 void append(struct InstructionNode*& head, struct InstructionNode*& tracker, struct InstructionNode* node);

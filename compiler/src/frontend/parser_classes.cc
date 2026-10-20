@@ -82,7 +82,7 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
     string varName = token.lexeme;
     int varLine = token.line_no;
 
-    if (varStructType.count(varName))
+    if (name_is_declared(varName))
     {
         report_error(varLine, "redeclaration of struct variable '" + varName + "'");
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
@@ -445,7 +445,7 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     string varName = token.lexeme;
     int varLine = token.line_no;
 
-    if (varClassType.count(varName))
+    if (name_is_declared(varName))
     {
         report_error(varLine, "redeclaration of class variable '" + varName + "'");
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)

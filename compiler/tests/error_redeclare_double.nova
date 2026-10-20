@@ -1,0 +1,4 @@
+# A double (or float) cannot be declared twice in the same block either.
+def main():
+    double x = 1.0
+    double x = 2.0

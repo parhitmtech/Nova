@@ -92,8 +92,11 @@ Point p = Point(1, 2)
 vector<int> v = vector<int>()
 ```
 
-Variables are block-scoped: a variable declared inside a loop body is not visible after the loop, and
-the same name can be declared again in a later block.
+Variables are block-scoped: a variable declared inside a block (an `if` / `elif` / `else`, loop or `case`
+body) is not visible after it, and the same name can be declared again in a later block, even with
+another type. A name that is already visible (an outer variable or a parameter) cannot be declared again
+in an inner block: there is no shadowing. A declaration runs every time its block does, so `int n` in a
+loop body starts at 0 on every pass.
 
 ## 5. Functions
 
@@ -299,7 +302,9 @@ commit.
 7. Constructors and modules (done): `Linear l = Linear(2, 4)` runs init (`Linear l` runs a no-argument
    init); `Point p = Point(3, 4)`; `orbit a.b` loads a/b.nova next to the file, else a.b.nova from the
    stdlib; `import` is an error. Field syntax (`int x` under `struct P:`) already came with step 3.
-8. Block scoping.
+8. Block scoping (done): a name declared in a block ends with it; a later block can declare it again;
+   no shadowing (redeclaring a visible name is an error, for every type, struct and object); a
+   declaration without a value resets on every pass. The debugger lists only the top-level names.
 9. Generics: loose `def` and `class Box<T>` (one compiled copy per type used), then the generic
    `std.collections` (`vector<T>`, `map<K, V>`, ...) and `std.algo` written in Nova.
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.
