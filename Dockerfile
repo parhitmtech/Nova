@@ -7,7 +7,7 @@ COPY Compiler_PJ_3/stdlib ./stdlib
 RUN g++ -std=c++17 -O2 -o compiler compiler.cc lexer.cc inputbuf.cc parser2.cc bytecode.cc autograd.cc
 
 FROM debian:bookworm-slim AS worker
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 coreutils && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/nova
 COPY --from=compiler-build /src/compiler ./compiler
 COPY Compiler_PJ_3/stdlib ./stdlib

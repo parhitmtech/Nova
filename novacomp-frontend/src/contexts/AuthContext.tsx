@@ -22,15 +22,17 @@ function readSession(token: string | null): Session | null {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(() => readSession(localStorage.getItem('novacomp_token')))
+  // Discard tokens retained by older versions of the client.
+  useEffect(() => { localStorage.removeItem('novacomp_token') }, [])
+  const [session, setSession] = useState<Session | null>(() => readSession(sessionStorage.getItem('novacomp_token')))
   const logout = useCallback(() => {
-    localStorage.removeItem('novacomp_token')
+    sessionStorage.removeItem('novacomp_token')
     setSession(null)
   }, [])
   const saveToken = useCallback((token: string) => {
     const next = readSession(token)
     if (!next) throw new Error('The server returned an invalid or expired session. Please sign in again.')
-    localStorage.setItem('novacomp_token', token)
+    sessionStorage.setItem('novacomp_token', token)
     setSession(next)
   }, [])
   useEffect(() => {
