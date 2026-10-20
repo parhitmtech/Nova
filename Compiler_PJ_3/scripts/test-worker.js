@@ -33,7 +33,8 @@ const { createExecutor } = require('../execution');
     console.log('Production worker wrote an artifact larger than 16 KiB.');
 
     // Launch directly in detached mode: no executor/Node timer can stop this job.
-    fs.writeFileSync(source, 'main() { int x = 0 ; while x < 2000000000 { x = x + 1 ; } }');
+    // Detached -i keeps stdin open; input() blocks without hitting Nova's instruction cap.
+    fs.writeFileSync(source, 'main() { int x = input() ; print(x) ; }');
     const spec = executor.buildCommand([source], { cwd: dir, timeoutMs: 2000 });
     spec.args.splice(spec.args.indexOf('--rm'), 1); // retain state for timeout verification
     spec.args.splice(1, 0, '--detach');
