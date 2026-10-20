@@ -1,28 +1,134 @@
 name: Build and test
-on: [push, pull_request]
+on: [push, pull_request, merge_group]
 permissions:
   contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  verify:
+  backend:
+    name: Backend unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: Compiler_PJ_3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            Compiler_PJ_3/package-lock.json
-            novacomp-frontend/package-lock.json
+          cache-dependency-path: Compiler_PJ_3/package-lock.json
       - run: npm ci
+      - run: npm run build:compiler
+      - run: npm run test:security
+
+  compiler:
+    name: Compiler (${{ matrix.cxx }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        cxx: [g++, clang++]
+    defaults:
+      run:
         working-directory: Compiler_PJ_3
-      - run: npm run build:compiler && npm test
+    env:
+      CXX: ${{ matrix.cxx }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm run build:compiler
+      - run: npm run test:language
+
+  sanitizers:
+    name: Compiler (ASan + UBSan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
         working-directory: Compiler_PJ_3
-      - run: npm ci && npm run lint && npm run build
+    env:
+      # Instruction graphs currently live until process exit. Check memory
+      # accesses and undefined behavior; leak detection is a separate concern.
+      ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+      UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build instrumented compiler
+        run: >-
+          clang++ -std=c++17 -O1 -g -fno-omit-frame-pointer
+          -fsanitize=address,undefined
+          -o "$RUNNER_TEMP/nova-compiler-sanitized"
+          compiler.cc lexer.cc inputbuf.cc parser2.cc bytecode.cc autograd.cc
+      - name: Run language suite with sanitizers
+        run: NOVA_COMPILER_PATH="$RUNNER_TEMP/nova-compiler-sanitized" npm run test:language
+
+  frontend:
+    name: Frontend lint and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
         working-directory: novacomp-frontend
-      - run: npx playwright install --with-deps chromium && npm run test:e2e
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: novacomp-frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  e2e:
+    name: Frontend e2e (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
         working-directory: novacomp-frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: novacomp-frontend/package-lock.json
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: docker build --target worker -t novacomp-worker:local .
       - run: npm run test:worker
         working-directory: Compiler_PJ_3
       - run: docker build --target server -t novacomp-server:ci .
+
+  hygiene:
+    name: Repo hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-repo-hygiene.js

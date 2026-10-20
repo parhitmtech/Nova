@@ -81,3 +81,9 @@ npm run test:e2e
 Browser tests exercise the real React/Monaco UI against controlled API responses. They verify keyboard settings, file-switch saves, save-error recovery, stdin, hidden disabled GPU actions and tab-scoped tokens, binary safeguards, and mobile navigation. They do not contact AWS or SOL. GitHub Actions runs builds, all these tests, and both container builds.
 
 Keyboard shortcuts: Ctrl/Cmd+S saves, Ctrl/Cmd+Enter runs, Ctrl/Cmd+K opens commands. Dialogs support Tab/Shift+Tab and Escape. Files are saved before switching, failed saves keep the draft open, and binary model/bytecode artifacts cannot enter autosave. Binary downloads need a dedicated authorized backend endpoint and are not represented as a working feature.
+
+## Required CI checks
+
+The workflow reports the exact eight merge-gate names: Backend unit tests, Compiler (g++), Compiler (clang++), Compiler (ASan + UBSan), Docker images, Frontend lint and build, Frontend e2e (Playwright), and Repo hygiene. These run for pushes, pull requests, and merge groups without path filters. The compiler jobs run the language suite with both toolchains; the sanitizer job builds an instrumented compiler and fails on address or undefined-behavior findings. Leak detection is disabled because the instruction graph is currently retained until process exit; leak checking is not covered by this job.
+
+Repo hygiene rejects tracked environment/private-key files, installed dependencies, runtime workspace/job data, and generated native binaries. Historical workspace source examples live in `Compiler_PJ_3/examples/workspace-samples/`; runtime workspaces remain private and untracked.
