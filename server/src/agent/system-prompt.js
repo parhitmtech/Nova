@@ -205,6 +205,28 @@ ignite:
 
 Multi-return types are listed with commas after \`->\`. Assignment unpacks with typed variables separated by commas.
 
+### Generic (loose) functions
+
+A parameter without a type makes the function generic: each call compiles a copy for its argument types (like a C++ template), so it stays statically typed. Without \`-> type\`, the return type comes from the first \`return\`.
+
+\`\`\`nova
+def scale(x, k):
+    return x * k
+
+def area(double w, double h):
+    return w * h
+
+ignite:
+    print(scale(2, 3))        # an int copy
+    print(scale(2.0, 3.0))    # a float copy
+    Tensor t = scale(ones(1, 2), 2.0)
+    print(area(2.0, 3.5))
+\`\`\`
+
+- A recursive function whose return type is not int must write \`-> type\` if it calls itself before its first \`return\`
+- A function returning several values needs \`-> type, type\` and typed parameters
+- A generic function is only checked when it is called
+
 ### Automatic memoization
 
 Pure recursive functions are **automatically memoized** by the compiler — no annotation needed. A function is considered pure if it:

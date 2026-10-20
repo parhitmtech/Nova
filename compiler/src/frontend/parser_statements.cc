@@ -263,6 +263,16 @@ void parse_multi_return_assignment(struct InstructionNode*& head, struct Instruc
     string funcName = token.lexeme;
     int callLine = token.line_no;
 
+    if (is_generic_function(funcName))
+    {
+        report_error(callLine, "'" + funcName + "' has untyped parameters, so it cannot return several values: "
+                               "give its parameters types");
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+        {
+            token = lexer.GetToken();
+        }
+        return;
+    }
     if (!functionTable.count(funcName))
     {
         report_error(callLine, "undeclared function '" + funcName + "'");
@@ -482,10 +492,12 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                 retExprs.push_back(parse_expression(head, tracker));
                 retExprTypes.push_back(lastExprType);
             }
+            if (currentFuncReturnPending) infer_return_type(retExprTypes, token.line_no);
             int nExpected = currentFuncRetSlots.empty() ? 1 : (int)currentFuncRetSlots.size();
             if ((int)retExprs.size() != nExpected)
             {
-                report_error(token.line_no, "return count mismatch: expected " + to_string(nExpected) + " got " + to_string(retExprs.size()));
+                report_error(token.line_no, "function '" + currentFunctionLabel + "' returns " + to_string(nExpected) + 
+                                            " value(s) but this return gives " + to_string(retExprs.size()));
             }
             for (int i = 0;i < (int)retExprs.size();i++)
             {
@@ -514,6 +526,9 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
                     an->assign_inst.left_hand_side_index = rSlot;
                     an->assign_inst.operand1_index = retExprs[i];
                     an->assign_inst.op = OPERATOR_NONE;
+                    // rSlot is the function's one return slot, read by every caller: once it carries a tensor
+                    // from any return, the tensor-free pass treats every caller's copy as a tensor
+                    if (g_tensorSlots.count(retExprs[i])) g_tensorSlots.insert(rSlot);
                 }
                 append(head, tracker, an);
             }
@@ -726,7 +741,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         {
             parse_assignment_statement(head, tracker);
         }
-        else if ((functionTable.find(name) != functionTable.end()) || functionParams.count(name))
+        else if ((functionTable.find(name) != functionTable.end()) || functionParams.count(name) || is_generic_function(name))
         {
             // functionParams also covers a function calling itself as a statement while its own
             // body is being parsed
@@ -1145,6 +1160,20 @@ struct LoopTargets
     struct InstructionNode* continueTo;
 };
 static vector<LoopTargets> g_loops;
+
+static vector<vector<LoopTargets>> g_loopsAside;
+
+void set_loops_aside()
+{
+    g_loopsAside.push_back(g_loops);
+    g_loops.clear();
+}
+
+void restore_loops()
+{
+    g_loops = g_loopsAside.back();
+    g_loopsAside.pop_back();
+}
 
 // break / continue: one jump to the innermost loop's exit or next iteration.
 static void parse_loop_jump(struct InstructionNode*& head, struct InstructionNode*& tracker)

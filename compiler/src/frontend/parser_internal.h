@@ -88,6 +88,16 @@ string typeToString(VarType t);
 VarType type_of_keyword(TokenType t);  // int/bool/string/float/double/Tensor -> its type, else TYPE_UNKNOWN
 void report_error(int line, string message);
 bool check_declared(string name, int line);
+void set_variables_aside();  // empty every variable table until restore_variables(): a generic function is
+void restore_variables();  // compiled in the middle of its caller and must not see the caller's names
+void set_loops_aside();  // likewise for the loops 'break' and 'continue' jump out of
+void restore_loops();
+bool is_generic_function(const string& name);
+int generic_parameter_count(const string& name);
+string instantiate_generic_function(const string& name, const vector<VarType>& argTypes);
+void infer_return_type(const vector<VarType>& types, int line);
+extern bool currentFuncReturnPending;  // compiling a function without '-> type' that has not returned a value yet
+extern bool currentFuncSelfCalled;  // ... and it has called itself meanwhile
 bool name_is_declared(const string& name);  // a variable, array, struct or object with this name is visible
 void enter_block();  // block scoping: names declared after this call ...
 void exit_block();  // ... are removed by the matching exit_block()

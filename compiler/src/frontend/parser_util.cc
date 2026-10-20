@@ -18,13 +18,36 @@ bool name_is_declared(const string& name)
 // (no shadowing), so removing the new names restores the enclosing scope exactly.
 static vector<set<string>> blockNames;
 
-// Every table keyed by a variable's name.
+// Every table keyed by a variable's name, as one tuple of references.
+static auto variable_tables()
+{
+    return std::tie(symbolTable, floatSymbolTable, doubleSymbolTable, typeTable,
+                    arrayTable, arraySizeTable, arrayDynamic, 
+                    varStructType, structFieldSlots, structFieldTypes,
+                    varClassType, classFieldSlots, classFieldTypes);
+}
 template <class F> static void for_each_variable_table(F f)
 {
-    f(symbolTable); f(floatSymbolTable); f(doubleSymbolTable); f(typeTable);
-    f(arrayTable); f(arraySizeTable); f(arrayDynamic);
-    f(varStructType); f(structFieldSlots); f(structFieldTypes);
-    f(varClassType); f(classFieldSlots); f(classFieldTypes);
+    std::apply([&](auto&... table) { (f(table), ...); }, variable_tables());
+}
+
+// A copy of every variable table (in variable_tables() order), kept while a generic function is compiled.
+using VariableTables = std::tuple<map<string, int>, map<string, int>, map<string, int>, map<string, VarType>,
+                                  map<string, int>, map<string, int>, map<string, bool>,
+                                  map<string, string>, map<string, map<string, int>>, map<string, map<string, VarType>>,
+                                  map<string, string>, map<string, map<string, int>>, map<string, map<string, VarType>>>;
+static vector<VariableTables> variablesAside;
+
+void set_variables_aside()
+{
+    variablesAside.push_back(variable_tables());
+    for_each_variable_table([](auto& table) { table.clear(); });
+}
+
+void restore_variables()
+{
+    variable_tables() = variablesAside.back();
+    variablesAside.pop_back();
 }
 
 void enter_block()

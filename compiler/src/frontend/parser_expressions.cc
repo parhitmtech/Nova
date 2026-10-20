@@ -23,6 +23,21 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
     token = lexer.GetToken();  // past ')'
 
+    // A generic function: call the copy compiled for these argument types.
+    if (is_generic_function(funcName))
+    {
+        if ((int)argTypes.size() != generic_parameter_count(funcName))
+        {
+            report_error(token.line_no, "function '" + funcName + "' expects " + to_string(generic_parameter_count(funcName)) + 
+                                        " argument(s) but got " + to_string(argTypes.size()));
+            lastExprType = TYPE_UNKNOWN;
+            return 0;
+        }
+        funcName = instantiate_generic_function(funcName, argTypes);
+    }
+    // A function without '-> type' calling itself before its return type is known (see parse_function_definition).
+    if (funcName == currentFunctionLabel && currentFuncReturnPending) currentFuncSelfCalled = true;
+
     vector<string>& params = functionParams[funcName];
     if (argIndices.size() != params.size())
         report_error(token.line_no, "function '" + funcName + "' expects " + to_string(params.size()) + " argument(s) but got " + to_string(argIndices.size()));
@@ -284,7 +299,7 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             return parse_sol_call(method, head, tracker);
         }
 
-        if (functionTable.find(token.lexeme) != functionTable.end()) return parse_function_call(head, tracker);
+        if (functionTable.find(token.lexeme) != functionTable.end() || is_generic_function(token.lexeme)) return parse_function_call(head, tracker);
 
         if (TENSOR_OP_MAP.count(token.lexeme))
         {

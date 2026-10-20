@@ -1,0 +1,76 @@
+# Loose def: a parameter without a type makes a function generic. Each call compiles a copy for its
+# argument types (like a C++ template), and a function without '-> type' takes its return type from its
+# first return.
+def scale(x, k):
+    return x * k
+
+def twice(x):
+    return x + x
+
+def axpy(double a, x, y):  # partly typed
+    return a * x + y
+
+def fact(n):  # recursive, int
+    if (n <= 1):
+        return 1
+    return n * fact(n - 1)
+
+def half(x, n):  # recursive, float: the first return comes before the self-call
+    if (n == 0):
+        return x
+    return half(x / 2.0, n - 1)
+
+def sq(x):
+    return x * x
+
+def sum_sq(a, b):  # a generic calling a generic
+    return sq(a) + sq(b)
+
+def first_over(limit, step):  # loops and break inside a copy
+    int i = 0
+    while (true):
+        if (i * step > limit):
+            break
+        i += 1
+    return i
+
+def show(x):  # no return value
+    print(x)
+
+def area(double w, double h):  # typed parameters, return type from the return
+    return w * h
+
+class Doubler:
+    int v
+
+    def init():
+        self.v = twice(21)  # a copy compiled from inside a method
+
+def main():
+    print(scale(2, 3))
+    print(scale(2.0, 3.0))
+    print(twice(4))
+    print(twice("ab"))
+    Tensor t = twice(ones(1, 2))
+    print(t[0, 1])
+    print(axpy(2.0, 3.0, 1.0))
+    Tensor r = axpy(2.0, ones(1, 2), ones(1, 2))
+    print(r[0, 0])
+    print(fact(5))
+    print(half(8.0, 2))
+    print(sum_sq(3, 4))
+    print(sum_sq(0.5, 1.5))
+    int k = 0
+    while (k < 2):
+        print(first_over(10, 3))
+        k += 1
+    show(3)
+    show(2.5)
+    double a = area(2.0, 3.5)
+    print(a)
+    Doubler d = Doubler()
+    print(d.v)
+    int y = 100  # the copies' own locals do not touch the caller's
+    print(scale(y, 2))
+    print(y)
+    print(tensor_live_count())

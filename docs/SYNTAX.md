@@ -307,4 +307,10 @@ commit.
    declaration without a value resets on every pass. The debugger lists only the top-level names.
 9. Generics: loose `def` and `class Box<T>` (one compiled copy per type used), then the generic
    `std.collections` (`vector<T>`, `map<K, V>`, ...) and `std.algo` written in Nova.
+   - 9a (done): loose `def`. A function with an untyped parameter is compiled per call signature, as
+     `f<double, int>`; a function without `-> type` takes its return type from its first `return` (a
+     recursive one that calls itself first must write it if it is not int). A generic function is only
+     type-checked when called. Several return values still need `->` and typed parameters. Also: a
+     function's locals now leave every name table (two functions can each declare an object `p`).
+   - 9b: `class Box<T>`. 9c: `std.collections`. 9d: `std.algo`.
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.
