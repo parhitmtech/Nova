@@ -95,6 +95,9 @@ void restore_loops();
 bool is_generic_function(const string& name);
 int generic_parameter_count(const string& name);
 string instantiate_generic_function(const string& name, const vector<VarType>& argTypes);
+void compile_with_caller_aside(int position, void (*compile)());  // compile a definition from the token at position
+bool is_generic_class(const string& name);
+string parse_generic_class_type();  // Box<int> with token on Box: compiles the copy, returns "Box<int>"; token ends on '>'
 void infer_return_type(const vector<VarType>& types, int line);
 extern bool currentFuncReturnPending;  // compiling a function without '-> type' that has not returned a value yet
 extern bool currentFuncSelfCalled;  // ... and it has called itself meanwhile

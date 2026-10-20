@@ -349,6 +349,31 @@ ignite:
 - Methods called with dot notation: \`obj.method(args)\`
 - Class fields accessed as \`self.field\` inside methods, \`obj.field\` outside
 
+### Generic classes
+
+\`class Box<T>\` takes type parameters; \`Box<int>\` compiles a copy of the class with \`T\` replaced by \`int\` (like a C++ class template).
+
+\`\`\`nova
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+ignite:
+    Box<int> a = Box<int>(5)
+    Box<double> d = Box<double>(2.5)
+    print(a.get())
+    print(d.get())
+\`\`\`
+
+- Write the type arguments in the declaration and the constructor: \`Box<int> a = Box<int>(5)\`
+- Type arguments are built-in types only: \`int\`, \`float\`, \`double\`, \`bool\`, \`string\`, \`Tensor\`
+- Several parameters: \`class Pair<A, B>\`, used as \`Pair<int, double>\`
+
 ---
 
 ## Tensor Operations

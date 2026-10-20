@@ -1,0 +1,62 @@
+# Generic classes: class Box<T>. Each Box<...> a declaration uses is a copy of the class compiled with T
+# replaced by that type (like a C++ class template).
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+    def set(T v):
+        self.value = v
+
+class Pair<A, B>:
+    A first
+    B second
+
+    def init(A a, B b):
+        self.first = a
+        self.second = b
+
+    def swap_sum() -> B:
+        B total = self.second
+        return total
+
+def twice(x):  # a generic function on a generic class's value
+    return x + x
+
+def boxed_double(int n) -> int:  # a copy declared inside a function
+    Box<int> b = Box<int>(n * 2)
+    return b.get()
+
+def main():
+    Box<int> a = Box<int>(5)
+    print(a.get())
+    a.set(9)
+    print(a.get())
+    print(a.value)
+    Box<double> d = Box<double>(2.5)
+    print(d.get())
+    Box<string> s = Box<string>("hi")
+    print(s.get())
+    Box<Tensor> t = Box<Tensor>(ones(2, 2))
+    Tensor x = t.get()
+    print(x[1, 1])
+    print(t.value.rows)
+    Box<int> other = Box<int>(1)  # reuses the Box<int> copy
+    print(a.get() + other.get())
+
+    Pair<int, double> p = Pair<int, double>(3, 1.5)
+    print(p.first)
+    print(p.second)
+    print(p.swap_sum())
+
+    print(twice(d.get()))
+    print(boxed_double(21))
+    int i = 0
+    while (i < 3):
+        Box<int> b = Box<int>(i)
+        print(b.get())
+        i += 1

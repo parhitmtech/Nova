@@ -1,0 +1,9 @@
+# A copy is type-checked with T replaced: Box<int> takes an int.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    Box<int> b = Box<int>("no")

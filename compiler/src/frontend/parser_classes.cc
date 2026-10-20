@@ -172,15 +172,147 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
     // else token = ';'
 }
 
+// Generic classes: class Box<T>. Box<int> is a copy of the class compiled with every T in its tokens replaced by
+// the int token, named "Box<int>" (as C++ compiles a class template), the first time a declaration needs it.
+struct GenericClass
+{
+    int start, end;  // the class's tokens, from its name to just past its closing '}'
+    vector<string> typeParams;  // T, U, ...
+};
+
+static map<string, GenericClass> genericClasses;
+static string pendingClassCopyName;  // set by instantiate_generic_class for the definition it is about to compile
+
+bool is_generic_class(const string& name) { return genericClasses.count(name) > 0; }
+
+// The copy of generic class `name` for these type arguments (each one token: int, double, Tensor, ...).
+// Returns the copy's name, e.g. "Box<int>", or "" after an error.
+static string instantiate_generic_class(const string& name, const vector<Token>& args, int line)
+{
+    GenericClass& g = genericClasses[name];
+    string copyName = name + "<";
+    for (int i = 0; i < (int)args.size(); i++) copyName += (i ? ", " : "") + args[i].lexeme;
+    copyName += ">";
+    if (classTable.count(copyName)) return copyName;
+    if (args.size() != g.typeParams.size())
+    {
+        report_error(line, "class '" + name + "' takes " + to_string(g.typeParams.size()) + " type argument(s) but got " + 
+                            to_string(args.size()));
+        return "";
+    }
+    for (const Token& a : args)
+    {
+        // A built-in type only: an object cannot be a field's or parameter's value yet
+        if (type_of_keyword(a.token_type) == TYPE_UNKNOWN)
+        {
+            report_error(line, "'" + a.lexeme + "' cannot be a type argument: use int, float, double, bool, string or Tensor");
+            return "";
+        }
+    }
+
+    // Replace each type parameter in the class's tokens by its argument while the copy is compiled.
+    vector<Token> original;
+    for (int i = g.start; i < g.end; i++) original.push_back(lexer.TokenAt(i));
+    for (int i = g.start; i < g.end; i++)
+    {
+        Token t = lexer.TokenAt(i);
+        if (t.token_type != ID) continue;
+        for (int k = 0; k < (int)g.typeParams.size(); k++)
+        {
+            if (t.lexeme != g.typeParams[k]) continue;
+            Token r = args[k];
+            r.line_no = t.line_no;  // errors still pointinto  the class
+            lexer.SetTokenAt(i, r);
+        }
+    }
+    pendingClassCopyName = copyName;
+    compile_with_caller_aside(g.start, parse_class_definition);
+    for (int i = g.start; i < g.end; i++) lexer.SetTokenAt(i, original[i - g.start]);
+    return copyName;
+}
+
+string parse_generic_class_type()
+{
+    string name = token.lexeme;
+    int line = token.line_no;
+    vector<Token> args;
+    token = lexer.GetToken();  // '<'
+    token = lexer.GetToken();  // first type argument
+    while (token.token_type != GREATER && token.token_type != END_OF_FILE)
+    {
+        if (token.token_type != COMMA) args.push_back(token);
+        token = lexer.GetToken();
+    }
+    return instantiate_generic_class(name, args, line);  // token is on '>'
+}
+
+// The number of tokens from peek(k) on that spell the class name `name` ("Linear" is one token,
+// "Box<int, float>" is six), or 0 when they spell something else.
+static int class_name_tokens_at(int k, const string& name)
+{
+    Token t = lexer.peek(k);
+    if (t.token_type != ID) return 0;
+    string spelled = t.lexeme;
+    int n = 1;
+    if (lexer.peek(k + 1).token_type == LESS)
+    {
+        spelled += "<";
+        n++;
+        while (true)
+        {
+            Token a = lexer.peek(k + n);
+            n++;
+            if (a.token_type == GREATER) { spelled += ">"; break; }
+            if (a.token_type == END_OF_FILE) return 0;
+            spelled += (a.token_type == COMMA) ? ", " : a.lexeme;
+        }
+    }
+    return spelled == name ? n : 0;
+}
+
 void parse_class_definition()
 {
+    int namePosition = lexer.GetPosition();
     token = lexer.GetToken();  // class name
     string className = token.lexeme;
     int classLine = token.line_no;
 
-    if (classTable.count(className))
+    // Compiling one copy of a generic class: its name, e.g. "Box<int>".
+    bool instance = !pendingClassCopyName.empty();
+    if (instance)
+    {
+        className = pendingClassCopyName;
+        pendingClassCopyName.clear();
+    }
+    else if (classTable.count(className) || genericClasses.count(className))
     {
         report_error(classLine, "duplicate class definition '" + className + "'");
+    }
+
+    if (lexer.peek(1).token_type == LESS)
+    {
+        token = lexer.GetToken();  // '<'
+        vector<string> typeParams;
+        token = lexer.GetToken();
+        while (token.token_type != GREATER && token.token_type != END_OF_FILE)
+        {
+            if (token.token_type != COMMA) typeParams.push_back(token.lexeme);
+            token = lexer.GetToken();
+        }
+        if (!instance)
+        {
+            // Generic: skip the body; each Box<...> a declaration uses compiles its copy.
+            while (token.token_type != LBRACE && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            int depth = 0;
+            while (token.token_type != END_OF_FILE)
+            {
+                if (token.token_type == LBRACE) depth++;
+                if (token.token_type == RBRACE && --depth == 0) break;
+                token = lexer.GetToken();
+            }
+            genericClasses[className] = {namePosition, lexer.GetPosition(), typeParams};
+            return;  // token is on the class's '}'
+        }
     }
 
     ClassDef def;
@@ -487,11 +619,13 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
 
     token = lexer.GetToken();  // '=' or ';'
     // Linear l = Linear(2, 4): the constructor form. Skip "= Linear" so the '(' below runs init.
-    if (token.token_type == EQUAL && lexer.peek(1).token_type == ID && lexer.peek(1).lexeme == className && lexer.peek(2).token_type == LPAREN)
+    int nameTokens = (token.token_type == EQUAL) ? class_name_tokens_at(1, className) : 0;  // Box<int> is 4 tokens
+    if (nameTokens > 0 && lexer.peek(nameTokens + 1).token_type == LPAREN)
     {
-        token = lexer.GetToken();  // the class name
+        for (int i = 0; i < nameTokens; i++) token = lexer.GetToken();  // the class name
         token = lexer.GetToken();  // '('
-    }
+    } 
+
     if (token.token_type == LPAREN)
     {
         // constructor call: MyClass obj(arg1, arg2) ; 

@@ -312,5 +312,9 @@ commit.
      recursive one that calls itself first must write it if it is not int). A generic function is only
      type-checked when called. Several return values still need `->` and typed parameters. Also: a
      function's locals now leave every name table (two functions can each declare an object `p`).
-   - 9b: `class Box<T>`. 9c: `std.collections`. 9d: `std.algo`.
+   - 9b (done): `class Box<T>` (and `class Pair<A, B>`). `Box<int>` compiles a copy of the class with every
+     `T` token replaced by `int`, named `Box<int>`; a declaration writes the type arguments in both places:
+     `Box<int> b = Box<int>(5)`. Type arguments are built-in types for now (an object is not yet a value
+     that can be passed or stored in a field).
+   - 9c: `std.collections`. 9d: `std.algo`.
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

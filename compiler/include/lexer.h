@@ -77,6 +77,8 @@ class LexicalAnalyzer {
     void ReinitializeFromString(const std::string& s);
     int GetPosition() const { return index; }  // where the next GetToken() reads ...
     void SetPosition(int i) { index = i; }     // ... and going back there (to compile a generic function again)
+    Token TokenAt(int i) const { return tokenList[i]; }
+    void SetTokenAt(int i, const Token& t) { tokenList[i] = t; }
 
   private:
     std::vector<Token> tokenList;

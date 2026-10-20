@@ -1,0 +1,16 @@
+# Only built-in types can be type arguments for now (an object is not a value yet).
+class P:
+    int a
+
+    def init():
+        self.a = 3
+
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    P p = P()
+    Box<P> b = Box<P>(p)

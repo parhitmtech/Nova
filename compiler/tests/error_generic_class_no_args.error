@@ -1,0 +1,1 @@
+Error at line 9: class 'Box' is generic: write its type arguments, e.g. Box<int>

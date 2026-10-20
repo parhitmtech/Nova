@@ -240,16 +240,10 @@ void parse_function_definition()
     }
 }
 
-// The copy of generic function `name` for these argument types, compiled the first time a call needs it.
-// Returns the copy's name, e.g. "scale<double, double>".
-string instantiate_generic_function(const string& name, const vector<VarType>& argTypes)
+// Compile a definition (a generic function's or class's copy) from the token at `position`, in the middle of the 
+// caller: the caller's state is set aside and brought back after.
+void compile_with_caller_aside(int position, void (*compile)())
 {
-    string copyName = name + "<";
-    for (int i = 0; i < (int)argTypes.size(); i++) copyName += (i ? ", " : "") + typeToString(argTypes[i]);
-    copyName += ">";
-    if (functionTable.count(copyName)) return copyName;  // compiled already, or being compiled (a recursive call)
-
-    // The copy is compiled in the middle of the caller: set the caller's state aside and bring it back after.
     Token savedToken = token;
     int savedPosition = lexer.GetPosition();
     bool savedInside = insideFunction;
@@ -263,6 +257,7 @@ string instantiate_generic_function(const string& name, const vector<VarType>& a
     map<string, int> savedSelfSlots = currentSelfFieldSlots;
     map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
     map<string, int> savedSelfArraySizes = currentSelfFieldArraySizes;
+    insideFunction = false;
     currentSelfClassName.clear();
     currentSelfFieldSlots.clear();
     currentSelfFieldTypes.clear();
@@ -270,10 +265,8 @@ string instantiate_generic_function(const string& name, const vector<VarType>& a
     set_variables_aside();
     set_loops_aside();
 
-    pendingInstanceName = copyName;
-    pendingInstanceTypes = argTypes;
-    lexer.SetPosition(genericFunctions[name].position);
-    parse_function_definition();
+    lexer.SetPosition(position);
+    compile();
 
     restore_loops();
     restore_variables();
@@ -291,6 +284,20 @@ string instantiate_generic_function(const string& name, const vector<VarType>& a
     insideFunction = savedInside;
     lexer.SetPosition(savedPosition);
     token = savedToken;
+}
+
+// The copy of generic function `name` for these argument types, compiled the first time a call needs it.
+// Returns the copy's name, e.g. "scale<double, double>".
+string instantiate_generic_function(const string& name, const vector<VarType>& argTypes)
+{
+    string copyName = name + "<";
+    for (int i = 0; i < (int)argTypes.size(); i++) copyName += (i ? ", " : "") + typeToString(argTypes[i]);
+    copyName += ">";
+    if (functionTable.count(copyName)) return copyName;  // compiled already, or being compiled (a recursive call)
+
+    pendingInstanceName = copyName;
+    pendingInstanceTypes = argTypes;
+    compile_with_caller_aside(genericFunctions[name].position, parse_function_definition);
     return copyName;
 }
 

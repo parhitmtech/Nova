@@ -657,6 +657,27 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             token = lexer.GetToken();  // consume method name → '('
             parse_sol_call(method, head, tracker);
         }
+        else if (is_generic_class(name))
+        {
+            // Box<int> b = Box<int>(5): compile the copy for these type arguments, then declare as for any class
+            string copyName;
+            if (lexer.peek(1).token_type != LESS)
+            {
+                report_error(token.line_no, "class '" + name + "' is generic: write its type arguments, e.g. " + name + "<int>");
+            }
+            else
+            {
+                copyName = parse_generic_class_type();
+            }
+            if (copyName.empty())
+            {
+                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+            }
+            else
+            {
+                parse_class_instantiation(copyName, head, tracker);
+            }
+        }
         else if (classTable.count(name) && lexer.peek(1).token_type == ID)
         {
             // class instantiation: MyClass obj ; or MyClass obj = { ... } ;

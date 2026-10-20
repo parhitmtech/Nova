@@ -1,0 +1,9 @@
+# A generic class needs its type arguments.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    Box b = Box(1)
