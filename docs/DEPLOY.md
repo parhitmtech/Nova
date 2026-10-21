@@ -43,7 +43,9 @@ DYNAMODB_TABLE_USERS=...
 ```
 
 `NODE_ENV=production`, `NOVA_EXECUTION_MODE=docker` and the compiler paths are already set in the image;
-`deploy.sh` supplies the worker image tag.
+`deploy.sh` supplies the worker image tag, and `compose.prod.yml` sets `NOVA_WORKER_ID` and `NOVA_TRUST_PROXY`.
+In production the server refuses to start unless `NOVA_ALLOWED_ORIGINS` lists only `https://` origins and
+`NOVA_WORKER_ID` is set.
 
 ### 3. TLS proxy
 
