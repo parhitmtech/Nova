@@ -44,6 +44,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
 {
     do {
             auto& tc = pc->tensor_call_inst;
+            if (tc.op >= CON_VEC_NEW) return exec_container_call(pc);  // vector / map
             int* a = tc.arg_slots;
             int res = 0;
 
@@ -524,6 +525,9 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     res = T.shape[d];
                     break;
                 }
+                case CON_VEC_NEW: case CON_MAP_NEW: case CON_PUSH: case CON_POP: case CON_POP_D: case CON_GET:
+                case CON_GET_D: case CON_SET: case CON_SIZE: case CON_HAS: case CON_REMOVE: case CON_CLEAR:
+                    break;  // handled by exec_container_call above
                 case TEN_LIVE_COUNT:
                 {
                     // number of tensors not yet freed; lets a test assert "no leak"

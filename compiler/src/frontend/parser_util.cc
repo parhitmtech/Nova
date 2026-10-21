@@ -24,7 +24,7 @@ static auto variable_tables()
     return std::tie(symbolTable, floatSymbolTable, doubleSymbolTable, typeTable,
                     arrayTable, arraySizeTable, arrayDynamic, 
                     varStructType, structFieldSlots, structFieldTypes,
-                    varClassType, classFieldSlots, classFieldTypes);
+                    varClassType, classFieldSlots, classFieldTypes, containerTable);
 }
 template <class F> static void for_each_variable_table(F f)
 {
@@ -35,7 +35,8 @@ template <class F> static void for_each_variable_table(F f)
 using VariableTables = std::tuple<map<string, int>, map<string, int>, map<string, int>, map<string, VarType>,
                                   map<string, int>, map<string, int>, map<string, bool>,
                                   map<string, string>, map<string, map<string, int>>, map<string, map<string, VarType>>,
-                                  map<string, string>, map<string, map<string, int>>, map<string, map<string, VarType>>>;
+                                  map<string, string>, map<string, map<string, int>>, map<string, map<string, VarType>>,
+                                  map<string, ContainerInfo>>;
 static vector<VariableTables> variablesAside;
 
 void set_variables_aside()
@@ -80,6 +81,8 @@ string typeToString(VarType t)
         case TYPE_DOUBLE: return "double";
         case TYPE_CLASS: return "class";
         case TYPE_TENSOR: return "Tensor";
+        case TYPE_VECTOR: return "vector";
+        case TYPE_MAP: return "map";
         default: return "unknown";
     }
 }

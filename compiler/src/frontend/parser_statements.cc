@@ -657,6 +657,14 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             token = lexer.GetToken();  // consume method name → '('
             parse_sol_call(method, head, tracker);
         }
+        else if ((name == "vector" || name == "map") && lexer.peek(1).token_type == LESS)
+        {
+            parse_container_declaration(head, tracker);  // vector<int> v = vector<int>()
+        }
+        else if (containerTable.count(name))
+        {
+            parse_container_statement(head, tracker);  // v.push(x), v[i] = x, m.remove(k), ...
+        }
         else if (is_generic_class(name))
         {
             // Box<int> b = Box<int>(5): compile the copy for these type arguments, then declare as for any class

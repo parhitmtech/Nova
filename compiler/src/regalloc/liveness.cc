@@ -40,7 +40,7 @@ bool tensor_call_result_is_mem_slot(TensorOp op)
 {
     switch (op) 
     {
-        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET:
+        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET: case CON_GET_D: case CON_POP_D:
         {
             return false;  // dmem[] result
         }

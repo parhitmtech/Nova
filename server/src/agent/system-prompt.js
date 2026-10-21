@@ -376,6 +376,31 @@ ignite:
 
 ---
 
+## Containers: vector and map
+
+\`vector<T>\` and \`map<K, V>\` are built in (no \`orbit\`). Elements: int, float, double, bool, string, Tensor; map keys: int or string.
+
+\`\`\`nova
+ignite:
+    vector<int> ids = vector<int>()
+    ids.push(3)
+    ids.push(7)
+    ids[0] = 9
+    print(ids[0] + ids.size())
+    int last = ids.pop()
+
+    map<string, int> vocab = map<string, int>()
+    vocab["a"] = 0
+    if (vocab.has("a")):
+        print(vocab["a"])
+    vocab.remove("a")
+    print(vocab.size())
+\`\`\`
+
+- \`v[i]\` reads or writes an existing element (out of range is a runtime error); \`push\`, \`pop\`, \`size\`, \`clear\`
+- \`m[k] = x\` adds or replaces; \`m[k]\` on a missing key is a runtime error, so check \`m.has(k)\`; \`remove\`, \`size\`, \`clear\`
+- A container is a local variable for now: do not pass it to a function, return it, or store it in a class field
+
 ## Tensor Operations
 
 Tensors have 1 to 6 dimensions (type Tensor). Most ops work on the 2-D view: the last dimension is the columns, the rest are the rows.

@@ -21,6 +21,7 @@ InstructionNode* exec_cast(InstructionNode* pc);
 InstructionNode* exec_call(InstructionNode* pc);
 InstructionNode* exec_ret(InstructionNode* pc);
 InstructionNode* exec_tensor_call(InstructionNode* pc);
+InstructionNode* exec_container_call(InstructionNode* pc);  // the CON_* ops (interp_containers.cc)
 InstructionNode* exec_tensor_release(InstructionNode* pc);
 InstructionNode* exec_hf_infer(InstructionNode* pc);
 InstructionNode* exec_sol_call(InstructionNode* pc);

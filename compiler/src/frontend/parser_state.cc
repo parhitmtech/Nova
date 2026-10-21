@@ -128,7 +128,7 @@ extern const set<TensorOp> TENSOR_INT_OPS = {
 // return a tensor handle (1x1), in both grad and non-grad mode, so their type doesn't depend on
 // a runtime flag.
 extern const set<TensorOp> TENSOR_DOUBLE_OPS = {
-    TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET
+    TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET, CON_GET_D, CON_POP_D
 };
 
 
@@ -138,6 +138,7 @@ map<string, map<string, int>> structFieldSlots;  // var -> {dotted path -> slot}
 map<string, map<string, VarType>> structFieldTypes;  // var -> {dotted path -> type}
 
 // class support - parser local state
+map<string, ContainerInfo> containerTable;  // vector / map variable -> its element types
 map<string, int> currentSelfFieldSlots;
 map<string, VarType> currentSelfFieldTypes;
 map<string, int> currentSelfFieldArraySizes;

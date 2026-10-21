@@ -62,6 +62,17 @@ extern const set<TensorOp> TENSOR_VOID_OPS;
 extern const set<TensorOp> TENSOR_INT_OPS;
 extern const set<TensorOp> TENSOR_DOUBLE_OPS;
 extern map<string, StructDef> structTable;
+// A vector<T> or map<K, V> variable's types (parser_containers.cc)
+struct ContainerInfo
+{
+    bool isMap = false;
+    VarType key = TYPE_UNKNOWN;  // map: TYPE_INT or TYPE_STRING
+    VarType elem = TYPE_UNKNOWN;
+};
+extern map<string, ContainerInfo> containerTable;
+void parse_container_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker);
+int parse_container_expression(struct InstructionNode*& head, struct InstructionNode*& tracker);
+void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker);
 extern map<string, string> varStructType;
 extern map<string, map<string, int>> structFieldSlots;
 extern map<string, map<string, VarType>> structFieldTypes;

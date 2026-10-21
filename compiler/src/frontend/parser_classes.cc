@@ -354,11 +354,8 @@ void parse_class_definition()
             vector<string> params;
             vector<VarType> paramTypes;
 
-            // save symbol tables — restored after body so method-scoped names don't leak
-            map<string, int>     savedSymbolTable       = symbolTable;
-            map<string, VarType> savedTypeTable         = typeTable;
-            map<string, int>     savedFloatSymbolTable  = floatSymbolTable;
-            map<string, int>     savedDoubleSymbolTable = doubleSymbolTable;
+            // The parameters and everything the body declares are gone after the method (all of the name tables)
+            enter_block();
 
             token = lexer.GetToken();  // '('
             token = lexer.GetToken();  // first param or ')'
@@ -503,10 +500,7 @@ void parse_class_definition()
             currentSelfFieldTypes = savedSelfTypes;
             currentSelfFieldArraySizes = savedSelfArraySizes;
 
-            symbolTable       = savedSymbolTable;
-            typeTable         = savedTypeTable;
-            floatSymbolTable  = savedFloatSymbolTable;
-            doubleSymbolTable = savedDoubleSymbolTable;
+            exit_block();  // remove the parameters and locals
 
             struct InstructionNode* fb = new InstructionNode();
             fb->line_no = token.line_no;

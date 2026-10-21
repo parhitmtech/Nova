@@ -1,0 +1,92 @@
+# Built-in containers: vector<T> and map<K, V>, element types checked at compile time.
+class Bag:
+    int n
+
+    def init():
+        self.n = 0
+
+    def fill() -> int:  # a container local to a method
+        vector<int> v = vector<int>()
+        v.push(1)
+        v.push(2)
+        return v.size()
+
+    def other() -> int:  # the same name in another method
+        vector<int> v = vector<int>()
+        return v.size()
+
+def count_up(n):  # a container inside a generic function
+    vector<int> v = vector<int>()
+    int i = 0
+    while (i < n):
+        v.push(i)
+        i += 1
+    return v.size()
+
+def main():
+    vector<int> ids = vector<int>()
+    ids.push(3)
+    ids.push(7)
+    print(ids[0] + ids.size())
+    ids[1] = 9
+    print(ids[1])
+    int last = ids.pop()
+    print(last)
+    print(ids.size())
+    ids.clear()
+    print(ids.size())
+
+    vector<double> d = vector<double>()
+    d.push(1.5)
+    d.push(2.25)
+    print(d[0] + d[1])
+    print(d.pop())
+    vector<float> f  # an empty vector without the constructor
+    f.push(0.5)
+    float x = f[0]
+    print(x)
+    vector<string> s = vector<string>()
+    s.push("a")
+    s.push("bc")
+    print(s[0] + s[1])
+    vector<bool> flags = vector<bool>()
+    flags.push(true)
+    if (flags[0]):
+        print(1)
+
+    vector<int> squares = vector<int>()
+    int i = 0
+    while (i < 5):
+        squares.push(i * i)
+        i += 1
+    int total = 0
+    int j = 0
+    while (j < squares.size()):
+        total += squares[j]
+        j += 1
+    print(total)
+
+    map<string, int> vocab = map<string, int>()
+    vocab["a"] = 0
+    vocab["b"] = 1
+    vocab["a"] = 5
+    print(vocab["a"])
+    print(vocab.size())
+    if (vocab.has("b")):
+        print(11)
+    if (not vocab.has("z")):
+        print(22)
+    vocab.remove("b")
+    vocab.remove("not there")
+    print(vocab.size())
+
+    map<int, double> weights = map<int, double>()
+    weights[3] = 1.5
+    weights[10] = 2.0
+    print(weights[3] + weights[10])
+
+    print(count_up(4))
+    print(count_up(6))
+    Bag b = Bag()
+    print(b.fill())
+    print(b.other())

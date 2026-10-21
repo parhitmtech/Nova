@@ -257,6 +257,9 @@ const char* tensor_op_signature(TensorOp op)
         case TEN_PROGRESS_UPDATE:                                 return "nnn";
         case TEN_PROGRESS_DONE:                                   return "n";
         case TEN_LIVE_COUNT:                                      return "";
+        case CON_VEC_NEW: case CON_MAP_NEW: case CON_PUSH: case CON_POP: case CON_POP_D: case CON_GET:
+        case CON_GET_D: case CON_SET: case CON_SIZE: case CON_HAS: case CON_REMOVE: case CON_CLEAR:
+                                                                  return "";   // checked by the parser
         default:                                                  return "T";  // one tensor
     }
 }

@@ -281,6 +281,8 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
     } 
     else if (token.token_type == ID)
     {
+        if (containerTable.count(token.lexeme)) return parse_container_expression(head, tracker);
+
         if (token.lexeme == "hf" && lexer.peek(1).token_type == DOT)
         {
             token = lexer.GetToken();  // consume "hf" → '.'

@@ -1,0 +1,26 @@
+# A Tensor stored in a container is one more owner of it: replacing, removing, popping or clearing gives the
+# reference back, so tensor_live_count() goes to 0 again.
+def main():
+    vector<Tensor> ts = vector<Tensor>()
+    int i = 0
+    while (i < 3):
+        ts.push(ones(2, 2) * 2.0)
+        i += 1
+    Tensor a = ts[1]
+    print(a[0, 0])
+    print(ts[2].rows)
+    print(tensor_live_count())
+    ts[0] = zeros(1, 1)
+    print(tensor_live_count())
+    Tensor p = ts.pop()
+    print(p.cols)
+    print(tensor_live_count())
+    ts.clear()
+    print(tensor_live_count())
+
+    map<string, Tensor> named = map<string, Tensor>()
+    named["w"] = ones(3, 3)
+    named["w"] = ones(1, 1)
+    print(tensor_live_count())
+    named.remove("w")
+    print(tensor_live_count())

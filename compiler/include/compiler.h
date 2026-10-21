@@ -43,6 +43,8 @@ enum VarType {
     TYPE_DOUBLE,         // double x = 3.14159265358979
     TYPE_CLASS,           // class instance
     TYPE_TENSOR,         // tensor handle (index into tensor_heap)
+    TYPE_VECTOR,         // vector<T> handle (index into container_heap); T is in the parser's containerTable
+    TYPE_MAP,            // map<K, V> handle
 };
 
 // Arithmetic operators 
@@ -118,6 +120,19 @@ enum TensorOp {
     TEN_RESHAPE,  // tensor_reshape(t, d0, d1, ...) -> handle; one dimension may be -1 (inferred)
     TEN_ADD_SCALAR, // t + k: k added to every element (also t - k, k + t, k - t via the parser)
     TEN_DIV,   // a / b element-wise, same shape
+    // Built-in containers (src/runtime/interp_containers.cc). Argument 0 is the container handle.
+    CON_VEC_NEW,  // vector<T>(): args T -> handle
+    CON_MAP_NEW,  // map<K, V>(): args K, V -> handle
+    CON_PUSH,     // v.push(x)
+    CON_POP,      // v.pop() -> the last element (mem[])
+    CON_POP_D,    // the same for a float / double element (dmem[])
+    CON_GET,      // v[i], m[k] -> element (mem[])
+    CON_GET_D,    // the same for a float / double element (dmem[])
+    CON_SET,      // v[i] = x, m[k] = x
+    CON_SIZE,     // .size() -> int
+    CON_HAS,      // m.has(k) -> bool
+    CON_REMOVE,   // m.remove(k)
+    CON_CLEAR,    // .clear() 
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────

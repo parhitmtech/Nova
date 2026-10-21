@@ -69,7 +69,7 @@ ignite:
 | `Tensor<double>`, `Tensor<int>` | fp64 tensor (e.g. gradient checks); integer tensor (e.g. token ids) |
 | `Tensor` | short for `Tensor<float>`, the default dtype |
 | `Tensor<float, [B, T, C]>` | later: tensor with a symbolic shape, checked at compile time |
-| `vector<int>`, `map<string, int>`, ... | generic containers from `std.collections` (section 10) |
+| `vector<int>`, `map<string, int>` | built-in containers (section 10) |
 | `array` | fixed-size int array (as today) |
 | user `struct` / `class` names | records and classes; `class Box<T>` for generic classes |
 
@@ -237,18 +237,31 @@ The compiler looks next to the current file first, then in the stdlib. Everythin
 defines becomes visible (as with today's `import`). A file is only loaded once. If two orbited
 modules define the same name, write the full path for that name: `std.collections.vector<int>`.
 
-The standard library lives under `std`:
+The containers `vector<T>` and `map<K, V>` are built in, like `Tensor` (no `orbit` needed). The compiler
+knows their element types, so every access is type-checked:
 
 ```python
-orbit std.collections       # vector, map, set, stack, queue (generic)
+vector<int> ids = vector<int>()     # or: vector<int> ids
+ids.push(3)
+ids[0] = 9                          # v[i] reads or writes an existing element (bounds-checked)
+print(ids.size())
+int last = ids.pop()
+
+map<string, int> vocab = map<string, int>()
+vocab["a"] = 0                      # adds or replaces
+if (vocab.has("a")):
+    print(vocab["a"])               # a missing key is a runtime error
+vocab.remove("a")
+```
+
+Elements are `int`, `float`, `double`, `bool`, `string` or `Tensor`; map keys are `int` or `string`. For now a
+container is a local variable: it cannot yet be passed to a function, returned, copied, or stored in a field.
+
+The rest of the standard library will live under `std`:
+
+```python
 orbit std.algo              # sort, binary_search, min, max, ...
 orbit std.math              # abs, pow, clamp, ...
-
-vector<int> ids = vector<int>()
-ids.push(3)
-map<string, int> vocab = map<string, int>()
-vocab["a"] = 0
-sort(ids)
 ```
 
 ML libraries stay under `novatorch` (`orbit novatorch.nn`, `orbit novatorch.optim`).
@@ -316,5 +329,8 @@ commit.
      `T` token replaced by `int`, named `Box<int>`; a declaration writes the type arguments in both places:
      `Box<int> b = Box<int>(5)`. Type arguments are built-in types for now (an object is not yet a value
      that can be passed or stored in a field).
-   - 9c: `std.collections`. 9d: `std.algo`.
+   - 9c (done): built-in `vector<T>` and `map<K, V>` (section 10), compiled to container ops the runtime
+     keeps in a container heap; a Tensor element is reference-counted. Containers are local variables for
+     now. Also: a method's locals leave every name table (as a function's do since 9a).
+   - 9d: `std.algo`.
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.
