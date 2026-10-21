@@ -1,5 +1,5 @@
 name: Build and test
-on: [push, pull_request]
+on: [push, pull_request, merge_group]
 permissions:
   contents: read
 concurrency:
@@ -23,6 +23,9 @@ jobs:
             echo "$tracked"
             exit 1
           fi
+      # The runner's preinstalled Node is enough: the script uses only built-ins.
+      - name: No tracked secrets, dependencies, runtime data or binaries
+        run: node scripts/check-repo-hygiene.js
       - name: Secret scan (gitleaks)
         run: |
           curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" | tar -xz gitleaks
