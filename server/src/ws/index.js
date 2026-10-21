@@ -11,15 +11,39 @@ const { JWT_SECRET } = require('../config');
 const { handleReplConnection } = require('./repl');
 const { handleTerminalConnection } = require('./terminal');
 
-function attachWebSockets(server) {
+// Unauthenticated sockets are bounded globally and per client IP, and are
+// dropped after AUTH_TIMEOUT_MS; only authenticated sockets count toward the
+// session limits, so anonymous clients cannot lock signed-in users out.
+const MAX_PENDING = 64;
+const MAX_PENDING_PER_IP = 4;
+const AUTH_TIMEOUT_MS = 5000;
+const MAX_SESSIONS = 20;
+const MAX_SESSIONS_PER_USER = 3;
+const MAX_UPGRADES_PER_USER_PER_MINUTE = 10;
+
+// The client address as Express computes req.ip: walk X-Forwarded-For from
+// the nearest hop only while each hop is a trusted proxy.
+function clientIp(req, trust) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',').map(s => s.trim()).filter(Boolean).reverse();
+  const addrs = [req.socket.remoteAddress, ...forwarded];
+  let i = 0;
+  while (trust && i < addrs.length - 1 && trust(addrs[i], i)) i++;
+  return addrs[i] || 'unknown';
+}
+
+// trustProxy: Express' compiled 'trust proxy' function (app.get('trust proxy fn')).
+function attachWebSockets(server, { trustProxy } = {}) {
   const wss     = new WebSocket.Server({ noServer: true, maxPayload: 16384 });  // REPL
   const termWss = new WebSocket.Server({ noServer: true, maxPayload: 16384 });  // Terminal
   wss.on('connection', handleReplConnection);
   termWss.on('connection', handleTerminalConnection);
 
-  const socketCounts = new Map();
-  const upgradeRates = new Map();
+  const socketCounts = new Map();   // userId → authenticated sockets
+  const upgradeRates = new Map();   // userId → { start, count }
+  const pendingByIp = new Map();    // client IP → unauthenticated sockets
   let pendingSockets = 0;
+  let authenticatedSockets = 0;
+
   server.on('upgrade', (req, socket, head) => {
     const reject = status => { socket.end(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); };
     let url;
@@ -28,13 +52,23 @@ function attachWebSockets(server) {
     if (!req.headers.origin || !security.originAllowed(req.headers.origin, req)) return reject('403 Forbidden');
     // Credentials in URLs can be recorded by HTTP proxies. Require an auth frame.
     if (url.searchParams.has('token')) return reject('401 Unauthorized');
-    if (pendingSockets >= 20 || wss.clients.size + termWss.clients.size >= 40) return reject('503 Service Unavailable');
+    const ip = clientIp(req, trustProxy);
+    if ((pendingByIp.get(ip) || 0) >= MAX_PENDING_PER_IP) return reject('429 Too Many Requests');
+    if (pendingSockets >= MAX_PENDING || authenticatedSockets >= MAX_SESSIONS) return reject('503 Service Unavailable');
     const target = url.pathname === '/repl' ? wss : termWss;
     target.handleUpgrade(req, socket, head, ws => {
+      // Counted only once the handshake succeeded: malformed upgrades hold no slot.
       pendingSockets++;
+      pendingByIp.set(ip, (pendingByIp.get(ip) || 0) + 1);
       let pending = true;
-      const release = () => { if (pending) { pending = false; pendingSockets--; } };
-      const timer = setTimeout(() => ws.terminate(), 5000);
+      const release = () => {
+        if (!pending) return;
+        pending = false; pendingSockets--;
+        const n = (pendingByIp.get(ip) || 1) - 1;
+        n ? pendingByIp.set(ip, n) : pendingByIp.delete(ip);
+      };
+      // terminate() drops the TCP connection at once instead of waiting for a close handshake.
+      const timer = setTimeout(() => ws.terminate(), AUTH_TIMEOUT_MS);
       timer.unref();
       ws.once('close', () => { clearTimeout(timer); release(); });
       ws.on('error', () => {});
@@ -47,18 +81,23 @@ function attachWebSockets(server) {
           if (msg.type !== 'auth' || typeof msg.token !== 'string') throw new Error('Authentication required');
           req.user = security.verifyToken(jwt, msg.token, JWT_SECRET);
           claims = jwt.decode(msg.token);
-        } catch { ws.close(4001, 'Invalid authentication'); return; }
+        } catch { ws.terminate(); return; }
         const id = req.user.userId;
         req._userId = id;
         const now = Date.now();
         for (const [key, value] of upgradeRates) if (now - value.start > 60000) upgradeRates.delete(key);
         const rate = upgradeRates.get(id) || { start: now, count: 0 };
         rate.count++; upgradeRates.set(id, rate);
-        if (rate.count > 10 || (socketCounts.get(id) || 0) >= 3 || [...socketCounts.values()].reduce((a, b) => a + b, 0) >= 20) {
-          ws.close(1013, 'Session limit exceeded'); return;
+        if (rate.count > MAX_UPGRADES_PER_USER_PER_MINUTE || (socketCounts.get(id) || 0) >= MAX_SESSIONS_PER_USER || authenticatedSockets >= MAX_SESSIONS) {
+          ws.terminate(); return;
         }
+        authenticatedSockets++;
         socketCounts.set(id, (socketCounts.get(id) || 0) + 1);
-        ws.once('close', () => { const n = (socketCounts.get(id) || 1) - 1; n ? socketCounts.set(id, n) : socketCounts.delete(id); });
+        ws.once('close', () => {
+          authenticatedSockets--;
+          const n = (socketCounts.get(id) || 1) - 1;
+          n ? socketCounts.set(id, n) : socketCounts.delete(id);
+        });
         // Expiration applies to an established connection as well as its handshake.
         const expiry = setTimeout(() => ws.close(4001, 'Session expired'), Math.max(1, claims.exp * 1000 - Date.now()));
         expiry.unref(); ws.once('close', () => clearTimeout(expiry));
@@ -68,4 +107,4 @@ function attachWebSockets(server) {
   });
 }
 
-module.exports = { attachWebSockets };
+module.exports = { attachWebSockets, clientIp };

@@ -10,6 +10,19 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const paths = require('../paths');
 
+const MAX_BATCH_DEADLINE_MS = 300000;
+const MAX_REPL_DEADLINE_MS = 1800000;
+// No job container can legitimately outlive this (its in-container timeout plus start-up slack).
+const MAX_CONTAINER_AGE_MS = MAX_REPL_DEADLINE_MS + 60000;
+
+// Exit status 137 means the container's process got SIGKILL: either from the
+// in-container deadline or from the kernel OOM killer (the container is
+// already removed, so Docker cannot be asked). The deadline cannot fire before
+// `deadline` ms have passed since spawn; an earlier kill is a memory kill.
+function classifyKill(elapsedMs, deadlineMs) {
+  return elapsedMs >= deadlineMs ? 'timeout' : 'memory';
+}
+
 // One boundary for every web-triggered compiler process. Docker is the default;
 // direct execution is an explicit, trusted-development-only escape hatch.
 function createExecutor(config = {}) {
@@ -29,7 +42,7 @@ function createExecutor(config = {}) {
 
   // REPLs may live longer than batch jobs; both are clamped to a hard maximum.
   function deadline(options) {
-    return Math.min(Math.max(Number(options.timeoutMs) || 30000, 1), options.kind === 'repl' ? 1800000 : 300000);
+    return Math.min(Math.max(Number(options.timeoutMs) || 30000, 1), options.kind === 'repl' ? MAX_REPL_DEADLINE_MS : MAX_BATCH_DEADLINE_MS);
   }
 
   function buildCommand(args, options = {}) {
@@ -90,6 +103,7 @@ function createExecutor(config = {}) {
       cwd: spec.cwd, env: spec.env, shell: false, windowsHide: true,
       detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'],
     });
+    const startedAt = Date.now();
     active[kind]++;
     byUser.set(key, (byUser.get(key) || 0) + 1);
     const result = new EventEmitter();
@@ -148,8 +162,11 @@ function createExecutor(config = {}) {
       const remaining = (byUser.get(key) || 1) - 1;
       if (remaining) byUser.set(key, remaining); else byUser.delete(key);
       clearTimeout(timer);
-      // SIGKILL from the in-container deadline surfaces as exit status 137.
-      if (spec.containerName && code === 137 && !result.stopReason) result.stopReason = 'timeout';
+      // SIGKILL inside the container (deadline or OOM) surfaces as exit status 137.
+      if (spec.containerName && code === 137 && !result.stopReason) {
+        result.stopReason = classifyKill(Date.now() - startedAt, timeout);
+        result.stderr.write(result.stopReason === 'timeout' ? '\nExecution timed out.\n' : '\nOut of memory: the program exceeded its 256 MB limit.\n');
+      }
       result.exitCode = result.stopReason ? 1 : code;
       // PassThroughs deliver asynchronously: report 'close' only once both have emitted 'end',
       // i.e. after the caller has received every byte, or it would miss the program's last output.
@@ -178,6 +195,19 @@ function workerId() {
   if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(id)) throw new Error('Invalid NOVA_WORKER_ID');
   return id;
 }
+// Pick containers that are safe to remove from `docker inspect` lines of the
+// form "<id> <status> <created RFC 3339>": finished ones, and ones older than
+// any job deadline. A running job, possibly another live instance's, is kept.
+function staleContainers(lines, now = Date.now()) {
+  const stale = [];
+  for (const line of lines.split('\n').map(s => s.trim()).filter(Boolean)) {
+    const [id, status, created] = line.split(/\s+/);
+    if (!/^[a-f0-9]{12,64}$/.test(id || '')) throw new Error('Invalid container ID from Docker');
+    const age = now - Date.parse(created);
+    if (['exited', 'dead'].includes(status) || !(age < MAX_CONTAINER_AGE_MS)) stale.push(id);
+  }
+  return stale;
+}
 // Remove job containers left behind by a previous run of this backend instance.
 async function sweepContainers() {
   if ((process.env.NOVA_EXECUTION_MODE || 'docker') !== 'docker') return;
@@ -185,8 +215,14 @@ async function sweepContainers() {
   const { stdout } = await execFileAsync('docker', ['ps', '-aq', '--filter', 'label=nova.job=true', '--filter', `label=nova.worker=${workerId()}`], options);
   const ids = stdout.trim().split(/\s+/).filter(Boolean);
   if (ids.some(id => !/^[a-f0-9]{12,64}$/.test(id))) throw new Error('Invalid container ID from Docker');
-  // Bound argv size even after repeated server crashes.
-  for (let i = 0; i < ids.length; i += 100) await execFileAsync('docker', ['rm', '-f', ...ids.slice(i, i + 100)], options);
+  // Batches bound argv size even after repeated server crashes.
+  for (let i = 0; i < ids.length; i += 100) {
+    // A job that finishes (--rm) between ps and inspect makes inspect fail for that ID only.
+    const { stdout: details } = await execFileAsync('docker', ['inspect', '--format', '{{.Id}} {{.State.Status}} {{.Created}}', ...ids.slice(i, i + 100)], options)
+      .catch(error => { if (/No such (object|container)/i.test(error.stderr || '')) return { stdout: error.stdout || '' }; throw error; });
+    const stale = staleContainers(details);
+    if (stale.length) await execFileAsync('docker', ['rm', '-f', ...stale], options);
+  }
 }
 
 let defaultExecutor;
@@ -194,4 +230,4 @@ function spawnCompiler(args, options) {
   defaultExecutor ||= createExecutor();
   return defaultExecutor.spawnCompiler(args, options);
 }
-module.exports = { createExecutor, spawnCompiler, sweepContainers };
+module.exports = { createExecutor, spawnCompiler, sweepContainers, staleContainers, classifyKill, MAX_CONTAINER_AGE_MS };

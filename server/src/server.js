@@ -37,7 +37,8 @@ process.on("uncaughtException", (err) => {
 // ── Create HTTP server (server.listen instead of app.listen for WebSocket support) ──
 
 const server = http.createServer(app);
-attachWebSockets(server);
+// WebSocket limits key unauthenticated clients by the same proxy-aware IP as Express.
+attachWebSockets(server, { trustProxy: app.get('trust proxy fn') });
 
 // Remove containers orphaned by a previous crash before accepting new jobs;
 // refuse to start if Docker cleanup fails.

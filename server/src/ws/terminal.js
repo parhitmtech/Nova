@@ -9,7 +9,7 @@ const { log } = require('../lib/logger');
 const { s3 } = require('../services/aws');
 const { filterStderr, validateSource, writeTempFile, cleanupTempFile } = require('../services/compiler-runner');
 const { spawnCompiler } = require('../services/execution');
-const { createWorkspaceStore } = require('../services/workspace-store');
+const { getWorkspaceStore } = require('../services/workspace-store');
 const { GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 // node-pty is optional — install with: npm install node-pty
@@ -32,6 +32,27 @@ function resolveShell() {
   return { shell: process.env.SHELL || '/bin/bash', args: [] };
 }
 
+// ── Write rate limit ──────────────────────────────────────────────────────────
+// Each socket may make a burst of WRITE_BURST workspace mutations, refilled at
+// WRITE_RATE_PER_SEC, so a client cannot flood the disk or the quota checks.
+const WRITE_BURST = 20;
+const WRITE_RATE_PER_SEC = 5;
+
+function createTokenBucket(capacity, ratePerSec, now = Date.now) {
+  let tokens = capacity;
+  let last = now();
+  return {
+    take() {
+      const t = now();
+      tokens = Math.min(capacity, tokens + ((t - last) / 1000) * ratePerSec);
+      last = t;
+      if (tokens < 1) return false;
+      tokens -= 1;
+      return true;
+    },
+  };
+}
+
 // ── Sandboxed Workspace Shell ─────────────────────────────────────────────────
 // A custom shell that runs entirely inside the IDE's workspace/ directory.
 // It cannot access anything outside that folder — no real shell is spawned.
@@ -41,7 +62,8 @@ async function createShellSession(ws, userId) {
   const userWorkspace = security.userWorkspace(WORKSPACE, userId);
   fs.mkdirSync(userWorkspace, { recursive: true });
   // Every persistent write below goes through the store so storage quotas apply.
-  const store = createWorkspaceStore(userWorkspace);
+  const store = getWorkspaceStore(userWorkspace);
+  const writeBucket = createTokenBucket(WRITE_BURST, WRITE_RATE_PER_SEC);
 
   log('info', 'Shell session started', { userId: userId || 'anonymous' });
 
@@ -64,6 +86,12 @@ async function createShellSession(ws, userId) {
       ws.send(JSON.stringify({ __nc: 'fs', op, paths }));
   }
   function rel(p) { return path.relative(userWorkspace, p).replace(/\\/g, '/'); }
+  // Spend one write token, or tell the user why the mutation was refused.
+  function allowWrite(cmd) {
+    if (writeBucket.take()) return true;
+    send(`\x1b[31m${cmd}: rate limit exceeded (too many workspace writes); wait a moment and try again\x1b[0m`);
+    return false;
+  }
 
   function prompt() {
     const rel = path.relative(userWorkspace, cwd).replace(/\\/g, '/');
@@ -144,6 +172,7 @@ async function createShellSession(ws, userId) {
     for (const t of targets) {
       const p = safe(t);
       if (!p) { send('\x1b[31mmkdir: permission denied\x1b[0m'); continue; }
+      if (!allowWrite('mkdir')) return;
       try { store.mkdir(p); notifyFsChange('mkdir', [rel(p)]); }
       catch (e) { send(`\x1b[31mmkdir: ${e.message}\x1b[0m`); }
     }
@@ -157,7 +186,8 @@ async function createShellSession(ws, userId) {
       const p = safe(t);
       if (!p || p === userWorkspace) { send('rm: permission denied'); continue; }
       if (!fs.existsSync(p)) { send(`\x1b[31mrm: '${t}': No such file or directory\x1b[0m`); continue; }
-      try { fs.rmSync(p, { recursive, force: true }); notifyFsChange('delete', [rel(p)]); }
+      if (!allowWrite('rm')) return;
+      try { store.remove(p, { recursive }); notifyFsChange('delete', [rel(p)]); }
       catch (e) { send(`\x1b[31mrm: ${e.message}\x1b[0m`); }
     }
   }
@@ -168,6 +198,7 @@ async function createShellSession(ws, userId) {
     const src = safe(targets[0]), dst = safe(targets[1]);
     if (!src || !dst)       { send('\x1b[31mcp: permission denied\x1b[0m'); return; }
     if (!fs.existsSync(src)){ send(`\x1b[31mcp: '${targets[0]}': No such file or directory\x1b[0m`); return; }
+    if (!allowWrite('cp')) return;
     try { store.copy(src, dst); notifyFsChange('update', [rel(dst)]); }
     catch (e) { send(`\x1b[31mcp: ${e.message}\x1b[0m`); }
   }
@@ -178,6 +209,7 @@ async function createShellSession(ws, userId) {
     const src = safe(targets[0]), dst = safe(targets[1]);
     if (!src || !dst)       { send('\x1b[31mmv: permission denied\x1b[0m'); return; }
     if (!fs.existsSync(src)){ send(`\x1b[31mmv: '${targets[0]}': No such file or directory\x1b[0m`); return; }
+    if (!allowWrite('mv')) return;
     try {
       const srcRel = rel(src);
       store.rename(src, dst);
@@ -192,6 +224,7 @@ async function createShellSession(ws, userId) {
     for (const t of args) {
       const p = safe(t);
       if (!p) { send('\x1b[31mtouch: permission denied\x1b[0m'); continue; }
+      if (!allowWrite('touch')) return;
       try {
         if (fs.existsSync(p)) { const n = new Date(); fs.utimesSync(p, n, n); }
         else                  { store.write(p, ''); }
@@ -207,6 +240,7 @@ async function createShellSession(ws, userId) {
       if (!file) { send('\x1b[31mecho: missing filename after >\x1b[0m'); return; }
       const p = safe(file);
       if (!p) { send('\x1b[31mecho: permission denied\x1b[0m'); return; }
+      if (!allowWrite('echo')) return;
       try { store.write(p, args.slice(0, ri).join(' ') + '\n'); notifyFsChange('update', [rel(p)]); }
       catch (e) { send(`\x1b[31mecho: ${e.message}\x1b[0m`); }
     } else if (ai !== -1) {
@@ -214,6 +248,7 @@ async function createShellSession(ws, userId) {
       if (!file) { send('\x1b[31mecho: missing filename after >>\x1b[0m'); return; }
       const p = safe(file);
       if (!p) { send('\x1b[31mecho: permission denied\x1b[0m'); return; }
+      if (!allowWrite('echo')) return;
       try { store.write(p, args.slice(0, ai).join(' ') + '\n', { append: true }); notifyFsChange('update', [rel(p)]); }
       catch (e) { send(`\x1b[31mecho: ${e.message}\x1b[0m`); }
     } else {
@@ -252,6 +287,7 @@ async function createShellSession(ws, userId) {
       novacomp:  '1.0',
       compiled:  new Date().toISOString(),
     };
+    if (!allowWrite('novacomp')) return;
     try {
       store.write(exePath, JSON.stringify(meta, null, 2));
     } catch (e) {
@@ -480,7 +516,7 @@ async function createShellSession(ws, userId) {
       inputQueue = inputQueue.then(() => processInput(msg.data)).catch(() => {}).finally(() => { pendingInputBytes -= msg.data.length; });
     } else if (msg.type === 'write' && msg.fileName) {
       const p = safe(path.basename(String(msg.fileName)));
-      if (p) try { store.write(p, String(msg.content ?? '')); } catch (_) {}
+      if (p && allowWrite('write')) try { store.write(p, String(msg.content ?? '')); } catch (_) {}
     }
   });
 
@@ -497,4 +533,4 @@ function handleTerminalConnection(ws, req) {
   createShellSession(ws, userId).catch(err => { log('error', 'Shell initialization failed', { error: err.message }); ws.close(1011, 'Workspace unavailable'); });
 }
 
-module.exports = { pty, resolveShell, handleTerminalConnection };
+module.exports = { pty, resolveShell, handleTerminalConnection, createTokenBucket };

@@ -248,6 +248,123 @@ test('production requires explicit origins before startup', () => {
   assert.match(child.stderr.toString(), /NOVA_ALLOWED_ORIGINS/);
 });
 
+// Opens a socket from a given client address (trusted via X-Forwarded-For) and
+// resolves with the handshake status: 101 when the upgrade succeeded.
+function openSocket(ip, route = '/terminal') {
+  return new Promise(resolve => {
+    const ws = new WebSocket(base.replace('http:', 'ws:') + route, { origin: base, headers: { 'x-forwarded-for': ip } });
+    ws.on('open', () => resolve({ ws, status: 101 }));
+    ws.on('unexpected-response', (_req, res) => { res.resume(); resolve({ ws, status: res.statusCode }); });
+    ws.on('error', () => {});
+  });
+}
+// Authenticates as a fresh user and resolves with the socket once the shell prompt appears.
+function openTerminal(userId, ip) {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base, headers: { 'x-forwarded-for': ip } });
+    let text = '';
+    const timer = setTimeout(() => { ws.terminate(); reject(new Error('Authenticated terminal did not start')); }, 3000);
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: token(userId) })));
+    const onMessage = data => {
+      text += data.toString();
+      if (text.includes('novacomp')) { clearTimeout(timer); ws.off('message', onMessage); resolve(ws); }
+    };
+    ws.on('message', onMessage);
+    ws.on('error', e => { clearTimeout(timer); reject(e); });
+  });
+}
+
+test('pending unauthenticated sockets cannot lock out a signed-in user, and failed auth drops the connection at once', async () => {
+  const idle = [];
+  const user = crypto.randomUUID(); users.push(user);
+  try {
+    // Several anonymous clients each try to park many sockets without authenticating.
+    for (const ip of ['203.0.113.1', '203.0.113.2', '203.0.113.3']) {
+      const results = [];
+      for (let i = 0; i < 6; i++) results.push(await openSocket(ip));
+      idle.push(...results.map(r => r.ws));
+      assert.deepEqual(results.map(r => r.status), [101, 101, 101, 101, 429, 429], ip);
+    }
+    // Pending sockets do not count toward the session limit: a signed-in user still gets a shell.
+    const ws = await openTerminal(user, '203.0.113.50');
+    ws.close();
+    // A failed authentication closes the TCP connection immediately, with no close handshake.
+    const { ws: rejected, status } = await openSocket('203.0.113.60');
+    assert.equal(status, 101);
+    const started = Date.now();
+    const code = await new Promise(resolve => {
+      rejected.on('close', resolve);
+      rejected.send(JSON.stringify({ type: 'auth', token: 'bad' }));
+    });
+    assert.equal(code, 1006);
+    assert.ok(Date.now() - started < 1000, 'connection must drop promptly');
+  } finally { idle.forEach(ws => ws.terminate()); }
+});
+
+test('terminal writes and shell mutations are rate limited per socket', async () => {
+  const user = crypto.randomUUID(); users.push(user);
+  const ws = await openTerminal(user, '203.0.113.70');
+  try {
+    let text = '';
+    ws.on('message', data => { text += data.toString(); });
+    const until = (pattern, what) => new Promise((resolve, reject) => {
+      const started = Date.now();
+      const poll = setInterval(() => {
+        if (pattern.test(text)) { clearInterval(poll); resolve(); }
+        else if (Date.now() - started > 3000) { clearInterval(poll); reject(new Error('Timed out waiting for ' + what)); }
+      }, 10);
+    });
+    const commands = Array.from({ length: 30 }, (_, i) => 'echo x > f' + i + '\r').join('') + 'cat zz-final\r';
+    ws.send(JSON.stringify({ type: 'input', data: commands }));
+    await until(/zz-final: No such file/, 'the shell commands');
+    assert.match(text, /echo: rate limit exceeded/);
+    const dir = path.join(workspace, user);
+    const created = Array.from({ length: 30 }, (_, i) => fs.existsSync(path.join(dir, 'f' + i))).filter(Boolean).length;
+    assert.ok(created >= 20 && created < 30, 'created ' + created + ' files');
+    // IDE file-sync frames draw from the same bucket.
+    for (let i = 0; i < 5; i++) ws.send(JSON.stringify({ type: 'write', fileName: 'w' + i, content: 'w' }));
+    await until(/write: rate limit exceeded/, 'the write frames');
+    const written = Array.from({ length: 5 }, (_, i) => fs.existsSync(path.join(dir, 'w' + i))).filter(Boolean).length;
+    assert.ok(written < 5, 'wrote ' + written + ' files');
+  } finally { ws.close(); }
+});
+
+test('terminal token buckets refill over time up to their burst size', () => {
+  const { createTokenBucket } = require('../src/ws/terminal');
+  let now = 0;
+  const bucket = createTokenBucket(3, 2, () => now);
+  assert.deepEqual([bucket.take(), bucket.take(), bucket.take(), bucket.take()], [true, true, true, false]);
+  now += 500; // one token at 2 per second
+  assert.deepEqual([bucket.take(), bucket.take()], [true, false]);
+  now += 60000; // never more than the burst
+  assert.deepEqual([bucket.take(), bucket.take(), bucket.take(), bucket.take()], [true, true, true, false]);
+});
+
+test('production deployment checks: https-only origins, explicit worker ID, proxy warning', () => {
+  const { checkDeployment } = require('../src/config');
+  const production = { NODE_ENV: 'production', NOVA_ALLOWED_ORIGINS: 'https://nova.example', NOVA_WORKER_ID: 'nova-a', NOVA_TRUST_PROXY: 'loopback' };
+  assert.deepEqual(checkDeployment(production), { allowedOrigins: ['https://nova.example'], trustProxy: ['loopback'], warnings: [] });
+  for (const origin of ['http://nova.example', 'http://localhost:5173', 'https://nova.example,http://localhost:3001'])
+    assert.throws(() => checkDeployment({ ...production, NOVA_ALLOWED_ORIGINS: origin }), /only https: origins/);
+  // Development may keep plain-http localhost origins.
+  assert.deepEqual(checkDeployment({ NOVA_ALLOWED_ORIGINS: 'http://localhost:5173' }).allowedOrigins, ['http://localhost:5173']);
+  assert.throws(() => checkDeployment({ ...production, NOVA_WORKER_ID: '' }), /NOVA_WORKER_ID/);
+  assert.equal(checkDeployment({ NOVA_ALLOWED_ORIGINS: '' }).warnings.length, 0);
+  const { warnings } = checkDeployment({ ...production, NOVA_TRUST_PROXY: '' });
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /NOVA_TRUST_PROXY/);
+  assert.throws(() => checkDeployment({ NOVA_TRUST_PROXY: 'true' }), /NOVA_TRUST_PROXY/);
+});
+
+test('production refuses to start without an explicit worker ID', () => {
+  const { spawnSync } = require('node:child_process');
+  const env = { ...process.env, NODE_ENV: 'production', NOVA_ALLOWED_ORIGINS: 'https://nova.example', NOVA_EXECUTION_MODE: 'docker' };
+  delete env.NOVA_WORKER_ID;
+  const child = spawnSync(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env, timeout: 3000 });
+  assert.notEqual(child.status, 0);
+  assert.match(child.stderr.toString(), /NOVA_WORKER_ID must be set/);
+});
+
 test('HTTP filesystem quotas reject writes atomically and isolate each user budget', async () => {
   const previous = process.env.NOVA_WORKSPACE_MAX_BYTES;
   process.env.NOVA_WORKSPACE_MAX_BYTES = '32';
@@ -272,7 +389,8 @@ test('sockets authenticate in their first message before creating a terminal', a
       const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base });
       ws.on('open', () => ws.send(JSON.stringify(payload)));
       ws.on('message', () => reject(new Error('Unauthenticated socket received terminal data')));
-      ws.on('close', code => { try { assert.equal(code, 4001); resolve(); } catch (e) { reject(e); } });
+      // The server drops the connection outright (no close frame), so the code is 1006.
+      ws.on('close', code => { try { assert.equal(code, 1006); resolve(); } catch (e) { reject(e); } });
       ws.on('error', reject);
     });
   }
@@ -349,7 +467,7 @@ test('malformed WebSocket upgrades cannot consume authentication capacity', asyn
   await new Promise((resolve, reject) => {
     const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base });
     ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'bad' })));
-    ws.on('close', code => { try { assert.equal(code, 4001); resolve(); } catch (e) { reject(e); } });
+    ws.on('close', code => { try { assert.equal(code, 1006); resolve(); } catch (e) { reject(e); } });
     ws.on('error', reject);
   });
 });

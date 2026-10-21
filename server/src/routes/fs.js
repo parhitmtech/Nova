@@ -6,7 +6,7 @@ const path = require('path');
 const security = require('../services/security');
 const { WORKSPACE } = require('../config');
 const { log } = require('../lib/logger');
-const { createWorkspaceStore } = require('../services/workspace-store');
+const { getWorkspaceStore } = require('../services/workspace-store');
 
 const router = express.Router();
 
@@ -15,9 +15,10 @@ const router = express.Router();
 function safeWorkspacePath(req, rel) {
   return security.safePath(security.userWorkspace(WORKSPACE, req.user.userId), rel);
 }
-// Every persistent mutation goes through the store so storage quotas apply.
+// Every persistent mutation goes through the user's shared store so storage
+// quotas apply and its cached usage totals stay accurate.
 function workspaceStore(req) {
-  return createWorkspaceStore(security.userWorkspace(WORKSPACE, req.user.userId));
+  return getWorkspaceStore(security.userWorkspace(WORKSPACE, req.user.userId));
 }
 
 // ── POST /fs/write  { path, content } ────────────────────────────────────────
@@ -37,7 +38,7 @@ router.delete("/fs/delete", (req, res) => {
   const target = safeWorkspacePath(req, req.query?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
-    fs.rmSync(target, { recursive: true, force: true });
+    workspaceStore(req).remove(target);
     res.json({ ok: true });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });

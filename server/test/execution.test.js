@@ -5,6 +5,10 @@ const os = require('node:os');
 const path = require('node:path');
 const { once } = require('node:events');
 
+// These tests put a stand-in `docker` script first on PATH. Windows cannot spawn a
+// shebang script, so there they would reach a real Docker CLI instead: skip them.
+const STAND_IN_DOCKER_SKIP = process.platform === 'win32' ? 'stand-in docker CLI needs shebang support (runs on Linux CI)' : false;
+
 // Real processes prove that execution limits and environment isolation work.
 test('local execution drops backend secrets and caps runaway output', async () => {
   const { createExecutor } = require('../src/services/execution');
@@ -141,22 +145,28 @@ test('per-user batch quotas and the separate REPL pool preserve execution for ot
   }
 });
 
-test('startup sweep targets only this worker labels and passes Docker client env through cleanup', async () => {
+
+test('startup sweep targets only this worker labels, spares running jobs, and passes Docker client env through cleanup', { skip: STAND_IN_DOCKER_SKIP }, async () => {
   const { sweepContainers } = require('../src/services/execution');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-docker-client-'));
   const log = path.join(dir, 'calls.jsonl');
   const previous = { PATH: process.env.PATH, DOCKER_HOST: process.env.DOCKER_HOST, DOCKER_CONFIG: process.env.DOCKER_CONFIG, NOVA_WORKER_ID: process.env.NOVA_WORKER_ID, NOVA_EXECUTION_MODE: process.env.NOVA_EXECUTION_MODE };
+  const exited = 'abcdef123456', running = '123456abcdef';
   fs.writeFileSync(path.join(dir, 'docker'), `#!${process.execPath}
 const fs = require('fs');
 fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({ args: process.argv.slice(2), host: process.env.DOCKER_HOST, config: process.env.DOCKER_CONFIG, secret: process.env.JWT_SECRET }) + '\\n');
-if (process.argv[2] === 'ps') console.log('abcdef123456');
+if (process.argv[2] === 'ps') console.log('${exited}\\n${running}');
+if (process.argv[2] === 'inspect') console.log('${exited} exited ' + new Date().toISOString() + '\\n${running} running ' + new Date().toISOString());
 `, { mode: 0o755 });
   Object.assign(process.env, { PATH: dir + path.delimiter + previous.PATH, DOCKER_HOST: 'tcp://fixture:2376', DOCKER_CONFIG: dir, NOVA_WORKER_ID: 'review-worker', NOVA_EXECUTION_MODE: 'docker' });
   try {
     await sweepContainers();
     const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
     assert.deepEqual(calls[0].args, ['ps', '-aq', '--filter', 'label=nova.job=true', '--filter', 'label=nova.worker=review-worker']);
-    assert.deepEqual(calls[1].args, ['rm', '-f', 'abcdef123456']);
+    assert.deepEqual(calls[1].args, ['inspect', '--format', '{{.Id}} {{.State.Status}} {{.Created}}', exited, running]);
+    // Only the finished container is removed; a recent running job may belong to a live instance.
+    assert.deepEqual(calls[2].args, ['rm', '-f', exited]);
+    assert.equal(calls.length, 3);
     for (const call of calls) {
       assert.equal(call.host, 'tcp://fixture:2376'); assert.equal(call.config, dir); assert.equal(call.secret, undefined);
     }
@@ -166,4 +176,56 @@ if (process.argv[2] === 'ps') console.log('abcdef123456');
     for (const [key, value] of Object.entries(previous)) value === undefined ? delete process.env[key] : process.env[key] = value;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('sweep selection removes only finished or over-age containers', () => {
+  const { staleContainers, MAX_CONTAINER_AGE_MS } = require('../src/services/execution');
+  const now = Date.parse('2026-10-21T12:00:00Z');
+  const at = ms => new Date(now - ms).toISOString();
+  const lines = [
+    `${'a'.repeat(64)} exited ${at(1000)}`,
+    `${'b'.repeat(64)} dead ${at(1000)}`,
+    `${'c'.repeat(64)} running ${at(60000)}`,                    // another instance's live job
+    `${'d'.repeat(64)} created ${at(1000)}`,                     // being started right now
+    `${'e'.repeat(64)} running ${at(MAX_CONTAINER_AGE_MS + 1)}`, // older than any deadline
+    `${'f'.repeat(64)} running not-a-date`,
+  ].join('\n');
+  assert.deepEqual(staleContainers(lines, now), ['a'.repeat(64), 'b'.repeat(64), 'e'.repeat(64), 'f'.repeat(64)]);
+  assert.throws(() => staleContainers('../evil exited ' + at(0), now), /Invalid container ID/);
+});
+
+test('a container SIGKILL is reported as a timeout only once the deadline has passed', () => {
+  const { classifyKill } = require('../src/services/execution');
+  assert.equal(classifyKill(30000, 30000), 'timeout');
+  assert.equal(classifyKill(30250, 30000), 'timeout');
+  assert.equal(classifyKill(1200, 30000), 'memory');
+  assert.equal(classifyKill(29999, 30000), 'memory');
+});
+
+test('Docker exit 137 before the deadline reports out of memory, after it a timeout', { skip: STAND_IN_DOCKER_SKIP }, async () => {
+  const { createExecutor } = require('../src/services/execution');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-oom-test-'));
+  const previous = process.env.PATH;
+  // A stand-in docker CLI: exits 137 after the delay given as its last argument.
+  // A .cmd shim is not spawnable without a shell, so this runs where shebangs work.
+  fs.writeFileSync(path.join(dir, 'docker'), `#!${process.execPath}\nconst ms = Number(process.argv[process.argv.length - 1]); setTimeout(() => process.exit(137), ms);\n`, { mode: 0o755 });
+  process.env.PATH = dir + path.delimiter + previous;
+  try {
+    const executor = createExecutor({ mode: 'docker', nodeEnv: 'test' });
+    const run = async (delay, timeoutMs) => {
+      const child = executor.spawnCompiler([String(delay)], { cwd: dir, timeoutMs });
+      let stderr = '';
+      child.stdout.resume(); child.stderr.on('data', d => { stderr += d; });
+      const [code] = await once(child, 'close');
+      return { code, reason: child.stopReason, stderr };
+    };
+    const oom = await run(10, 5000);
+    assert.equal(oom.reason, 'memory');
+    assert.match(oom.stderr, /Out of memory/);
+    assert.equal(oom.code, 1);
+    // The Node timer normally wins; either way the job is reported as timed out.
+    const late = await run(400, 300);
+    assert.equal(late.reason, 'timeout');
+    assert.match(late.stderr, /timed out/);
+  } finally { process.env.PATH = previous; fs.rmSync(dir, { recursive: true, force: true }); }
 });
