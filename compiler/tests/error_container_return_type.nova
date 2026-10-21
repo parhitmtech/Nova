@@ -1,0 +1,7 @@
+# A function declared to return a container returns that exact type.
+def f() -> vector<int>:
+    vector<double> d = vector<double>()
+    return d
+
+def main():
+    vector<int> v = f()

@@ -14,11 +14,13 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
 
     vector<int>     argIndices;
     vector<VarType> argTypes;
+    vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
 
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
         int argIdx = parse_expression(head, tracker);
         argIndices.push_back(argIdx);
         argTypes.push_back(lastExprType);
+        argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
         if (token.token_type == COMMA) token = lexer.GetToken();
     }
     token = lexer.GetToken();  // past ')'
@@ -33,7 +35,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
             lastExprType = TYPE_UNKNOWN;
             return 0;
         }
-        funcName = instantiate_generic_function(funcName, argTypes);
+        funcName = instantiate_generic_function(funcName, argTypes, argContainers);
     }
     // A function without '-> type' calling itself before its return type is known (see parse_function_definition).
     if (funcName == currentFunctionLabel && currentFuncReturnPending) currentFuncSelfCalled = true;
@@ -47,6 +49,13 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
         for (int i = 0; i < (int)argTypes.size() && i < (int)pTypes.size(); i++) {
             if (!types_compatible(argTypes[i], pTypes[i]))
                 report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + typeToString(pTypes[i]) + " but got " + typeToString(argTypes[i]));
+            else if ((pTypes[i] == TYPE_VECTOR || pTypes[i] == TYPE_MAP) && i < (int)functionParamContainers[funcName].size() && 
+                     !same_container(argTypes[i], argContainers[i], functionParamContainers[funcName][i]))
+            {
+                report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + 
+                                            container_type_name(functionParamContainers[funcName][i]) + " but got " + 
+                                            container_type_name(argContainers[i]));
+            }
         }
     }
 
@@ -136,6 +145,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
     append(head, tracker, copyRetNode);
     lastExprType = funcRetType;
+    if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) lastExprContainer = functionReturnContainer[funcName];
     return freshSlot;
 }
 
@@ -282,6 +292,7 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
     else if (token.token_type == ID)
     {
         if (containerTable.count(token.lexeme)) return parse_container_expression(head, tracker);
+        if (at_container_type() && !name_is_declared(token.lexeme)) return parse_container_constructor(head, tracker);
 
         if (token.lexeme == "hf" && lexer.peek(1).token_type == DOT)
         {
@@ -569,13 +580,26 @@ static int parse_tensor_postfix(int t, struct InstructionNode*& head, struct Ins
     return emit_tensor_op(op, "'." + member + "'", {t}, {TYPE_TENSOR}, {}, line, head, tracker);
 }
 
-// A primary followed by any tensor postfixes, so x.T.T, w[0, 1] and matmul(a, b)[0, 0] all work.
+// A primary followed by any tensor or container postfixes, so x.T.T, w[0, 1], matmul(a, b)[0, 0] and
+// make(3).size() all work.
 int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int v = parse_primary(head, tracker);
-    while (lastExprType == TYPE_TENSOR && (token.token_type == LBRAC || token.token_type == DOT))
+    while (token.token_type == LBRAC || token.token_type == DOT)
     {
-        v = parse_tensor_postfix(v, head, tracker);
+        if (lastExprType == TYPE_TENSOR)
+        {
+            v = parse_tensor_postfix(v, head, tracker);
+        }
+        else if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)  // make(3).size(), make(3)[0]
+        {
+            ContainerInfo info = lastExprContainer;
+            v = parse_container_postfix(v, info, container_type_name(info), token.line_no, head, tracker);
+        }
+        else
+        {
+            break;
+        }
     }
     return v;
 }

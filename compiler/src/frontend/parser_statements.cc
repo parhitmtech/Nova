@@ -486,13 +486,20 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             vector<VarType> retExprTypes;
             retExprs.push_back(parse_expression(head, tracker));
             retExprTypes.push_back(lastExprType);
+            ContainerInfo retContainer = lastExprContainer;  // when the first value is a container
             while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
                 retExprTypes.push_back(lastExprType);
             }
-            if (currentFuncReturnPending) infer_return_type(retExprTypes, token.line_no);
+            if (currentFuncReturnPending) infer_return_type(retExprTypes, retContainer, token.line_no);
+            if ((currentFuncRetType == TYPE_VECTOR || currentFuncRetType == TYPE_MAP) && retExprTypes.size() == 1 &&
+                 retExprTypes[0] == currentFuncRetType && !same_container(retExprTypes[0], retContainer, currentFuncRetContainer))
+            {
+                report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(currentFuncRetContainer) + 
+                                            ", not " + container_type_name(retContainer));
+            }
             int nExpected = currentFuncRetSlots.empty() ? 1 : (int)currentFuncRetSlots.size();
             if ((int)retExprs.size() != nExpected)
             {

@@ -1,0 +1,87 @@
+# Containers as values: parameters, return types, generic copies per container type, sharing on assignment,
+# and [i] / .method() on any container value.
+def total(vector<int> v) -> int:
+    int s = 0
+    int i = 0
+    while (i < v.size()):
+        s += v[i]
+        i += 1
+    return s
+
+def add_one(vector<int> v):  # a parameter names the caller's container, so changes are seen there
+    v.push(1)
+
+def make(int n) -> vector<int>:
+    vector<int> v = vector<int>()
+    int i = 0
+    while (i < n):
+        v.push(i * 10)
+        i += 1
+    return v
+
+def words():  # the return type comes from the return
+    vector<string> w = vector<string>()
+    w.push("hi")
+    return w
+
+def size_of(v):  # generic: size_of<vector<int>> and size_of<vector<string>>
+    return v.size()
+
+def first(v):
+    return v[0]
+
+def count(map<string, int> m, string k) -> int:
+    if (m.has(k)):
+        return m[k]
+    return 0
+
+def first_tensor(vector<Tensor> ts) -> Tensor:
+    return ts[0]
+
+def main():
+    vector<int> v = vector<int>()
+    v.push(3)
+    v.push(4)
+    print(total(v))
+    add_one(v)
+    add_one(v)
+    print(v.size())
+
+    vector<int> m = make(3)
+    print(m[2])
+    print(make(5).size())
+    print(make(4)[3])
+    print(make(2).contains(10))
+    vector<string> w = words()
+    print(w[0])
+
+    vector<int> a = vector<int>()
+    vector<int> b = a  # b and a are one vector
+    b.push(5)
+    print(a.size())
+    vector<int> c
+    c = a
+    c.push(6)
+    print(a[1])
+
+    vector<string> s = vector<string>()
+    s.push("x")
+    s.push("y")
+    print(size_of(a))
+    print(size_of(s))
+    print(first(a) + 1)
+    print(first(s))
+
+    map<string, int> counts = map<string, int>()
+    counts["a"] = 7
+    print(count(counts, "a"))
+    print(count(counts, "b"))
+    print(total(vector<int>()))
+
+    vector<Tensor> ts = vector<Tensor>()
+    ts.push(ones(2, 2) * 3.0)
+    Tensor t = first_tensor(ts)
+    print(t[1, 1])
+    print(first_tensor(ts).rows)
+    ts.clear()
+    print(tensor_live_count())

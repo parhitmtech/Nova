@@ -46,7 +46,7 @@ static void release_element(const Container& c, double v)
 
 static Container& container_at(int h, int line)
 {
-    if (h < 0 || h >= (int)container_heap.size())
+    if (h <= 0 || h >= (int)container_heap.size())
         tensor_shape_error(line, "container used before it was created");
     return container_heap[h];
 }
@@ -124,6 +124,7 @@ InstructionNode* exec_container_call(InstructionNode* pc)
             c.isMap = (tc.op == CON_MAP_NEW);
             c.key = c.isMap ? (VarType)mem[a[0]] : TYPE_UNKNOWN;
             c.elem = (VarType)mem[a[c.isMap ? 1 : 0]];
+            if (container_heap.empty()) container_heap.push_back(Container());  // handle 0: "no container"
             container_heap.push_back(c);
             mem[tc.result_slot] = (int)container_heap.size() - 1;
             break;

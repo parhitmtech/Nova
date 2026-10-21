@@ -323,8 +323,9 @@ The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
   `orbit novatorch.nn` / `novatorch.optim` / `novatorch.data`, `orbit collections`.
 - **Integrations:** `hf.*` (HuggingFace datasets and models) and `sol.*` (training on the SOL cluster).
 
-Known limits, being worked on: a container or object cannot yet be passed to a function, returned or stored
-in a field, and a generic class's type argument must be a built-in type.
+Containers are references: they can be passed to functions, returned and assigned (sharing one container).
+Known limits, being worked on: a container cannot yet be a class field, an object cannot yet be passed or
+stored, and a generic class's type argument must be a built-in type.
 
 ---
 

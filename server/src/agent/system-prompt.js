@@ -399,7 +399,7 @@ ignite:
 
 - \`v[i]\` reads or writes an existing element (out of range is a runtime error); \`push\`, \`pop\`, \`size\`, \`clear\`
 - \`m[k] = x\` adds or replaces; \`m[k]\` on a missing key is a runtime error, so check \`m.has(k)\`; \`remove\`, \`size\`, \`clear\`
-- A container is a local variable for now: do not pass it to a function, return it, or store it in a class field
+- A container is a reference: \`def total(vector<int> v) -> int\`, \`-> vector<int>\` and \`w = v\` share the one container (a function that pushes to its parameter changes the caller's vector). Do not store a container in a class field yet
 - Vector algorithms are methods: \`v.sort()\`, \`v.reverse()\`, \`v.contains(x)\`, \`v.index_of(x)\` (-1 if absent), \`v.binary_search(x)\` (sorted vector), \`v.min()\`, \`v.max()\`, \`v.sum()\`
 - \`orbit std.math\` gives generic \`abs(x)\`, \`min(a, b)\`, \`max(a, b)\`, \`clamp(x, lo, hi)\` for int, float and double
 

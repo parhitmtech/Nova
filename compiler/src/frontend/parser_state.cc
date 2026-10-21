@@ -138,6 +138,10 @@ map<string, map<string, VarType>> structFieldTypes;  // var -> {dotted path -> t
 
 // class support - parser local state
 map<string, ContainerInfo> containerTable;  // vector / map variable -> its element types
+ContainerInfo lastExprContainer;
+map<string, vector<ContainerInfo>> functionParamContainers;
+map<string, ContainerInfo> functionReturnContainer;
+ContainerInfo currentFuncRetContainer;
 map<string, int> currentSelfFieldSlots;
 map<string, VarType> currentSelfFieldTypes;
 map<string, int> currentSelfFieldArraySizes;

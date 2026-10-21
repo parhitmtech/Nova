@@ -1,0 +1,1 @@
+Error at line 7: argument 1 of 'total' expects vector<int> but got vector<double>
