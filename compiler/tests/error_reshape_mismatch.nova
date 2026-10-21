@@ -1,0 +1,4 @@
+# tensor_reshape rejects a shape with a different element count.
+ignite:
+    Tensor a = tensor_ones(3, 4)
+    Tensor b = tensor_reshape(a, 5, 2)

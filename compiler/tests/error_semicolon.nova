@@ -1,0 +1,3 @@
+# Statements end at the end of the line.
+ignite:
+    print(1) ;

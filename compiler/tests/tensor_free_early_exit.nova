@@ -1,0 +1,17 @@
+# Regression: an if-body ending in return/break/continue leaves an unreachable jump behind; the
+# tensor-free pass used to treat it as a predecessor, so no branch after it freed tensors
+# (this leaked one tensor per even k).
+def f(int k) -> int:
+    Tensor t = tensor_ones(2, 2)
+    if (k > 50): return 1
+    if (k % 2 == 0): return 0
+    t = tensor_add(t, t)
+    return 2
+
+ignite:
+    int before = tensor_live_count()
+    int i = 0
+    while (i < 10):
+        int r = f(i)
+        i += 1
+    print(tensor_live_count() - before)

@@ -1,0 +1,8 @@
+# Store and check out text files with LF on every OS, so shell scripts,
+# the Makefile and golden test outputs behave the same in Linux CI and Docker.
+* text=auto eol=lf
+
+*.png  binary
+*.jpg  binary
+*.ico  binary
+*.exe  binary

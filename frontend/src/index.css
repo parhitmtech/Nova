@@ -1,0 +1,11 @@
+@import 'tailwindcss';
+/* App styles, in cascade order. */
+@import './styles/base.css';
+@import './styles/layout.css';
+@import './styles/file-sidebar.css';
+@import './styles/editor.css';
+@import './styles/workspace-panels.css';
+@import './styles/dialogs.css';
+@import './styles/auth.css';
+@import './styles/share.css';
+@import './styles/responsive.css';

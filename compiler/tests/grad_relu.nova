@@ -1,0 +1,52 @@
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
+
+ignite:
+    double eps = 0.0001
+    double tol = 0.001
+    double maxdiff = 0.0
+    double d = 0.0
+
+    # ── relu ────────────────────────────────────────────────────────────────
+    Tensor reA = tensor_zeros(2, 2)
+    tensor_set(reA, 0, 0, 1.5)
+    tensor_set(reA, 0, 1, (0.0 - 2.0))
+    tensor_set(reA, 1, 0, 0.7)
+    tensor_set(reA, 1, 1, (0.0 - 0.3))
+    Tensor reT = tensor_zeros(2, 2)
+    tensor_set(reT, 0, 0, 0.1)
+    tensor_set(reT, 0, 1, 0.2)
+    tensor_set(reT, 1, 0, (0.0 - 0.3))
+    tensor_set(reT, 1, 1, 0.4)
+
+    requires_grad(reA)
+    Tensor reY = relu(reA)
+    Tensor reL = mse_loss(reY, reT)
+    backward(reL)
+    Tensor reG = tensor_grad(reA)
+
+    maxdiff = 0.0
+    int ri = 0
+    while (ri < 2):
+        int rj = 0
+        while (rj < 2):
+            double orig = tensor_get(reA, ri, rj)
+            tensor_set(reA, ri, rj, orig + eps)
+            Tensor yP6 = relu(reA)
+            Tensor lP6 = mse_loss(yP6, reT)
+            double lossP = tensor_get(lP6, 0, 0)
+            tensor_set(reA, ri, rj, orig - eps)
+            Tensor yM6 = relu(reA)
+            Tensor lM6 = mse_loss(yM6, reT)
+            double lossM = tensor_get(lM6, 0, 0)
+            tensor_set(reA, ri, rj, orig)
+            double numeric = (lossP - lossM) / (2.0 * eps)
+            double analytic = tensor_get(reG, ri, rj)
+            d = dabs(numeric - analytic)
+            if (d > maxdiff): maxdiff = d
+            rj = rj + 1
+        ri = ri + 1
+    if (maxdiff < tol): print("PASS relu")
+    else: print("FAIL relu")

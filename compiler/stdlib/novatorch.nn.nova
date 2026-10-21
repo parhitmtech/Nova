@@ -1,0 +1,68 @@
+class Linear:
+    Tensor W
+    Tensor b
+    int in_f
+    int out_f
+    Tensor last_input
+
+    def init(int in_features, int out_features):
+        self.W = xavier(in_features, out_features)
+        self.b = zeros(1, out_features)
+        self.in_f = in_features
+        self.out_f = out_features
+
+    def forward(Tensor x) -> Tensor:
+        self.last_input = x
+        Tensor z = x @ self.W
+        return z + self.b
+
+    def backward(Tensor grad_out) -> Tensor:
+        return grad_out @ tensor_T(self.W)
+
+    def get_dW(Tensor grad_out) -> Tensor:
+        return tensor_T(self.last_input) @ grad_out
+
+class ReLU:
+    Tensor last_input
+
+    def init():
+        pass
+
+    def forward(Tensor x) -> Tensor:
+        self.last_input = x
+        return relu(x)
+
+    def backward(Tensor grad_out) -> Tensor:
+        Tensor mask = relu_grad(self.last_input)
+        return grad_out * mask
+
+class Sigmoid:
+    Tensor last_input
+
+    def init():
+        pass
+
+    def forward(Tensor x) -> Tensor:
+        self.last_input = x
+        return sigmoid(x)
+
+    def backward(Tensor grad_out) -> Tensor:
+        Tensor mask = sigmoid_grad(self.last_input)
+        return grad_out * mask
+
+class Tanh:
+    Tensor last_input
+
+    def init():
+        pass
+
+    def forward(Tensor x) -> Tensor:
+        self.last_input = x
+        return tanh_t(x)
+
+    def backward(Tensor grad_out) -> Tensor:
+        Tensor out = tanh_t(self.last_input)
+        Tensor sq = out * out
+        Tensor one = ones(sq.rows, sq.cols)
+        Tensor mask = one - sq
+        return grad_out * mask

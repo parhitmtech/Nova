@@ -1,0 +1,63 @@
+# Every differentiable op must compute the same forward value with autograd
+# on as with it off. Shapes are deliberately non-square: a 2x2-only test is
+# how ag_matmul's forward bug (inner loop bounded by the output width instead
+# of the inner dimension) went unnoticed.
+def dabs(double x) -> double:
+    if (x < 0.0): return 0.0 - x
+    return x
+
+def check(double off, double on):
+    if (dabs(off - on) < 0.000000001): print("PASS")
+    else: print("FAIL")
+
+ignite:
+    Tensor A = tensor_randn(2, 3)
+    Tensor B = tensor_randn(3, 4)
+    Tensor C = tensor_randn(2, 3)
+    Tensor D = tensor_randn(3, 2)
+    Tensor bias = tensor_randn(1, 3)
+    Tensor Y = tensor_zeros(2, 3)
+    tensor_set(Y, 0, 1, 1.0)
+    tensor_set(Y, 1, 2, 1.0)
+    double k = 0.7
+
+    # autograd off
+    double o1 = tensor_sum(matmul(A, B))
+    double o2 = tensor_sum(tensor_add(A, C))
+    double o3 = tensor_sum(tensor_add(A, bias))
+    double o4 = tensor_sum(tensor_sub(A, C))
+    double o5 = tensor_sum(tensor_sub(A, bias))
+    double o6 = tensor_sum(tensor_mul(A, C))
+    double o7 = tensor_sum(tensor_scale(A, k))
+    double o8 = tensor_sum(relu(A))
+    double o9 = tensor_sum(sigmoid(A))
+    double o10 = tensor_sum(tanh_t(A))
+    double o11 = tensor_sum(tensor_mul(softmax(A), A))
+    double o12 = tensor_sum(tensor_mul(tensor_T(A), D))
+    double o13 = tensor_sum(tensor_mul(tensor_sum_rows(A), bias))
+    double o14 = tensor_get(mse_loss(A, C), 0, 0)
+    double o15 = tensor_get(cross_entropy_loss(A, Y), 0, 0)
+    double o16 = tensor_sum(matmul(C, D))  # inner dim 3 > output width 2
+
+    # autograd on (A, B, C, D and bias all record onto the tape)
+    requires_grad(A)
+    requires_grad(B)
+    requires_grad(C)
+    requires_grad(D)
+    requires_grad(bias)
+    check(o1, tensor_sum(matmul(A, B)))
+    check(o2, tensor_sum(tensor_add(A, C)))
+    check(o3, tensor_sum(tensor_add(A, bias)))
+    check(o4, tensor_sum(tensor_sub(A, C)))
+    check(o5, tensor_sum(tensor_sub(A, bias)))
+    check(o6, tensor_sum(tensor_mul(A, C)))
+    check(o7, tensor_sum(tensor_scale(A, k)))
+    check(o8, tensor_sum(relu(A)))
+    check(o9, tensor_sum(sigmoid(A)))
+    check(o10, tensor_sum(tanh_t(A)))
+    check(o11, tensor_sum(tensor_mul(softmax(A), A)))
+    check(o12, tensor_sum(tensor_mul(tensor_T(A), D)))
+    check(o13, tensor_sum(tensor_mul(tensor_sum_rows(A), bias)))
+    check(o14, tensor_get(mse_loss(A, C), 0, 0))
+    check(o15, tensor_get(cross_entropy_loss(A, Y), 0, 0))
+    check(o16, tensor_sum(matmul(C, D)))

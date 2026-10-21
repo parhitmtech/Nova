@@ -1,0 +1,4 @@
+# A vector holds one element type.
+def main():
+    vector<int> v = vector<int>()
+    v.push("no")

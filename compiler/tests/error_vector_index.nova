@@ -1,0 +1,5 @@
+# Reading past the end of a vector is a runtime error.
+def main():
+    vector<int> v = vector<int>()
+    v.push(1)
+    print(v[3])

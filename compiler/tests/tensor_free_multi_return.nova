@@ -1,0 +1,16 @@
+# Regression: a function returning several tensors. The tensor-free pass used to release every return
+# value after the first right after computing it (RET names only the first return slot), so the
+# caller read freed tensors. Also checks nothing leaks across 30 calls.
+def halves(Tensor t) -> Tensor, Tensor:
+    int n = tensor_rows(t) / 2
+    return tensor_slice_rows(t, 0, n), tensor_slice_rows(t, n, tensor_rows(t))
+
+ignite:
+    Tensor src = tensor_ones(4, 2)
+    int before = tensor_live_count()
+    int i = 0
+    while (i < 30):
+        Tensor top, Tensor bottom = halves(src)
+        i += 1
+    print(tensor_live_count() - before)
+    print(tensor_rows(src))

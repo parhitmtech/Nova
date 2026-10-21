@@ -1,0 +1,14 @@
+# Each function's locals are gone after it, so two functions can both declare an object named p.
+class P:
+    int a
+
+    def init():
+        self.a = 7
+
+def f() -> int:
+    P p = P()
+    return p.a
+
+def main():
+    P p = P()
+    print(p.a + f())

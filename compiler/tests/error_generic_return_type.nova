@@ -1,0 +1,9 @@
+# A function without '-> type' that calls itself before its first return must write its return type
+# when that type is not an int.
+def bad(x, n):
+    if (n > 0):
+        float y = bad(x, n - 1)
+    return x
+
+def main():
+    print(bad(1.0, 2))

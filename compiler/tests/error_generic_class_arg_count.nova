@@ -1,0 +1,9 @@
+# The number of type arguments must match the class's type parameters.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    Box<int, int> b = Box<int, int>(1)

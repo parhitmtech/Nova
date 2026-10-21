@@ -1,0 +1,51 @@
+/* Shared-code page. */
+.share-shell {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: #0c101b;
+}
+.share-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 25px;
+  border-bottom: 1px solid var(--border);
+  background: #111725;
+  gap: 20px;
+}
+.share-toolbar > div {
+  display: flex;
+  gap: 8px;
+}
+.share-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #92a2be;
+  padding: 14px 25px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.share-badge {
+  padding: 4px 7px;
+  border: 1px solid #40504b;
+  color: #9ccebc;
+  border-radius: 5px;
+  font-size: 9px;
+}
+.share-content {
+  flex: 1;
+  min-height: 0;
+}
+.share-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  gap: 13px;
+  color: #aab7cf;
+  text-align: center;
+  padding: 20px;
+}

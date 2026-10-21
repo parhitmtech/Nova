@@ -1,0 +1,39 @@
+orbit novatorch.nn
+orbit novatorch.optim
+
+ignite:
+    # Dataset: y = 2x + 1
+    Tensor X = zeros(5, 1)
+    X[0, 0] = 1
+    X[1, 0] = 2
+    X[2, 0] = 3
+    X[3, 0] = 4
+    X[4, 0] = 5
+
+    Tensor Y = zeros(5, 1)
+    Y[0, 0] = 3
+    Y[1, 0] = 5
+    Y[2, 0] = 7
+    Y[3, 0] = 9
+    Y[4, 0] = 11
+
+    Linear layer1 = Linear(1, 1)
+
+    SGD optim = SGD(0.01)
+
+    int epoch = 0
+    Tensor pred
+
+    while (epoch < 5000):
+        pred      = layer1.forward(X)
+
+        Tensor grad  = mse_grad(pred, Y)
+        Tensor dW    = layer1.get_dW(grad)
+        Tensor db    = tensor_sum_rows(grad)
+        layer1.W  = optim.step(layer1.W, dW)
+        layer1.b  = optim.step(layer1.b, db)
+
+        epoch = epoch + 1
+
+    pred = layer1.forward(X)
+    tensor_print(pred)

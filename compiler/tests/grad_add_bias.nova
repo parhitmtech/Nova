@@ -1,0 +1,40 @@
+# Gradient of a 1xN bias row added to every row of a matrix (x + b and b + x), against central finite
+# differences. The bias gradient is the sum over rows; it used to keep only the last row.
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
+
+def main():
+    double eps = 0.0001
+    Tensor x = zeros(3, 2)
+    x[0, 0] = 1.0
+    x[0, 1] = -2.0
+    x[1, 0] = 0.5
+    x[1, 1] = 3.0
+    x[2, 0] = -1.5
+    x[2, 1] = 0.25
+    Tensor b = zeros(1, 2)
+    b[0, 0] = 0.4
+    b[0, 1] = -0.9
+    Tensor t = zeros(3, 2)
+    t[1, 0] = 0.6
+
+    requires_grad(b)
+    backward(mse_loss(x + b, t) + mse_loss(b + x, t * 2.0))
+    Tensor g = tensor_grad(b)
+    print((b + x).rows)
+
+    double worst = 0.0
+    int j = 0
+    for (j = 0 ; j < 2 ; j += 1):
+        double orig = b[0, j]
+        b[0, j] = orig + eps
+        double lp = mse_loss(x + b, t)[0, 0] + mse_loss(b + x, t * 2.0)[0, 0]
+        b[0, j] = orig - eps
+        double lm = mse_loss(x + b, t)[0, 0] + mse_loss(b + x, t * 2.0)[0, 0]
+        b[0, j] = orig
+        double d = dabs((lp - lm) / (2.0 * eps) - g[0, j])
+        if (d > worst): worst = d
+    if (worst < 0.001): print("PASS add bias")
+    else: print("FAIL add bias")

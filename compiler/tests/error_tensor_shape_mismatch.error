@@ -1,0 +1,1 @@
+Runtime error at line 5: '*' needs tensors of the same shape, got (2, 3) and (1, 2)

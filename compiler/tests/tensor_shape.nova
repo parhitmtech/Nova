@@ -1,0 +1,36 @@
+# M1 stage 1: every tensor carries a full N-D shape. For today's 2-D ops the shape must be exactly {rows, cols}.
+# This test pins the rank and dimensions produced by the main ops, so later N-D work can't silently
+# change them.
+def show(Tensor t):
+    print(tensor_rank(t))
+    print(tensor_dim(t, 0))
+    print(tensor_dim(t, 1))
+
+ignite:
+    Tensor a = tensor_zeros(3, 4)
+    Tensor b = tensor_ones(4, 5)
+    show(a)  # 2 3 4
+    Tensor m = matmul(a, b)
+    show(m)  # 2 3 5
+    Tensor mt = tensor_T(m)
+    show(mt)  # 2 5 3
+    Tensor ms = tensor_slice_rows(m, 1, 3)
+    show(ms)  # 2 2 5
+    Tensor mr = tensor_sum_rows(m)
+    show(mr)  # 2 1 5
+    Tensor sm = softmax(m)
+    show(sm)  # 2 3 5
+
+    # autograd: the gradient has the same shape as its tensor
+    Tensor w = tensor_ones(4, 2)
+    requires_grad(w)
+    Tensor y = matmul(a, w)
+    Tensor t = tensor_zeros(3, 2)
+    Tensor loss = mse_loss(y, t)
+    show(loss)  # 2 1 1
+    backward(loss)
+    Tensor g = tensor_grad(w)
+    show(g)  # 2 4 2
+
+    # the 2-D view still agrees with the shape
+    print(tensor_rows(m) * tensor_cols(m))  # 15

@@ -1,0 +1,4 @@
+# A Tensor declared without a value must be assigned before use.
+ignite:
+    Tensor h
+    print(tensor_sum(h))

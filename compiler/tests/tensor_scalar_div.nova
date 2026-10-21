@@ -1,0 +1,23 @@
+# Tensor + - number in either order, and element-wise tensor / tensor.
+def main():
+    Tensor t = ones(1, 2) * 4.0
+    print((t + 2.0)[0, 0])
+    print((2.0 + t)[0, 1])
+    print((t - 3.0)[0, 0])
+    print((3.0 - t)[0, 0])
+    print((t + 1)[0, 1])
+    print((t - 0.5 * 2.0)[0, 0])
+
+    Tensor b = ones(1, 2) * 8.0
+    b[0, 1] = 2.0
+    Tensor q = b / t
+    print(q[0, 0])
+    print(q[0, 1])
+    print(tensor_div(t, b)[0, 1])
+
+    # a 1xN row broadcasts over every row: on either side of +, on the right of -
+    Tensor m = ones(2, 2)
+    Tensor r = ones(1, 2) * 10.0
+    print((m + r)[1, 1])
+    print((r + m)[1, 0])
+    print((m - r)[1, 0])

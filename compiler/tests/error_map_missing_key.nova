@@ -1,0 +1,4 @@
+# Reading a key a map does not have is a runtime error (check with has(k) first).
+def main():
+    map<string, int> m = map<string, int>()
+    print(m["x"])

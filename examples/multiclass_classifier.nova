@@ -1,0 +1,75 @@
+orbit novatorch.nn
+orbit novatorch.optim
+
+ignite:
+    # Dataset: 3-class problem (6 samples, 2 features, 3 classes)
+    # Class 0: top-left, Class 1: top-right, Class 2: bottom-center
+    Tensor X = zeros(6, 2)
+    X[0, 0] = 0
+    X[0, 1] = 1
+    X[1, 0] = 0
+    X[1, 1] = 2
+    X[2, 0] = 2
+    X[2, 1] = 1
+    X[3, 0] = 2
+    X[3, 1] = 2
+    X[4, 0] = 1
+    X[4, 1] = 0
+    X[5, 0] = 1
+    X[5, 1] = 0
+
+    # One-hot labels: 6x3
+    # rows 0,1 = class 0 → [1,0,0]
+    # rows 2,3 = class 1 → [0,1,0]
+    # rows 4,5 = class 2 → [0,0,1]
+    Tensor Y = zeros(6, 3)
+    Y[0, 0] = 1
+    Y[1, 0] = 1
+    Y[2, 1] = 1
+    Y[3, 1] = 1
+    Y[4, 2] = 1
+    Y[5, 2] = 1
+
+    # Model: Linear(2→8) → ReLU → Linear(8→3) → Softmax (implicit in CE loss)
+    Linear layer1 = Linear(2, 8)
+
+    ReLU act1 = ReLU()
+
+    Linear layer2 = Linear(8, 3)
+
+    SGD optim = SGD(0.05)
+
+    int epoch = 0
+    Tensor h1
+    Tensor a1
+    Tensor logits
+    Tensor pred
+
+    while (epoch < 5000):
+        # Forward
+        h1     = layer1.forward(X)
+        a1     = act1.forward(h1)
+        logits = layer2.forward(a1)
+
+        # Backward — cross_entropy_grad includes softmax internally
+        Tensor grad = cross_entropy_grad(logits, Y)
+        Tensor dW2  = layer2.get_dW(grad)
+        Tensor db2  = tensor_sum_rows(grad)
+        layer2.W = optim.step(layer2.W, dW2)
+        layer2.b = optim.step(layer2.b, db2)
+
+        Tensor g1   = layer2.backward(grad)
+        Tensor ga1  = act1.backward(g1)
+        Tensor dW1  = layer1.get_dW(ga1)
+        Tensor db1  = tensor_sum_rows(ga1)
+        layer1.W = optim.step(layer1.W, dW1)
+        layer1.b = optim.step(layer1.b, db1)
+
+        epoch = epoch + 1
+
+    # Final prediction — apply softmax for readable probabilities
+    h1     = layer1.forward(X)
+    a1     = act1.forward(h1)
+    logits = layer2.forward(a1)
+    pred   = softmax(logits)
+    tensor_print(pred)

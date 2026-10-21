@@ -1,0 +1,2 @@
+tensor_reshape: new shape has 10 elements but the tensor has 12
+line 4

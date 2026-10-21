@@ -1,0 +1,4 @@
+# A Tensor has .T, .rows, .cols and .rank.
+ignite:
+    Tensor t = ones(2, 2)
+    print(t.shape)

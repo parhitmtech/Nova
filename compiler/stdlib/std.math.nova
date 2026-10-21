@@ -1,0 +1,30 @@
+# std.math: small numeric helpers, generic (loose def), so each works for int, float and double.
+# orbit std.math
+
+def abs(x):
+    if (x < 0):
+        return x - x - x  # -x in x's own type (0 - x would mix an int with a float)
+    return x
+
+def min(a, b):
+    if (b < a):
+        return b
+    return a
+
+def max(a, b):
+    if (a < b):
+        return b
+    return a
+
+def clamp(x, lo, hi):
+    if (x < lo):
+        return lo
+    if (hi < x):
+        return hi
+    return x
+
+# Runs only when this file itself is the program (nova stdlib/std.math.nova), not when it is orbited.
+ignite:
+    print(abs(0 - 5))
+    print(max(2.5, 1.0))
+    print(clamp(12, 0, 10))

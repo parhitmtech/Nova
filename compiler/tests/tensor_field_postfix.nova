@@ -1,0 +1,27 @@
+# Tensor postfixes (.T, [i, j], .rows, .cols) and element stores on fields, through self and an object.
+class Layer:
+    Tensor W
+    int hits[3]
+
+    def init():
+        self.W = ones(2, 3)
+
+    def check():
+        Tensor t = self.W.T
+        print(t.rows)
+        print(self.W.cols)
+        print(self.W[0, 1])
+        self.W[0, 1] = 5.0
+        print(self.W[0, 1])
+        print((self.W.T)[1, 0])
+        self.hits[1] = 9  # an int-array field still takes a plain index
+        print(self.hits[1])
+
+def main():
+    Layer layer = Layer()
+    layer.check()
+    print(layer.W.T.rows)
+    print(layer.W[0, 1])
+    layer.W[1, 2] = 7.0
+    print(layer.W[1, 2])
+    print(tensor_live_count())

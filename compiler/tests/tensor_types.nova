@@ -1,0 +1,41 @@
+# Syntax step 5: Tensor is a type of its own. Tensor parameters, returns, fields and multiple returns;
+# a tensor expression passed straight to a function (f(matmul(a, b)) used to be a type error);
+# a Tensor declared without a value and assigned later; a method's Tensor result used in a tensor op.
+class Layer:
+    Tensor W
+
+    def init(int n):
+        self.W = tensor_ones(n, n)
+
+    def forward(Tensor x) -> Tensor:
+        return matmul(x, self.W)
+
+def total(Tensor t) -> double:
+    return tensor_sum(t)
+
+def scaled(Tensor t, double k) -> Tensor:
+    return tensor_scale(t, k)
+
+def halves(Tensor t) -> Tensor, Tensor:
+    int n = tensor_rows(t) / 2
+    return tensor_slice_rows(t, 0, n), tensor_slice_rows(t, n, tensor_rows(t))
+
+ignite:
+    Tensor a = tensor_ones(2, 3)
+    Tensor b = tensor_ones(3, 2)
+    print(total(matmul(a, b)))              # a tensor expression as an argument: 4 entries of 3
+    print(total(scaled(a, 0.5)))            # 6 entries of 0.5
+
+    Layer layer = Layer(2)
+    print(tensor_sum(layer.forward(matmul(a, b))))   # a method's Tensor result inside a tensor op
+
+    Tensor top, Tensor bottom = halves(tensor_ones(4, 2))
+    print(tensor_rows(top) + tensor_rows(bottom))
+
+    # declared without a value, assigned in the loop
+    Tensor acc
+    int i = 0
+    while (i < 3):
+        acc = tensor_scale(a, double(i))
+        i += 1
+    print(tensor_get(acc, 1, 2))

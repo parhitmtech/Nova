@@ -1,0 +1,5 @@
+# orbit reports a module it cannot find.
+orbit no_such_module
+
+ignite:
+    print(1)

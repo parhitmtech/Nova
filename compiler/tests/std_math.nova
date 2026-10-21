@@ -1,0 +1,13 @@
+# std.math: generic helpers (loose def), each working for int, float and double.
+orbit std.math
+
+def main():
+    print(abs(0 - 5))
+    print(abs(0.0 - 2.5))
+    double d = 0.0 - 1.5
+    print(abs(d))
+    print(min(3, 7))
+    print(max(2.5, 1.0))
+    print(clamp(12, 0, 10))
+    print(clamp(0.0 - 1.0, 0.0, 1.0))
+    print(clamp(5, 0, 10))

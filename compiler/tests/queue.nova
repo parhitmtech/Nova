@@ -1,0 +1,14 @@
+orbit collections
+ignite:
+    Queue q = Queue()
+    q.enqueue(5)
+    q.enqueue(15)
+    q.enqueue(25)
+    print(q.size())
+    print(q.isEmpty())
+    print(q.dequeue())
+    print(q.dequeue())
+    print(q.size())
+    print(q.isEmpty())
+    print(q.dequeue())
+    print(q.isEmpty())

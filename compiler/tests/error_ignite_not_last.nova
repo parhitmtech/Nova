@@ -1,0 +1,6 @@
+# Definitions go before the ignite block (Nova is one-pass).
+ignite:
+    print(1)
+
+def late() -> int:
+    return 2

@@ -1,0 +1,72 @@
+# Block scoping: a variable declared in an if / else / loop / case body is gone after it, so a later
+# block can declare the name again (even with another type), and a declaration in a loop body starts
+# fresh on every pass.
+struct Pt:
+    int x
+    int y
+
+class Counter:
+    int n
+
+    def init():
+        self.n = 1
+
+def main():
+    if (true):
+        int x = 1
+        print(x)
+    if (true):
+        int x = 2
+        print(x)
+
+    if (false):
+        int v = 1
+        print(v)
+    else:
+        double v = 2.5
+        print(v)
+
+    int i = 0
+    while (i < 3):
+        int count
+        double acc
+        count += 1
+        acc = acc + 0.5
+        print(count)
+        print(acc)
+        i += 1
+
+    for (i = 0 ; i < 2 ; i += 1):
+        Counter c = Counter()
+        Pt p = Pt(i, 2)
+        print(c.n + p.x)
+    Counter c = Counter()
+    print(c.n)
+
+    i = 0
+    while (i < 2):
+        int a = i
+        if (a == 1):
+            int b = a + 10
+            print(b)
+        int b = 99
+        print(b)
+        i += 1
+
+    switch (i):
+        case 2:
+            int y = 5
+            print(y)
+        default:
+            int y = 6
+            print(y)
+
+    i = 0
+    do:
+        Tensor t = ones(2, 2) * 2.0
+        Tensor h
+        h = t + 1.0
+        print(h[0, 0])
+        i += 1
+    while (i < 3)
+    print(tensor_live_count())

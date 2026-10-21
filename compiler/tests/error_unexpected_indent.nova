@@ -1,0 +1,4 @@
+# A line indented more than its block, without a ':' above it.
+ignite:
+    print(1)
+        print(2)

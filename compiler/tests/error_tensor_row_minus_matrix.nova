@@ -1,0 +1,5 @@
+# A 1xN row broadcasts only on the right of -: a matrix minus a bias row works, a row minus a matrix does not.
+def main():
+    Tensor m = ones(2, 2)
+    Tensor r = ones(1, 2)
+    Tensor c = r - m

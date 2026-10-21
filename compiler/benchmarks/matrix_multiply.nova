@@ -1,0 +1,6 @@
+ignite:
+    int n = 32
+    Tensor A = tensor_randn(n, n)
+    Tensor B = tensor_randn(n, n)
+    Tensor C = matmul(A, B)
+    print("done")

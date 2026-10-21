@@ -1,0 +1,31 @@
+# Production stack on the EC2 host, in /opt/novacomp (see docs/DEPLOY.md).
+# deploy.sh writes NOVA_TAG and DOCKER_GID into /opt/novacomp/.env before starting it.
+services:
+  server:
+    image: ghcr.io/parhitmtech/nova-server:${NOVA_TAG:?set by deploy.sh}
+    restart: unless-stopped
+    env_file: /opt/novacomp/server.env # secrets: JWT_SECRET, AWS settings, NOVA_ALLOWED_ORIGINS, ...
+    environment:
+      # Programs run in sandboxed worker containers built from the same commit.
+      NOVA_WORKER_IMAGE: ghcr.io/parhitmtech/nova-worker:${NOVA_TAG:?set by deploy.sh}
+      # The start-up sweep removes only this backend's stale worker containers. This host runs one backend,
+      # so a fixed ID is unique; give each backend its own ID if several ever share this Docker daemon.
+      NOVA_WORKER_ID: novacomp-ec2
+      # The TLS proxy on this host is the only hop in front of the server (the port is bound to 127.0.0.1),
+      # so trust exactly one X-Forwarded-For entry: rate limits then see the real client address.
+      NOVA_TRUST_PROXY: '1'
+    ports:
+      - '127.0.0.1:3001:3001' # only reachable through the TLS proxy on this host
+    volumes:
+      # The server starts worker containers through the host's Docker daemon.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Job directories are bind-mounted into workers by the host daemon, so the path must be the
+      # same on the host and inside this container.
+      - /var/lib/novacomp/jobs:/var/lib/novacomp/jobs
+    group_add:
+      - '${DOCKER_GID:?set by deploy.sh}' # lets the non-root server user use the Docker socket
+    healthcheck:
+      test: ['CMD', 'node', '-e', "fetch('http://127.0.0.1:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

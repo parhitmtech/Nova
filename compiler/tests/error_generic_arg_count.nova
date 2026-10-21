@@ -1,0 +1,6 @@
+# A generic function is called with the wrong number of arguments.
+def inc(x):
+    return x + 1
+
+def main():
+    print(inc(1, 2))

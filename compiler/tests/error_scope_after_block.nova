@@ -1,0 +1,7 @@
+# A variable declared in a loop body is not visible after the loop.
+def main():
+    int i = 0
+    while (i < 2):
+        int x = i * 10
+        i += 1
+    print(x)

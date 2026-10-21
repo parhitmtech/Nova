@@ -1,0 +1,134 @@
+/* Login / sign-up page. */
+.auth-page {
+  min-height: 100dvh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: radial-gradient(ellipse at 12% 10%, #28244855, transparent 60%), #0c101b;
+}
+.auth-story {
+  padding: 48px max(30px, 9vw);
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  border-right: 1px solid #252d42;
+}
+.auth-story .brand {
+  margin-bottom: 75px;
+}
+.eyebrow {
+  color: #b5afea;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 2px;
+  margin-bottom: 20px;
+}
+.auth-story h1 {
+  font-size: clamp(36px, 4vw, 60px);
+  line-height: 1.12;
+  letter-spacing: -2px;
+  font-weight: 600;
+  max-width: 500px;
+  margin: 0 0 23px;
+}
+.auth-story h1 span {
+  color: #ada5fa;
+}
+.auth-story p {
+  color: #9ba8bf;
+  line-height: 1.8;
+  font-size: 14px;
+  max-width: 400px;
+}
+.auth-code {
+  margin-top: 30px;
+  padding: 24px;
+  border: 1px solid #34324f;
+  border-radius: 11px;
+  background: #111522;
+  box-shadow: 0 20px 55px #0003;
+  max-width: 400px;
+}
+.auth-code .code-label {
+  font-size: 10px;
+  color: #8794b0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 20px;
+}
+.auth-code pre {
+  font-size: 13px;
+  line-height: 1.9;
+  color: #bcb7ff;
+  margin: 0;
+  white-space: pre-wrap;
+}
+.auth-form-side {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 25px;
+}
+.auth-card {
+  max-width: 380px;
+  width: 100%;
+}
+.auth-card h2 {
+  font-size: 28px;
+  letter-spacing: -0.7px;
+  margin: 0 0 10px;
+}
+.auth-card > p {
+  color: #9ba8bf;
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 30px;
+}
+.auth-tabs {
+  display: flex;
+  padding: 4px;
+  border: 1px solid #29344c;
+  border-radius: 8px;
+  background: #101726;
+  margin-bottom: 27px;
+  gap: 4px;
+}
+.auth-tabs button {
+  flex: 1;
+  padding: 9px;
+  background: none;
+  border: 0;
+  border-radius: 5px;
+  color: #8f9cb6;
+  font-size: 12px;
+}
+.auth-tabs button.active {
+  background: #2c304c;
+  color: #d1cdff;
+}
+.auth-card form > div {
+  margin-bottom: 20px;
+}
+.password-field {
+  position: relative;
+}
+.password-field input {
+  padding-right: 42px;
+}
+.password-field button {
+  position: absolute;
+  right: 7px;
+  top: 6px;
+}
+.auth-submit {
+  width: 100%;
+  margin-top: 6px;
+  height: 43px;
+}
+.auth-note {
+  text-align: center;
+  color: #8f9cb4;
+  font-size: 11px;
+  line-height: 1.7;
+  margin-top: 23px;
+}

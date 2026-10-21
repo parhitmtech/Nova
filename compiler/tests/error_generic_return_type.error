@@ -1,0 +1,1 @@
+Error at line 6: function 'bad<float, int>' calls itself before its first return, so its return type must be written: add '-> float'

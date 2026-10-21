@@ -1,0 +1,81 @@
+def dabs(double x) -> double:
+    if (x < 0.0):
+        return 0.0 - x
+    return x
+
+ignite:
+    double eps = 0.0001
+    double tol = 0.001
+    double maxdiff = 0.0
+    double d = 0.0
+
+    # ── mul (Hadamard): C = A * B, grad wrt A ──────────────────────────────
+    Tensor muA = tensor_zeros(2, 2)
+    tensor_set(muA, 0, 0, 1.0)
+    tensor_set(muA, 0, 1, (0.0 - 2.0))
+    tensor_set(muA, 1, 0, 0.5)
+    tensor_set(muA, 1, 1, 3.0)
+    Tensor muB = tensor_zeros(2, 2)
+    tensor_set(muB, 0, 0, 0.3)
+    tensor_set(muB, 0, 1, 1.0)
+    tensor_set(muB, 1, 0, (0.0 - 1.5))
+    tensor_set(muB, 1, 1, 0.7)
+    Tensor muT = tensor_zeros(2, 2)
+    tensor_set(muT, 0, 0, 0.1)
+    tensor_set(muT, 0, 1, 0.2)
+    tensor_set(muT, 1, 0, (0.0 - 0.3))
+    tensor_set(muT, 1, 1, 0.4)
+
+    requires_grad(muA)
+    Tensor muY = tensor_mul(muA, muB)
+    Tensor muL = mse_loss(muY, muT)
+    backward(muL)
+    Tensor muG = tensor_grad(muA)
+
+    maxdiff = 0.0
+    int ui = 0
+    while (ui < 2):
+        int uj = 0
+        while (uj < 2):
+            double orig = tensor_get(muA, ui, uj)
+            tensor_set(muA, ui, uj, orig + eps)
+            Tensor yP4 = tensor_mul(muA, muB)
+            Tensor lP4 = mse_loss(yP4, muT)
+            double lossP = tensor_get(lP4, 0, 0)
+            tensor_set(muA, ui, uj, orig - eps)
+            Tensor yM4 = tensor_mul(muA, muB)
+            Tensor lM4 = mse_loss(yM4, muT)
+            double lossM = tensor_get(lM4, 0, 0)
+            tensor_set(muA, ui, uj, orig)
+            double numeric = (lossP - lossM) / (2.0 * eps)
+            double analytic = tensor_get(muG, ui, uj)
+            d = dabs(numeric - analytic)
+            if (d > maxdiff): maxdiff = d
+            uj = uj + 1
+        ui = ui + 1
+    if (maxdiff < tol): print("PASS mul")
+    else: print("FAIL mul")
+
+    # ── the same product, grad wrt B (accum_grad used to run inside the per-element loop) ──
+    requires_grad(muB)
+    Tensor muL2 = mse_loss(muA * muB, muT)
+    backward(muL2)
+    Tensor muGB = tensor_grad(muB)
+
+    maxdiff = 0.0
+    int vi = 0
+    while (vi < 2):
+        int vj = 0
+        while (vj < 2):
+            double origB = muB[vi, vj]
+            muB[vi, vj] = origB + eps
+            double lossPB = mse_loss(muA * muB, muT)[0, 0]
+            muB[vi, vj] = origB - eps
+            double lossMB = mse_loss(muA * muB, muT)[0, 0]
+            muB[vi, vj] = origB
+            d = dabs((lossPB - lossMB) / (2.0 * eps) - muGB[vi, vj])
+            if (d > maxdiff): maxdiff = d
+            vj = vj + 1
+        vi = vi + 1
+    if (maxdiff < tol): print("PASS mul wrt B")
+    else: print("FAIL mul wrt B")

@@ -1,0 +1,24 @@
+# Regression test for compiler-inserted tensor frees across branches.
+# t's last use inside an if that is skipped on later iterations, and u'skipped
+# last use is inside an else arm. Both used to leak once per skipped iteration (no release on the skipped edge).
+# A wrong release here would instead free a tensor too early and stop with a "freed tensor handle" error,
+# so this test also guards against over-releasing. Keep must survive the loop untouched
+ignite:
+    Tensor keep = tensor_ones(2, 2)
+    double acc = 0.0
+    int i = 0
+    while (i < 6):
+        Tensor t = tensor_add(keep, keep)
+        Tensor u = tensor_add(keep, keep)
+        if (i < 3):
+            acc = acc + tensor_get(t, 0, 0)
+        if (i > 3):
+            acc = acc + 0.0
+        else:
+            acc = acc + tensor_get(u, 1, 1)
+        i = i + 1
+    print(acc)
+    print(tensor_get(keep, 0, 0))
+    print(i)
+    # all freed by now (keep's last use is above); a leak would make this > 0
+    print(tensor_live_count())

@@ -1,0 +1,88 @@
+/* NovaBot sidebar, status bar, notifications. */
+.assistant-sidebar {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border-left: 1px solid var(--border);
+  background: #101622;
+  min-height: 0;
+}
+.assistant-sidebar > div:last-child {
+  flex: 1;
+  min-height: 0;
+}
+.assistant-banner {
+  height: 41px;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  background: #191d33;
+  border-bottom: 1px solid #363453;
+  color: #b8b2f1;
+  font-size: 10px;
+}
+.assistant-banner button {
+  margin-left: auto;
+}
+.workspace-status {
+  height: 26px;
+  min-height: 26px;
+  padding: 0 15px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: #141b2c;
+  border-top: 1px solid var(--border);
+  color: #94a3bc;
+  font-size: 9px;
+}
+.workspace-status > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.workspace-status button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: none;
+  color: #b1bed7;
+  font-size: 9px;
+}
+.status-divider {
+  color: #46516a;
+  margin: 0 3px;
+}
+.notification {
+  position: fixed;
+  bottom: 44px;
+  right: 20px;
+  max-width: min(520px, calc(100vw - 32px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: #1d2b31;
+  border: 1px solid #4d8b7c;
+  box-shadow: 0 12px 35px #0005;
+  border-radius: 9px;
+  padding: 12px 14px;
+  z-index: 45;
+  color: #c7ecdf;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.notification > svg {
+  flex-shrink: 0;
+}
+.notification.error {
+  background: #34202c;
+  border-color: #894757;
+  color: #ffc7d3;
+}
+.notification button {
+  margin-left: auto;
+}

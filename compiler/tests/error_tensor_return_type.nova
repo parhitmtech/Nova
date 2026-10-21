@@ -1,0 +1,6 @@
+# A function returning a tensor must say -> Tensor.
+def make() -> int:
+    return tensor_ones(2, 2)
+
+ignite:
+    int x = make()

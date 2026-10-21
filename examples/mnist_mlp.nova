@@ -1,0 +1,48 @@
+# M0 demo: an MNIST-shaped MLP (784 -> 64 -> 10) trained with autograd for 10,000 minibatch steps.
+# Memory must stay flat for the whole run.
+#
+# Data: synthetic, MNIST-shaped (300 samples x 784 features, 10 classes).
+# Generate it first, from this folder: python generate_mnist_data.py
+# Run:     NOVA_TENSOR_STATS=1 ./compiler examples/mnist_mlp.nova
+# Expect: loss falls from ~2.31 to under 0.001 (the synthetic classes are easy
+# to separate), and the stats line shows a small, constant number of live
+# tensors (12) however many steps run.
+ignite:
+    Tensor X = tensor_load_csv("mnist_X.csv", 200, 784)
+    Tensor Y = tensor_load_csv("mnist_Y.csv", 200, 10)
+
+    Tensor W1 = xavier(784, 64)
+    Tensor b1 = zeros(1, 64)
+    Tensor W2 = xavier(64, 10)
+    Tensor b2 = zeros(1, 10)
+    requires_grad(W1)
+    requires_grad(b1)
+    requires_grad(W2)
+    requires_grad(b2)
+
+    double lr = 0.1
+    int steps = 10000
+    int step = 0
+    int batch = 0
+    while (step < steps):
+        int start = batch * 20
+        Tensor xb = tensor_slice_rows(X, start, start + 20)
+        Tensor yb = tensor_slice_rows(Y, start, start + 20)
+        Tensor h = relu(xb @ W1 + b1)
+        Tensor logits = h @ W2 + b2
+        Tensor loss = cross_entropy_loss(logits, yb)
+        backward(loss)
+        grad_step(W1, lr)
+        grad_step(b1, lr)
+        grad_step(W2, lr)
+        grad_step(b2, lr)
+        if (step < 1): print(loss[0, 0])
+        batch = batch + 1
+        if (batch > 9): batch = 0
+        step = step + 1
+
+    # final loss on all 200 samples
+    Tensor hf = relu(X @ W1 + b1)
+    Tensor lf = hf @ W2 + b2
+    Tensor lossf = cross_entropy_loss(lf, Y)
+    print(lossf[0, 0])

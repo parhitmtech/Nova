@@ -1,0 +1,3 @@
+# dtype arguments arrive with fp32 storage (M1 stage 4).
+ignite:
+    Tensor<float> t = tensor_ones(2, 2)

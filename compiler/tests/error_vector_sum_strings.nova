@@ -1,0 +1,4 @@
+# sum() needs numbers.
+def main():
+    vector<string> s = vector<string>()
+    print(s.sum())

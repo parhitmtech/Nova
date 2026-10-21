@@ -1,0 +1,7 @@
+# A struct is created with one value per field.
+struct Point:
+    int x
+    int y
+
+ignite:
+    Point p = Point(1)

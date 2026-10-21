@@ -1,0 +1,52 @@
+orbit novatorch.nn
+orbit novatorch.optim
+
+ignite:
+    # Dataset: AND gate — simplest linearly separable binary problem
+    # Input: 4x2,  Label: 1 only when both inputs are 1
+    Tensor X = zeros(4, 2)
+    X[0, 0] = 0
+    X[0, 1] = 0
+    X[1, 0] = 0
+    X[1, 1] = 1
+    X[2, 0] = 1
+    X[2, 1] = 0
+    X[3, 0] = 1
+    X[3, 1] = 1
+
+    Tensor Y = zeros(4, 1)
+    Y[0, 0] = 0
+    Y[1, 0] = 0
+    Y[2, 0] = 0
+    Y[3, 0] = 1
+
+    # Model: Linear(2→1) → Sigmoid
+    Linear layer1 = Linear(2, 1)
+
+    Sigmoid sig1 = Sigmoid()
+
+    SGD optim = SGD(0.5)
+
+    int epoch = 0
+    Tensor z
+    Tensor pred
+
+    while (epoch < 10000):
+        # Forward
+        z    = layer1.forward(X)
+        pred = sig1.forward(z)
+
+        # Backward — BCE grad (sigmoid cancels cleanly, pred - Y)
+        Tensor grad = bce_grad(pred, Y)
+        Tensor dW        = layer1.get_dW(grad)
+        Tensor db        = tensor_sum_rows(grad)
+
+        layer1.W = optim.step(layer1.W, dW)
+        layer1.b = optim.step(layer1.b, db)
+
+        epoch = epoch + 1
+
+    # Expected: ~[[0], [0], [0], [1]]
+    z    = layer1.forward(X)
+    pred = sig1.forward(z)
+    tensor_print(pred)

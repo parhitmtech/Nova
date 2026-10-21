@@ -1,0 +1,5 @@
+# Blocks are written with ':' and indentation; braces are reported with the right form.
+ignite:
+    if (1 < 2) {
+        print(1)
+    }

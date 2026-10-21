@@ -1,0 +1,7 @@
+# A container cannot be passed to a function yet.
+def show(x):
+    print(x)
+
+def main():
+    vector<int> v = vector<int>()
+    show(v)
