@@ -1,0 +1,4 @@
+# Tensors cannot be compared, so a vector of them cannot be sorted.
+def main():
+    vector<Tensor> t = vector<Tensor>()
+    t.sort()

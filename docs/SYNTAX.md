@@ -257,11 +257,14 @@ vocab.remove("a")
 Elements are `int`, `float`, `double`, `bool`, `string` or `Tensor`; map keys are `int` or `string`. For now a
 container is a local variable: it cannot yet be passed to a function, returned, copied, or stored in a field.
 
-The rest of the standard library will live under `std`:
+A vector also has the usual algorithms as methods (`v.sort()`, `v.reverse()`, `v.contains(x)`,
+`v.index_of(x)`, `v.binary_search(x)`, `v.min()`, `v.max()`, `v.sum()`). Strings compare by their text; a
+`vector<Tensor>` cannot be sorted or searched.
+
+The rest of the standard library lives under `std`, written in Nova:
 
 ```python
-orbit std.algo              # sort, binary_search, min, max, ...
-orbit std.math              # abs, pow, clamp, ...
+orbit std.math              # abs, min, max, clamp: generic, for int, float and double
 ```
 
 ML libraries stay under `novatorch` (`orbit novatorch.nn`, `orbit novatorch.optim`).
@@ -332,5 +335,8 @@ commit.
    - 9c (done): built-in `vector<T>` and `map<K, V>` (section 10), compiled to container ops the runtime
      keeps in a container heap; a Tensor element is reference-counted. Containers are local variables for
      now. Also: a method's locals leave every name table (as a function's do since 9a).
-   - 9d: `std.algo`.
+   - 9d (done): the algorithms are vector methods (`sort`, `reverse`, `contains`, `index_of`,
+     `binary_search`, `min`, `max`, `sum`), since a container cannot be passed to a function yet;
+     `orbit std.math` gives generic `abs`, `min`, `max`, `clamp` written in Nova (the int-only `math`
+     module stays for existing code).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

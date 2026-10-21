@@ -259,6 +259,7 @@ const char* tensor_op_signature(TensorOp op)
         case TEN_LIVE_COUNT:                                      return "";
         case CON_VEC_NEW: case CON_MAP_NEW: case CON_PUSH: case CON_POP: case CON_POP_D: case CON_GET:
         case CON_GET_D: case CON_SET: case CON_SIZE: case CON_HAS: case CON_REMOVE: case CON_CLEAR:
+        case CON_SORT: case CON_REVERSE: case CON_CONTAINS: case CON_INDEX_OF: case CON_BSEARCH: case CON_MIN: case CON_MIN_D: case CON_MAX: case CON_MAX_D: case CON_SUM: case CON_SUM_D:
                                                                   return "";   // checked by the parser
         default:                                                  return "T";  // one tensor
     }

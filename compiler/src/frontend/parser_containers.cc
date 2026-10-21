@@ -49,6 +49,20 @@ static string container_type_name(const ContainerInfo& info)
                       : "vector<" + typeToString(info.elem) + ">";
 }
 
+// The algorithm methods need ordered (or at least comparable) elements: everything but a Tensor, and for
+// sum() a number. Reports and returns false when info's element type does not allow the method.
+static bool element_type_allows(const ContainerInfo& info, const string& name, const string& method, int line)
+{
+    bool ok = (method == "sum") ? (info.elem == TYPE_INT || info.elem == TYPE_FLOAT || info.elem == TYPE_DOUBLE) 
+                                : (info.elem != TYPE_TENSOR);
+    if (!ok)
+    {
+        report_error(line, "'" + name + "." + method + "()' needs " + (method == "sum" ? "numbers" : "comparable elements") + 
+                           ", but '" + name + "' holds " + typeToString(info.elem));
+    }
+    return ok;
+}
+
 static int int_constant_slot(int v)
 {
     int s = alloc_slot();
@@ -198,6 +212,28 @@ int parse_container_expression(struct InstructionNode*& head, struct Instruction
             token = lexer.GetToken();
             return emit_container_op(dmemElem ? CON_POP_D : CON_POP, {handle}, {TYPE_INT}, info.elem, line, head, tracker);
         }
+        if ((method == "contains" || method == "index_of" || method == "binary_search") && !info.isMap && 
+            token.token_type != RPAREN)
+        {
+            VarType valueType;
+            int value = parse_element_value(info, name, line, valueType, head, tracker);
+            token = lexer.GetToken();  // past ')'
+            if (!element_type_allows(info, name, method, line)) { lastExprType = TYPE_UNKNOWN; return 0; }
+            TensorOp op = (method == "contains") ? CON_CONTAINS : (method == "index_of") ? CON_INDEX_OF : CON_BSEARCH;
+            int r = emit_container_op(op, {handle, value}, {TYPE_INT, valueType}, TYPE_INT, line, head, tracker);
+            if (method == "contains") lastExprType = TYPE_BOOL;
+            return r;
+        }
+        if ((method == "min" || method == "max" || method == "sum") && !info.isMap && token.token_type == RPAREN)
+        {
+            token = lexer.GetToken();  // past ')'
+            if (!element_type_allows(info, name, method, line)) { lastExprType = TYPE_UNKNOWN; return 0; }
+            TensorOp op = (method == "min") ? (dmemElem ? CON_MIN_D : CON_MIN)
+                        : (method == "max") ? (dmemElem ? CON_MAX_D : CON_MAX)
+                                            : (dmemElem ? CON_SUM_D : CON_SUM);
+            return emit_container_op(op, {handle}, {TYPE_INT}, info.elem, line, head, tracker);
+
+        }
         if (method == "has" && info.isMap && token.token_type != RPAREN)
         {
             int key = parse_index(info, name, line, head, tracker);
@@ -208,7 +244,7 @@ int parse_container_expression(struct InstructionNode*& head, struct Instruction
             return r;
         }
         report_error(line, "'" + name + "." + method + "(...)' does not give a value here; a " +
-                           (info.isMap ? string("map has m[k], has(k), size()") : string("vector has v[i], size(), pop()")));
+                           (info.isMap ? string("map has m[k], has(k), size()") : string("vector has v[i], size(), pop(), contains(x), index_of(x), binary_search(x), min(), max(), sum()")));
         while (token.token_type != RPAREN && token.token_type != END_OF_FILE) token = lexer.GetToken();
         token = lexer.GetToken();
         lastExprType = TYPE_UNKNOWN;
@@ -265,6 +301,13 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
             int key = parse_index(info, name, line, head, tracker);
             emit_container_op(CON_REMOVE, {handle, key}, {TYPE_INT, lastExprType}, TYPE_UNKNOWN, line, head, tracker);
         }
+        else if ((method == "sort" || method == "reverse") && !info.isMap && token.token_type == RPAREN)
+        {
+            if (method == "reverse" || element_type_allows(info, name, method, line))
+            {
+                emit_container_op(method == "sort" ? CON_SORT : CON_REVERSE, {handle}, {TYPE_INT}, TYPE_UNKNOWN, line, head, tracker);
+            }
+        }
         else if (method == "clear" && token.token_type == RPAREN)
         {
             emit_container_op(CON_CLEAR, {handle}, {TYPE_INT}, TYPE_UNKNOWN, line, head, tracker);
@@ -277,7 +320,7 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
         else
         {
             report_error(line, "'" + name + "." + method + "(...)' is not a " + (info.isMap ? "map" : "vector") + " method: a " +
-                               (info.isMap ? string("map has m[k] = x, remove(k), clear()") : string("vector has v[i] = x, push(x), pop(), clear()")));
+                               (info.isMap ? string("map has m[k] = x, remove(k), clear()") : string("vector has v[i] = x, push(x), pop(), sort(), reverse(), clear()")));
             while (token.token_type != RPAREN && token.token_type != END_OF_FILE) token = lexer.GetToken();
         }
         token = lexer.GetToken();  // past ')' -> ';'

@@ -2,6 +2,7 @@
 // container_heap. Every element is kept as a double: a number as itself, a bool / string (strMem index) /
 // Tensor handle as its int. The compiler checks element types, so the runtime only needs to know which slot
 // space (mem / fmem / dmem) a value comes from or goes to.
+#include <algorithm>
 #include <cstdio>
 #include <map>
 #include <string>
@@ -75,6 +76,38 @@ static double& element(Container& c, int slot, int line)
     auto it = c.intKeys.find(mem[slot]);
     if (it == c.intKeys.end()) tensor_shape_error(line, "map has no key " + key_text(c, slot));
     return it->second;
+}
+
+// Element order and equality: strings by their text, everything else by value.
+static bool element_less(const Container& c, double a, double b)
+{
+    if (c.elem == TYPE_STRING) return strMem[(int)a] < strMem[(int)b];
+    return a < b;
+}
+
+static bool element_equal(const Container& c, double a, double b)
+{
+    if (c.elem == TYPE_STRING) return strMem[(int)a] == strMem[(int)b];
+    return a == b;
+}
+
+// The smallest (or largest) element of a non-empty vector.
+static double extreme(const Container& c, bool largest, int line)
+{
+    if (c.items.empty()) tensor_shape_error(line, string(largest ? "max()" : "min()") + " of an empty vector");
+    double best = c.items[0];
+    for (double v : c.items)
+    {
+        if (largest ? element_less(c, best, v) : element_less(c, v, best)) best = v;
+    }
+    return best;
+}
+
+// The result of an op that gives an element: a float / double one goes to dmem (a *_D op), the restto mem.
+static void set_result(const InstructionNode* pc, double v, bool toDmem)
+{
+    if (toDmem) dmem[pc->tensor_call_inst.result_slot] = v;
+    else mem[pc->tensor_call_inst.result_slot] = (int)v;
 }
 
 InstructionNode* exec_container_call(InstructionNode* pc)
@@ -185,6 +218,55 @@ InstructionNode* exec_container_call(InstructionNode* pc)
             c.items.clear();
             c.intKeys.clear();
             c.stringKeys.clear();
+            break;
+        }
+        case CON_SORT:
+        {
+            Container& c = container_at(mem[a[0]], line);
+            std::stable_sort(c.items.begin(), c.items.end(), [&](double x, double y) { return element_less(c, x, y); });
+            break;
+        }
+        case CON_REVERSE:
+        {
+            Container& c = container_at(mem[a[0]], line);
+            std::reverse(c.items.begin(), c.items.end());
+            break;
+        }
+        case CON_CONTAINS: case CON_INDEX_OF:
+        {
+            Container& c = container_at(mem[a[0]], line);
+            double x = read_value(a[1], tc.arg_types[1]);
+            int found = -1;
+            for (int i = 0;i < (int)c.items.size() && found < 0; i++)
+            {
+                if (element_equal(c, c.items[i], x)) found = i;
+            }
+            mem[tc.result_slot] = (tc.op == CON_CONTAINS) ? (found >= 0 ? 1 : 0) : found;
+            break;
+        }
+        case CON_BSEARCH:
+        {
+            Container& c = container_at(mem[a[0]], line);
+            double x = read_value(a[1], tc.arg_types[1]);
+            auto it = std::lower_bound(c.items.begin(), c.items.end(), x,
+                                       [&](double e, double v) { return element_less(c, e, v); });
+            bool hit = (it != c.items.end() && element_equal(c, *it, x));
+            mem[tc.result_slot] = hit ? (int)(it - c.items.begin()) : -1;
+            break;
+        }
+        case CON_MIN: case CON_MIN_D: case CON_MAX: case CON_MAX_D:
+        {
+            Container& c = container_at(mem[a[0]], line);
+            bool largest = (tc.op == CON_MAX || tc.op == CON_MAX_D);
+            set_result(pc, extreme(c, largest, line), tc.op == CON_MIN_D || tc.op == CON_MAX_D);
+            break;
+        }
+        case CON_SUM: case CON_SUM_D:  // 0 for an empty vector
+        {
+            Container& c = container_at(mem[a[0]], line);
+            double total = 0;
+            for (double v : c.items) total += v;
+            set_result(pc, total, tc.op == CON_SUM_D);
             break;
         }
         default: break;

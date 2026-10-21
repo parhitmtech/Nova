@@ -1,0 +1,4 @@
+# min() and max() of an empty vector are runtime errors.
+def main():
+    vector<int> v = vector<int>()
+    print(v.min())

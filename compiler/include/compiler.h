@@ -133,6 +133,17 @@ enum TensorOp {
     CON_HAS,      // m.has(k) -> bool
     CON_REMOVE,   // m.remove(k)
     CON_CLEAR,    // .clear() 
+    CON_SORT,     // v.sort(): ascending (strings by their text)
+    CON_REVERSE,  // v.reverse()
+    CON_CONTAINS, // v.contains(x) -> bool
+    CON_INDEX_OF, // v.index_of(x) -> the first index of x, or -1
+    CON_BSEARCH,  // v.binary_search(x) on a sorted vector -> an index of x, or -1
+    CON_MIN,      // v.min() -> the smallest element (mem[])
+    CON_MIN_D,    // the same for a float / double element (dmem[])
+    CON_MAX,      // v.max() (mem[])
+    CON_MAX_D,    // (dmem[])
+    CON_SUM,      // v.sum() of an int vector (mem[])
+    CON_SUM_D,    // of a float / double vector (dmem[])
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────
