@@ -47,10 +47,19 @@ jobs:
           preview_pid=$!
           trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
           ready=false
+          stable=0
           for attempt in $(seq 1 45); do
-            if curl --fail --silent http://127.0.0.1:4178/ > /dev/null; then
-              ready=true
-              break
+            # Warm both rendering and API modules. Wrangler can reload its
+            # worker just after the first successful page response.
+            api_status=$(curl --silent --output /dev/null --write-out '%{http_code}' http://127.0.0.1:4178/api/applications || true)
+            if curl --fail --silent http://127.0.0.1:4178/ > /dev/null && [ "$api_status" = 405 ]; then
+              stable=$((stable + 1))
+              if [ "$stable" -ge 4 ]; then
+                ready=true
+                break
+              fi
+            else
+              stable=0
             fi
             sleep 1
           done
@@ -58,4 +67,7 @@ jobs:
             cat "$RUNNER_TEMP/nova-portal-preview.log"
             exit 1
           fi
-          node tests/integration.mjs
+          if ! node tests/integration.mjs; then
+            cat "$RUNNER_TEMP/nova-portal-preview.log"
+            exit 1
+          fi
