@@ -11,7 +11,7 @@
 
 require("dotenv").config();
 
-const { createExecutor } = require("./services/execution");
+const { createExecutor, sweepContainers } = require("./services/execution");
 createExecutor(); // Reject an invalid or unsafe execution mode before accepting traffic.
 
 const http = require("http");
@@ -39,26 +39,32 @@ process.on("uncaughtException", (err) => {
 const server = http.createServer(app);
 attachWebSockets(server);
 
-if (require.main === module) server.listen(PORT, () => {
-  ensureTables().catch(e => log("error", "DynamoDB table init failed", { error: e.message }));
+// Remove containers orphaned by a previous crash before accepting new jobs;
+// refuse to start if Docker cleanup fails.
+async function start() {
+  await sweepContainers();
+  server.listen(PORT, () => {
+    ensureTables().catch(e => log("error", "DynamoDB table init failed", { error: e.message }));
 
-  log("info", "NovaComp server started", {
-    port:            PORT,
-    binary:          BINARY,
-    binaryFound:     fs.existsSync(BINARY),
-    maxConcurrent:   MAX_CONCURRENT,
-    maxSourceLength: MAX_SOURCE_LENGTH,
-    maxExecutionMs:  MAX_EXECUTION_MS,
-    benchIters:      BENCH_ITERS,
-    replIdleTimeout: REPL_IDLE_TIMEOUT,
-  });
-
-  if (!fs.existsSync(BINARY)) {
-    log("warn", "Binary not found", {
-      path: BINARY,
-      fix:  "make -C compiler (from the repo root), or set NOVA_COMPILER_PATH",
+    log("info", "NovaComp server started", {
+      port:            PORT,
+      binary:          BINARY,
+      binaryFound:     fs.existsSync(BINARY),
+      maxConcurrent:   MAX_CONCURRENT,
+      maxSourceLength: MAX_SOURCE_LENGTH,
+      maxExecutionMs:  MAX_EXECUTION_MS,
+      benchIters:      BENCH_ITERS,
+      replIdleTimeout: REPL_IDLE_TIMEOUT,
     });
-  }
-});
+
+    if (!fs.existsSync(BINARY)) {
+      log("warn", "Binary not found", {
+        path: BINARY,
+        fix:  "make -C compiler (from the repo root), or set NOVA_COMPILER_PATH",
+      });
+    }
+  });
+}
+if (require.main === module) start().catch(error => { log("error", "Startup failed", { error: error.message }); process.exitCode = 1; });
 
 module.exports = { app, server, cleanupTempFile, writeTempFile };

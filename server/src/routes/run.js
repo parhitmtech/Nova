@@ -4,7 +4,7 @@ const express = require('express');
 const fs = require('fs');
 const path = require('path');
 const security = require('../services/security');
-const { S3_BUCKET, FILES_TABLE, MAX_OUTPUT_BYTES, MAX_CONCURRENT, BENCH_ITERS, getExecutionTimeout } = require('../config');
+const { S3_BUCKET, FILES_TABLE, MAX_OUTPUT_BYTES, MAX_CONCURRENT, MAX_EXECUTION_MS, BENCH_ITERS, getExecutionTimeout } = require('../config');
 const { log } = require('../lib/logger');
 const { dynamo, s3 } = require('../services/aws');
 const { executions, filterStderr, sanitizeSource, validateSource, writeTempFile, cleanupTempFile, runCompiler, parseBenchStats } = require('../services/compiler-runner');
@@ -45,7 +45,7 @@ router.post("/run", async (req, res) => {
   log("info", "Execution started", { activeExecutions: executions.active, sourceLength: source.length, timeout, ip: req.ip });
 
   try {
-    const { stdout, stderr, ms, exitCode } = await runCompiler(tmpFile, [], inputs, timeout);
+    const { stdout, stderr, ms, exitCode } = await runCompiler(tmpFile, [], inputs, timeout, req.user.userId);
     log("info", "Execution finished", { ms, exitCode, stdoutLength: stdout.length, activeExecutions: executions.active });
     const terminalOutput = filterStderr(stderr) || "";
     if (stdout && stdout.trim().length > 0)
@@ -53,6 +53,7 @@ router.post("/run", async (req, res) => {
     const msg = terminalOutput || "Unknown runtime error.";
     return res.json({ error: msg, terminal: terminalOutput, ms })
   } catch (e) {
+    if (e.type === "busy") return res.status(503).json({ error: e.message });
     if (e.type === "timeout")
       return res.json({ error: "Execution timed out. Check for infinite loops.", ms: e.ms });
     return res.json({ error: "Unknown runtime error." });
@@ -83,7 +84,7 @@ router.post("/compile-bytecode", async (req, res) => {
       tmpFile,
       ["--emit-bytecode", "-o", nbcFile],
       "",
-      30000
+      30000, req.user.userId
     );
     if (exitCode !== 0 || !fs.existsSync(nbcFile)) {
       const msg = filterStderr(stderr) || "Compilation failed.";
@@ -94,6 +95,7 @@ router.post("/compile-bytecode", async (req, res) => {
     res.setHeader("Content-Disposition", 'attachment; filename="program.nbc"');
     res.send(nbcData);
   } catch (e) {
+    if (e.type === "busy") return res.status(503).json({ error: e.message });
     if (e.type === "timeout")
       return res.status(408).json({ error: "Compilation timed out." });
     return res.status(500).json({ error: "Unknown error during bytecode compilation." });
@@ -110,8 +112,6 @@ router.post("/run-stream", async (req, res) => {
 
     const streamUser = req.user;
 
-    const modelS3Key = '';
-
     const source = sanitizeSource(req.body.source);
     const inputs = typeof req.body.inputs === "string" ? req.body.inputs : "";
     let tmpFile, tmpDir;
@@ -120,7 +120,7 @@ router.post("/run-stream", async (req, res) => {
 
     const execTimeout = getExecutionTimeout(source);
     let child;
-    try { child = spawnCompiler([tmpFile], { cwd: tmpDir, timeoutMs: execTimeout }); }
+    try { child = spawnCompiler([tmpFile], { cwd: tmpDir, timeoutMs: execTimeout, userId: req.user.userId }); }
     catch (err) { cleanupTempFile(tmpFile, tmpDir); return res.status(503).json({ error: err.message }); }
 
     res.setHeader('Content-Type', 'text/event-stream');
@@ -139,7 +139,6 @@ router.post("/run-stream", async (req, res) => {
     let stdout = '';
     let stderr = '';
     const pendingSaveFiles = []; // local paths printed via NOVA_SAVE_FILE:
-    const pendingS3Files   = []; // S3 keys printed via NOVA_S3_FILE: (already uploaded by SLURM)
 
     let stdoutBuf = '';
     let flushTimer = null;
@@ -170,8 +169,7 @@ router.post("/run-stream", async (req, res) => {
                 const file = line.slice('NOVA_SAVE_FILE:'.length).trim();
                 if (pendingSaveFiles.length < 10 && !pendingSaveFiles.includes(file)) pendingSaveFiles.push(file);
             } else if (line.startsWith('NOVA_S3_FILE:')) {
-                const key = line.slice('NOVA_S3_FILE:'.length).trim();
-                if (pendingS3Files.length < 10 && !pendingS3Files.includes(key)) pendingS3Files.push(key);
+                // Provider registration is disabled until an isolated ML worker exists.
             } else {
                 visible.push(line);
             }
@@ -236,27 +234,6 @@ router.post("/run-stream", async (req, res) => {
             }
         }
 
-        // Register models uploaded directly to S3 by SLURM (NOVA_S3_FILE:)
-        if (streamUser && pendingS3Files.length > 0) {
-            for (const s3Key of pendingS3Files) {
-                if (!modelS3Key || s3Key !== modelS3Key) continue;
-                try {
-                    const fileName = path.basename(s3Key);
-                    await dynamo.send(new PutCommand({
-                        TableName: FILES_TABLE,
-                        Item: {
-                            userId:    streamUser.userId,
-                            filePath:  fileName,
-                            updatedAt: new Date().toISOString(),
-                        },
-                    }));
-                    send('stdout', `Nova: ${fileName} saved to your file storage.\n`);
-                } catch (e) {
-                    log('warn', 'NOVA_S3_FILE DynamoDB registration failed', { error: e.message });
-                }
-            }
-        }
-
         send('done', String(Date.now() - start));
         res.end();
         executions.active--;
@@ -303,10 +280,11 @@ router.post("/compare", async (req, res) => {
   log("info", "Compare started", { activeExecutions: executions.active, sourceLength: source.length, ip: req.ip });
 
   try {
-    const normalRun      = await runCompiler(tmpFile, [], inputs);
-    const normalBench    = await runCompiler(tmpFile, ["--benchmark", "--iters", String(BENCH_ITERS)], inputs);
-    const optimizedRun   = await runCompiler(tmpFile, ["--optimize"], inputs);
-    const optimizedBench = await runCompiler(tmpFile, ["--optimize", "--benchmark", "--iters", String(BENCH_ITERS)], inputs);
+    const userId = req.user.userId;
+    const normalRun      = await runCompiler(tmpFile, [], inputs, MAX_EXECUTION_MS, userId);
+    const normalBench    = await runCompiler(tmpFile, ["--benchmark", "--iters", String(BENCH_ITERS)], inputs, MAX_EXECUTION_MS, userId);
+    const optimizedRun   = await runCompiler(tmpFile, ["--optimize"], inputs, MAX_EXECUTION_MS, userId);
+    const optimizedBench = await runCompiler(tmpFile, ["--optimize", "--benchmark", "--iters", String(BENCH_ITERS)], inputs, MAX_EXECUTION_MS, userId);
 
     const normalStats    = parseBenchStats(normalBench.stdout,    normalBench.stderr);
     const optimizedStats = parseBenchStats(optimizedBench.stdout, optimizedBench.stderr);
@@ -329,6 +307,7 @@ router.post("/compare", async (req, res) => {
       nodesEliminated: (normalStats.nodes ?? 0) - (optimizedStats.nodes ?? 0),
     });
   } catch (e) {
+    if (e.type === "busy") return res.status(503).json({ error: e.message });
     if (e.type === "timeout")
       return res.json({ error: "Execution timed out (> 7 seconds). Check for infinite loops." });
     log("error", "Compare failed", { error: e.message });

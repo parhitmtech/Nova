@@ -11,6 +11,8 @@ const security = require('../src/services/security');
 process.env.JWT_SECRET = crypto.randomBytes(48).toString('base64');
 process.env.AWS_EC2_METADATA_DISABLED = 'true';
 process.env.NOVA_EXECUTION_TIMEOUT_MS = '100';
+process.env.NOVA_REPL_IDLE_TIMEOUT_MS = '400';
+process.env.NOVA_TRUST_PROXY = 'loopback';
 // Only the terminal's S3 synchronization crosses a cloud boundary in these
 // tests. Keep SDK imports real and reject that request without using a network.
 const { S3Client } = require('@aws-sdk/client-s3');
@@ -129,6 +131,7 @@ test('GPU metadata rejects jobs belonging to another user or missing ownership',
   const previous = { enabled: process.env.NOVA_ENABLE_GPU, mode: process.env.NOVA_EXECUTION_MODE, nodeEnv: process.env.NODE_ENV };
   process.env.NOVA_ENABLE_GPU = 'true'; process.env.NOVA_EXECUTION_MODE = 'local'; process.env.NODE_ENV = 'test';
   try {
+    assert.deepEqual(await (await request('/api/capabilities')).json(), { gpu: true, ml: false });
     fs.writeFileSync(meta, JSON.stringify({ ownerId: users[0], status: 'completed', type: 'local', output: 'secret GPU output' }));
     for (const route of ['/gpu/status/123_abc', '/gpu/results/123_abc']) {
       assert.equal((await request(route, { auth: token(users[1]) })).status, 404);
@@ -146,7 +149,8 @@ test('terminal home and output options stay inside the authenticated workspace',
   const sibling = path.join(workspace, users[1], 'program.nova');
   fs.writeFileSync(sibling, 'tenant two secret');
   await new Promise((resolve, reject) => {
-    const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal?token=' + token(), { origin: base });
+    const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base });
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: token() })));
     let text = ''; let sent = false;
     const timer = setTimeout(() => { ws.close(); reject(new Error('Terminal regression timed out')); }, 3000);
     ws.on('message', data => {
@@ -212,4 +216,140 @@ test('real local compiler streaming timeout and client cancellation clean up job
     prior === undefined ? delete process.env.NOVA_EXECUTION_MODE : process.env.NOVA_EXECUTION_MODE = prior;
     priorEnv === undefined ? delete process.env.NODE_ENV : process.env.NODE_ENV = priorEnv;
   }
+});
+
+test('public health reveals only status and capabilities explicitly disable GPU/ML', async () => {
+  assert.deepEqual(await (await request('/health', { auth: null })).json(), { status: 'ok' });
+  const res = await request('/api/capabilities');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { gpu: false, ml: false });
+});
+
+test('trusted workspace roots may have symlinked ancestors but descendants cannot be symlinks', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'nova-root-link-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'real')); fs.symlinkSync(path.join(dir, 'real'), path.join(dir, 'alias'));
+    const expected = path.join(fs.realpathSync(dir), 'real', 'file');
+    assert.equal(security.safePath(path.join(dir, 'alias'), 'file'), expected);
+    fs.symlinkSync('/etc/passwd', path.join(dir, 'real', 'link'));
+    assert.equal(security.safePath(path.join(dir, 'alias'), 'link'), null);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('configured origins are an exclusive allowlist', () => {
+  const req = { socket: {}, headers: { host: 'attacker.test' } };
+  assert.equal(security.originAllowed('http://attacker.test', req, 'https://nova.example'), false);
+});
+
+test('production requires explicit origins before startup', () => {
+  const { spawnSync } = require('node:child_process');
+  const child = spawnSync(process.execPath, ['src/server.js'], { cwd: path.resolve(__dirname, '..'), env: { ...process.env, NODE_ENV: 'production', NOVA_ALLOWED_ORIGINS: '', NOVA_EXECUTION_MODE: 'docker' }, timeout: 3000 });
+  assert.notEqual(child.status, 0);
+  assert.match(child.stderr.toString(), /NOVA_ALLOWED_ORIGINS/);
+});
+
+test('HTTP filesystem quotas reject writes atomically and isolate each user budget', async () => {
+  const previous = process.env.NOVA_WORKSPACE_MAX_BYTES;
+  process.env.NOVA_WORKSPACE_MAX_BYTES = '32';
+  try {
+    const body = { path: 'quota-file', content: 'q'.repeat(33) };
+    assert.equal((await request('/fs/write', { method: 'POST', body })).status, 413);
+    assert.equal((await request('/fs/read?path=quota-file')).status, 404);
+    assert.equal((await request('/fs/write', { auth: token(users[1]), method: 'POST', body: { path: 'small', content: 'ok' } })).status, 200);
+  } finally { previous === undefined ? delete process.env.NOVA_WORKSPACE_MAX_BYTES : process.env.NOVA_WORKSPACE_MAX_BYTES = previous; }
+});
+
+test('filesystem requests are limited per user before exhausting storage', async () => {
+  let response;
+  for (let i = 0; i < 121; i++) response = await request('/fs/tree');
+  assert.equal(response.status, 429);
+  assert.equal((await request('/fs/tree', { auth: token(users[1]) })).status, 200);
+});
+
+test('sockets authenticate in their first message before creating a terminal', async () => {
+  for (const payload of [{ type: 'input', data: 'pwd' }, { type: 'auth', token: 'invalid' }]) {
+    await new Promise((resolve, reject) => {
+      const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base });
+      ws.on('open', () => ws.send(JSON.stringify(payload)));
+      ws.on('message', () => reject(new Error('Unauthenticated socket received terminal data')));
+      ws.on('close', code => { try { assert.equal(code, 4001); resolve(); } catch (e) { reject(e); } });
+      ws.on('error', reject);
+    });
+  }
+});
+
+test('reverse proxy client IPs receive independent auth budgets', async () => {
+  const login = ip => fetch(base + '/auth/login', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': ip, 'x-forwarded-proto': 'https' }, body: '{}' });
+  for (let i = 0; i < 10; i++) assert.equal((await login('198.51.100.10')).status, 400);
+  assert.equal((await login('198.51.100.10')).status, 429);
+  assert.equal((await login('198.51.100.11')).status, 400);
+  assert.equal(security.originAllowed('https://nova.test', { protocol: 'https', socket: {}, headers: { host: 'nova.test' } }, ''), true);
+});
+
+test('batch slot exhaustion returns 503 on all HTTP execution routes and releases capacity', async () => {
+  const { spawnCompiler } = require('../src/services/execution');
+  const job = writeTempFile('');
+  const children = [0, 1].map(() => spawnCompiler(['--repl'], { cwd: job.tmpDir, userId: users[0], timeoutMs: 5000 }));
+  children.forEach(child => { child.stdout.resume(); child.stderr.resume(); });
+  try {
+    for (const route of ['/run', '/run-stream', '/compile-bytecode', '/compare']) {
+      const res = await request(route, { method: 'POST', body: { source: 'ignite:\n    print(42)\n' } });
+      assert.equal(res.status, 503, route);
+      assert.match((await res.json()).error, /busy/i);
+    }
+    assert.equal((await request('/run', { auth: token(users[1]), method: 'POST', body: { source: 'ignite:\n    print(42)\n' } })).status, 200);
+  } finally {
+    const closed = children.map(child => new Promise(resolve => child.once('close', resolve)));
+    children.forEach(child => child.kill()); await Promise.all(closed); cleanupTempFile(null, job.tmpDir);
+  }
+  assert.equal((await request('/run', { method: 'POST', body: { source: 'ignite:\n    print(42)\n' } })).status, 200);
+});
+
+test('active REPL input resets the idle deadline and closes once input stops', async () => {
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(base.replace('http:', 'ws:') + '/repl', { origin: base });
+    let interval; let sent = 0; let readyAt = 0;
+    const guard = setTimeout(() => { clearInterval(interval); ws.close(); reject(new Error('REPL idle regression timed out')); }, 3000);
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: token(users[1]) })));
+    ws.on('message', raw => {
+      if (JSON.parse(raw.toString()).type !== 'ready') return;
+      readyAt = Date.now();
+      interval = setInterval(() => {
+        ws.send(JSON.stringify({ type: 'input', line: '' }));
+        if (++sent === 5) clearInterval(interval);
+      }, 120);
+    });
+    ws.on('close', () => {
+      clearTimeout(guard); clearInterval(interval);
+      try { assert.equal(sent, 5); assert.ok(Date.now() - readyAt >= 900); resolve(); } catch (e) { reject(e); }
+    });
+    ws.on('error', reject);
+  });
+});
+
+test('real bytecode API returns artifacts larger than 16 KiB', async () => {
+  // One-space indentation keeps 900 statements under the 10,000-character source limit.
+  const source = 'ignite:\n' + ' print(1)\n'.repeat(900);
+  const res = await request('/compile-bytecode', { method: 'POST', body: { source } });
+  assert.equal(res.status, 200, await (res.status === 200 ? Promise.resolve('') : res.text()));
+  assert.ok((await res.arrayBuffer()).byteLength > 16384);
+});
+
+test('malformed WebSocket upgrades cannot consume authentication capacity', async () => {
+  const http = require('node:http');
+  for (let i = 0; i < 25; i++) {
+    await new Promise((resolve, reject) => {
+      const req = http.request(base + '/terminal', { headers: { origin: base, connection: 'Upgrade', upgrade: 'websocket', 'sec-websocket-key': 'invalid', 'sec-websocket-version': '13' } }, res => {
+        res.resume();
+        try { assert.equal(res.statusCode, 400); resolve(); } catch (e) { reject(e); }
+      });
+      req.on('error', reject); req.end();
+    });
+  }
+  await new Promise((resolve, reject) => {
+    const ws = new WebSocket(base.replace('http:', 'ws:') + '/terminal', { origin: base });
+    ws.on('open', () => ws.send(JSON.stringify({ type: 'auth', token: 'bad' })));
+    ws.on('close', code => { try { assert.equal(code, 4001); resolve(); } catch (e) { reject(e); } });
+    ws.on('error', reject);
+  });
 });

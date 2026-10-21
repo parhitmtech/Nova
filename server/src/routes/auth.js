@@ -33,7 +33,7 @@ router.post("/auth/signup", async (req, res) => {
       Item: { email, userId, passwordHash, createdAt },
     }));
 
-    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "1h", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
     res.json({ token, user: { userId, email, createdAt } });
   } catch (e) {
     log("error", "Signup failed", { error: e.message });
@@ -55,7 +55,7 @@ router.post("/auth/login", async (req, res) => {
     if (!valid) return res.status(401).json({ error: "Invalid credentials" });
 
     const { userId, createdAt } = result.Item;
-    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "7d", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
+    const token = jwt.sign({ userId, email }, JWT_SECRET, { expiresIn: "1h", algorithm: "HS256", issuer: "nova", audience: "nova-ide" });
     res.json({ token, user: { userId, email, createdAt } });
   } catch (e) {
     log("error", "Login failed", { error: e.message });

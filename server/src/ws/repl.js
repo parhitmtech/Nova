@@ -23,15 +23,19 @@ const { spawnCompiler } = require('../services/execution');
 //                   { type: "ready" }   ← sent once on connection
 //                   { type: "closed" }  ← sent when process exits
 
-const replSessions = new Map();  // ws → { child, idleTimer }
+const replSessions = new Map();  // ws → { child, resetIdleTimer, clearIdleTimer }
 
-function createReplSession(ws) {
+// REPLs use their own execution pool (one per user). Inactivity expires after
+// REPL_IDLE_TIMEOUT; the executor additionally caps a session at 30 minutes.
+const REPL_MAX_LIFETIME_MS = 30 * 60 * 1000;
+
+function createReplSession(ws, userId) {
   const { tmpDir } = writeTempFile('');
   log("info", "REPL session started", { activeSessions: replSessions.size + 1 });
 
   // spawn the compiler in REPL mode
   let child;
-  try { child = spawnCompiler(["--repl"], { cwd: tmpDir, timeoutMs: REPL_IDLE_TIMEOUT }); }
+  try { child = spawnCompiler(["--repl"], { cwd: tmpDir, timeoutMs: REPL_MAX_LIFETIME_MS, kind: 'repl', userId }); }
   catch (err) { cleanupTempFile(null, tmpDir); ws.close(1013, 'Execution unavailable'); return; }
 
   // ── helper: send JSON message to browser ──────────────────────────────────
@@ -72,9 +76,7 @@ function createReplSession(ws) {
   child.on("close", (code) => {
     log("info", "REPL process exited", { code });
     send("closed", "");
-    if (idleTimer) clearTimeout(idleTimer);
-    const session = replSessions.get(ws);
-    if (session?._idleTimer) clearTimeout(session._idleTimer);
+    clearTimeout(idleTimer);
     replSessions.delete(ws);
     cleanupTempFile(null, tmpDir);
   });
@@ -83,14 +85,13 @@ function createReplSession(ws) {
     log("error", "REPL process error", { error: err.message });
     send("error", `\n  Process error: ${err.message}\n`);
     send("closed", "");
-    const session = replSessions.get(ws);
-    if (session?._idleTimer) clearTimeout(session._idleTimer);
+    clearTimeout(idleTimer);
     replSessions.delete(ws);
     cleanupTempFile(null, tmpDir);
   });
 
   // ── store session ─────────────────────────────────────────────────────────
-  replSessions.set(ws, { child, idleTimer: () => idleTimer });
+  replSessions.set(ws, { child, resetIdleTimer, clearIdleTimer: () => clearTimeout(idleTimer) });
 
   // ── notify browser that session is ready ─────────────────────────────────
   send("ready", "");
@@ -104,7 +105,7 @@ function handleReplConnection(ws, req) {
     activeSessions: replSessions.size + 1
   });
 
-  createReplSession(ws);
+  createReplSession(ws, req.user.userId);
   let inputBytes = 0;
 
   ws.on("message", (raw) => {
@@ -116,16 +117,8 @@ function handleReplConnection(ws, req) {
     if (!session) return;
 
     if (msg.type === "input") {
-      if (session.idleTimer) clearTimeout(session.idleTimer());
-      session._idleTimer = setTimeout(() => {
-        log("info", "REPL session idle timeout");
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "error", text: "\n  Session timed out after 5 minutes of inactivity.\n" }));
-          ws.send(JSON.stringify({ type: "closed", text: "" }));
-        }
-        session.child.kill();
-        ws.close();
-      }, REPL_IDLE_TIMEOUT);
+      // One idle timer per session: each input pushes its deadline back.
+      session.resetIdleTimer();
 
       if (typeof msg.line !== "string" || msg.line.length > MAX_SOURCE_LENGTH) return ws.close(1009, "Input limit exceeded");
       const line = msg.line + "\n";
@@ -139,8 +132,7 @@ function handleReplConnection(ws, req) {
     log("info", "WebSocket REPL connection closed");
     const session = replSessions.get(ws);
     if (session) {
-      if (session._idleTimer) clearTimeout(session._idleTimer);
-      if (session.idleTimer) clearTimeout(session.idleTimer());
+      session.clearIdleTimer();
       try { session.child.kill(); } catch (_) {}
       replSessions.delete(ws);
     }

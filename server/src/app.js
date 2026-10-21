@@ -9,8 +9,11 @@ const security   = require("./services/security");
 const paths      = require("./paths");
 const { log } = require("./lib/logger");
 const { requireAuth } = require("./middleware/auth");
+const { TRUST_PROXY } = require("./config");
 
 const app = express();
+// Rate limits and origin checks see the real client only behind an explicitly trusted proxy.
+app.set('trust proxy', TRUST_PROXY);
 
 // ── Middleware ────────────────────────────────────────────────────────────────
 
@@ -54,8 +57,12 @@ app.use('/auth', rateLimit({ windowMs: 60000, max: 10, standardHeaders: true, le
 app.use(['/run', '/run-stream', '/compile-bytecode', '/compare', '/fs', '/gpu', '/git', '/agent'], requireAuth);
 app.use(['/run-stream', '/compile-bytecode', '/gpu/submit', '/api/share'], limiter);
 app.use('/api/share', (req, res, next) => req.method === 'POST' ? requireAuth(req, res, next) : next());
+app.use('/fs', rateLimit({ windowMs: 60000, max: 120, keyGenerator: req => req.user.userId, standardHeaders: true, legacyHeaders: false }));
+function gpuEnabled() { return process.env.NOVA_ENABLE_GPU === 'true' && process.env.NOVA_EXECUTION_MODE === 'local' && process.env.NODE_ENV !== 'production'; }
+// The IDE hides actions this deployment cannot perform.
+app.get('/api/capabilities', requireAuth, (_req, res) => res.json({ gpu: gpuEnabled(), ml: false }));
 app.use('/gpu', (req, res, next) => {
-  if (process.env.NOVA_ENABLE_GPU !== 'true' || process.env.NOVA_EXECUTION_MODE !== 'local' || process.env.NODE_ENV === 'production') return res.status(503).json({ error: 'GPU execution is disabled on this deployment' });
+  if (!gpuEnabled()) return res.status(503).json({ error: 'GPU execution is disabled on this deployment' });
   next();
 });
 app.use('/run-debug', requireAuth, (_req, res) => res.status(501).json({ error: 'Debug sessions require isolated session support and are unavailable' }));

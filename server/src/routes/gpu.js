@@ -53,7 +53,7 @@ router.post('/gpu/submit', async (req, res) => {
   if (scenario === 'cuda') {
     try {
       const cuFile = tmpFile.replace('.csl', '.cu');
-      await runCompiler(tmpFile, ['--emit-cuda'], '', MAX_EXECUTION_MS);
+      await runCompiler(tmpFile, ['--emit-cuda'], '', MAX_EXECUTION_MS, req.user.userId);
 
       if (!fs.existsSync(cuFile)) {
         return res.status(400).json({
@@ -128,7 +128,7 @@ echo "EXIT_CODE:$?"
 
   // Run compiler in background — fire and forget
   const execTimeout = /\/\/\s*@ml\b/.test(source) ? ML_EXECUTION_MS : MAX_EXECUTION_MS;
-  runCompiler(tmpFile, [], '', execTimeout)
+  runCompiler(tmpFile, [], '', execTimeout, req.user.userId)
     .then(({ stdout, stderr, exitCode }) => {
       jobMeta.status      = (exitCode === 0 || stdout.trim().length > 0) ? 'completed' : 'failed';
       jobMeta.output      = stdout;

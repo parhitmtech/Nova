@@ -8,7 +8,7 @@ COPY compiler/src ./src
 RUN make
 
 FROM debian:bookworm-slim AS worker
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 coreutils && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/nova
 COPY --from=compiler-build /src/build/nova ./nova
 COPY compiler/stdlib ./stdlib

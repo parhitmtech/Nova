@@ -17,7 +17,7 @@ async function executeTool(name, input, userId) {
     try {
       ({ tmpFile, tmpDir } = writeTempFile(code));
       const timeout = /\/\/\s*@ml\b/.test(code) ? ML_EXECUTION_MS : MAX_EXECUTION_MS;
-      const { stdout, stderr, ms, exitCode } = await runCompiler(tmpFile, [], inputs, timeout);
+      const { stdout, stderr, ms, exitCode } = await runCompiler(tmpFile, [], inputs, timeout, userId);
       const errOut = filterStderr(stderr);
       if (exitCode !== 0) return { error: errOut || 'Compilation failed', ms };
       return { output: stdout || '(no output)', ms };

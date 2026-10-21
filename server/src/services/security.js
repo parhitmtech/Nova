@@ -15,15 +15,18 @@ function verifyToken(jwt, token, secret) {
   return { userId: user.userId, email: user.email };
 }
 function inside(root, target) { return target === root || target.startsWith(root + path.sep); }
-// Reject every symlink component, including dangling links and the root itself.
+// Resolve the trusted root, then reject symlinks only beneath that boundary
+// (including dangling links).
 function safePath(root, relative = '', { allowRoot = false, regularFile = false } = {}) {
   if (typeof relative !== 'string' || relative.includes('\0')) return null;
-  root = path.resolve(root);
-  const target = path.resolve(root, relative);
-  if (!inside(root, target) || (!allowRoot && target === root)) return null;
-  let current = path.parse(root).root;
   try {
-    for (const part of target.slice(current.length).split(path.sep).filter(Boolean)) {
+    const lexicalRoot = path.resolve(root);
+    root = fs.realpathSync(lexicalRoot);
+    if (path.isAbsolute(relative) && inside(lexicalRoot, relative)) relative = path.relative(lexicalRoot, relative);
+    const target = path.resolve(root, relative);
+    if (!inside(root, target) || (!allowRoot && target === root)) return null;
+    let current = root;
+    for (const part of path.relative(root, target).split(path.sep).filter(Boolean)) {
       current = path.join(current, part);
       try { if (fs.lstatSync(current).isSymbolicLink()) return null; }
       catch (e) { if (e.code !== 'ENOENT') return null; }
@@ -45,7 +48,8 @@ function originAllowed(origin, req, configured = process.env.NOVA_ALLOWED_ORIGIN
   try { parsed = new URL(origin); } catch { return false; }
   if (!['http:', 'https:'].includes(parsed.protocol) || parsed.origin !== origin) return false;
   const allowed = configured.split(',').map(s => s.trim()).filter(Boolean);
-  if (allowed.includes(origin)) return true;
-  return origin === `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`;
+  // A configured list is exclusive; only an unconfigured server falls back to same-origin.
+  if (allowed.length) return allowed.includes(origin);
+  return origin === `${req.protocol || (req.socket.encrypted ? 'https' : 'http')}://${req.headers.host}`;
 }
 module.exports = { JWT_OPTIONS, validateSecret, verifyToken, safePath, userWorkspace, originAllowed };

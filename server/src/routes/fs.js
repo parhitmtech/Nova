@@ -6,6 +6,7 @@ const path = require('path');
 const security = require('../services/security');
 const { WORKSPACE } = require('../config');
 const { log } = require('../lib/logger');
+const { createWorkspaceStore } = require('../services/workspace-store');
 
 const router = express.Router();
 
@@ -14,17 +15,20 @@ const router = express.Router();
 function safeWorkspacePath(req, rel) {
   return security.safePath(security.userWorkspace(WORKSPACE, req.user.userId), rel);
 }
+// Every persistent mutation goes through the store so storage quotas apply.
+function workspaceStore(req) {
+  return createWorkspaceStore(security.userWorkspace(WORKSPACE, req.user.userId));
+}
 
 // ── POST /fs/write  { path, content } ────────────────────────────────────────
 router.post("/fs/write", (req, res) => {
   const target = safeWorkspacePath(req, req.body?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, req.body?.content ?? "", "utf8");
+    workspaceStore(req).write(target, req.body?.content ?? "");
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -36,7 +40,7 @@ router.delete("/fs/delete", (req, res) => {
     fs.rmSync(target, { recursive: true, force: true });
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -45,10 +49,10 @@ router.post("/fs/mkdir", (req, res) => {
   const target = safeWorkspacePath(req, req.body?.path);
   if (!target) return res.status(400).json({ error: "Invalid path" });
   try {
-    fs.mkdirSync(target, { recursive: true });
+    workspaceStore(req).mkdir(target);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -58,11 +62,10 @@ router.post("/fs/rename", (req, res) => {
   const dest = safeWorkspacePath(req, req.body?.to);
   if (!src || !dest) return res.status(400).json({ error: "Invalid path" });
   try {
-    fs.mkdirSync(path.dirname(dest), { recursive: true });
-    fs.renameSync(src, dest);
+    workspaceStore(req).rename(src, dest);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 

@@ -9,6 +9,7 @@ const { log } = require('../lib/logger');
 const { s3 } = require('../services/aws');
 const { filterStderr, validateSource, writeTempFile, cleanupTempFile } = require('../services/compiler-runner');
 const { spawnCompiler } = require('../services/execution');
+const { createWorkspaceStore } = require('../services/workspace-store');
 const { GetObjectCommand, ListObjectsV2Command } = require('@aws-sdk/client-s3');
 
 // node-pty is optional — install with: npm install node-pty
@@ -39,6 +40,8 @@ function resolveShell() {
 async function createShellSession(ws, userId) {
   const userWorkspace = security.userWorkspace(WORKSPACE, userId);
   fs.mkdirSync(userWorkspace, { recursive: true });
+  // Every persistent write below goes through the store so storage quotas apply.
+  const store = createWorkspaceStore(userWorkspace);
 
   log('info', 'Shell session started', { userId: userId || 'anonymous' });
 
@@ -141,7 +144,7 @@ async function createShellSession(ws, userId) {
     for (const t of targets) {
       const p = safe(t);
       if (!p) { send('\x1b[31mmkdir: permission denied\x1b[0m'); continue; }
-      try { fs.mkdirSync(p, { recursive: true }); notifyFsChange('mkdir', [rel(p)]); }
+      try { store.mkdir(p); notifyFsChange('mkdir', [rel(p)]); }
       catch (e) { send(`\x1b[31mmkdir: ${e.message}\x1b[0m`); }
     }
   }
@@ -165,7 +168,7 @@ async function createShellSession(ws, userId) {
     const src = safe(targets[0]), dst = safe(targets[1]);
     if (!src || !dst)       { send('\x1b[31mcp: permission denied\x1b[0m'); return; }
     if (!fs.existsSync(src)){ send(`\x1b[31mcp: '${targets[0]}': No such file or directory\x1b[0m`); return; }
-    try { fs.copyFileSync(src, dst); notifyFsChange('update', [rel(dst)]); }
+    try { store.copy(src, dst); notifyFsChange('update', [rel(dst)]); }
     catch (e) { send(`\x1b[31mcp: ${e.message}\x1b[0m`); }
   }
 
@@ -177,7 +180,7 @@ async function createShellSession(ws, userId) {
     if (!fs.existsSync(src)){ send(`\x1b[31mmv: '${targets[0]}': No such file or directory\x1b[0m`); return; }
     try {
       const srcRel = rel(src);
-      fs.renameSync(src, dst);
+      store.rename(src, dst);
       notifyFsChange('delete', [srcRel]);
       notifyFsChange('update', [rel(dst)]);
     }
@@ -191,7 +194,7 @@ async function createShellSession(ws, userId) {
       if (!p) { send('\x1b[31mtouch: permission denied\x1b[0m'); continue; }
       try {
         if (fs.existsSync(p)) { const n = new Date(); fs.utimesSync(p, n, n); }
-        else                  { fs.writeFileSync(p, ''); }
+        else                  { store.write(p, ''); }
         notifyFsChange('update', [rel(p)]);
       } catch (e) { send(`\x1b[31mtouch: ${e.message}\x1b[0m`); }
     }
@@ -204,14 +207,14 @@ async function createShellSession(ws, userId) {
       if (!file) { send('\x1b[31mecho: missing filename after >\x1b[0m'); return; }
       const p = safe(file);
       if (!p) { send('\x1b[31mecho: permission denied\x1b[0m'); return; }
-      try { fs.writeFileSync(p, args.slice(0, ri).join(' ') + '\n'); notifyFsChange('update', [rel(p)]); }
+      try { store.write(p, args.slice(0, ri).join(' ') + '\n'); notifyFsChange('update', [rel(p)]); }
       catch (e) { send(`\x1b[31mecho: ${e.message}\x1b[0m`); }
     } else if (ai !== -1) {
       const file = args[ai + 1];
       if (!file) { send('\x1b[31mecho: missing filename after >>\x1b[0m'); return; }
       const p = safe(file);
       if (!p) { send('\x1b[31mecho: permission denied\x1b[0m'); return; }
-      try { fs.appendFileSync(p, args.slice(0, ai).join(' ') + '\n'); notifyFsChange('update', [rel(p)]); }
+      try { store.write(p, args.slice(0, ai).join(' ') + '\n', { append: true }); notifyFsChange('update', [rel(p)]); }
       catch (e) { send(`\x1b[31mecho: ${e.message}\x1b[0m`); }
     } else {
       send(args.join(' '));
@@ -250,7 +253,7 @@ async function createShellSession(ws, userId) {
       compiled:  new Date().toISOString(),
     };
     try {
-      fs.writeFileSync(exePath, JSON.stringify(meta, null, 2), 'utf8');
+      store.write(exePath, JSON.stringify(meta, null, 2));
     } catch (e) {
       send(`\x1b[31mnovacomp: could not write '${outName}': ${e.message}\x1b[0m`);
       return;
@@ -292,7 +295,7 @@ async function createShellSession(ws, userId) {
       const flags = Array.isArray(meta.extraArgs) ? meta.extraArgs : [];
       if (flags.some(flag => !['--optimize', '--dump-ir'].includes(flag))) { cleanupTempFile(tmpFile, tmpDir); send('Invalid compiler options'); resolve(); return; }
       let proc;
-      try { proc = spawnCompiler([tmpFile, ...flags], { cwd: tmpDir, timeoutMs: MAX_EXECUTION_MS }); }
+      try { proc = spawnCompiler([tmpFile, ...flags], { cwd: tmpDir, timeoutMs: MAX_EXECUTION_MS, userId }); }
       catch (err) { cleanupTempFile(tmpFile, tmpDir); send(err.message); resolve(); return; }
       currentProc = proc;
       proc.__killed = false;
@@ -439,14 +442,21 @@ async function createShellSession(ws, userId) {
       }));
       for (const obj of Contents) {
         const fileName = path.basename(obj.Key.replace(`${userId}/`, ''));
-        if (!fileName) continue;
+        if (!fileName || obj.Size > store.maxBytes) continue;
         const localPath = security.safePath(userWorkspace, fileName);
         if (!localPath) continue;
         try {
           if (!fs.existsSync(localPath) ||
               new Date(obj.LastModified) > fs.statSync(localPath).mtime) {
             const { Body } = await s3.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: obj.Key }));
-            fs.writeFileSync(localPath, await Body.transformToString(), 'utf8');
+            // Bound the download: stop reading as soon as it exceeds the quota.
+            const chunks = []; let bytes = 0;
+            for await (const chunk of Body) {
+              bytes += chunk.length;
+              if (bytes > store.maxBytes) { Body.destroy?.(); throw new Error('Workspace storage quota exceeded'); }
+              chunks.push(chunk);
+            }
+            store.write(localPath, Buffer.concat(chunks));
           }
         } catch (_) {}
       }
@@ -470,7 +480,7 @@ async function createShellSession(ws, userId) {
       inputQueue = inputQueue.then(() => processInput(msg.data)).catch(() => {}).finally(() => { pendingInputBytes -= msg.data.length; });
     } else if (msg.type === 'write' && msg.fileName) {
       const p = safe(path.basename(String(msg.fileName)));
-      if (p) try { fs.writeFileSync(p, String(msg.content ?? ''), 'utf8'); } catch (_) {}
+      if (p) try { store.write(p, String(msg.content ?? '')); } catch (_) {}
     }
   });
 

@@ -1,6 +1,8 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { spawn, execFile } = require('node:child_process');
+const { promisify } = require('node:util');
+const execFileAsync = promisify(execFile);
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const fs = require('node:fs');
@@ -19,7 +21,16 @@ function createExecutor(config = {}) {
   const binary = config.binary || paths.COMPILER_PATH;
   const maxConcurrent = config.maxConcurrent || 5;
   const maxOutputBytes = config.maxOutputBytes || 256_000;
-  let active = 0;
+  const maxPerUser = config.maxPerUser || 2;
+  const maxRepl = config.maxRepl || 2;
+  // Batch jobs and REPLs use separate pools, so idle REPLs never starve batch runs.
+  const active = { batch: 0, repl: 0 };
+  const byUser = new Map();
+
+  // REPLs may live longer than batch jobs; both are clamped to a hard maximum.
+  function deadline(options) {
+    return Math.min(Math.max(Number(options.timeoutMs) || 30000, 1), options.kind === 'repl' ? 1800000 : 300000);
+  }
 
   function buildCommand(args, options = {}) {
     const cwd = path.resolve(options.cwd || '');
@@ -48,29 +59,39 @@ function createExecutor(config = {}) {
     }
     const env = { PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', LANG: 'C.UTF-8', NOVA_HOME: paths.NOVA_HOME };
     if (mode === 'local') return { command: binary, args, cwd, env };
+    Object.assign(env, dockerEnvironment());
     const uid = process.getuid?.() || 65534;
     const gid = process.getgid?.() || 65534;
     const name = 'nova-job-' + crypto.randomUUID();
     return {
       command: 'docker', cwd, env, containerName: name,
       args: ['run', '--rm', '--init', '-i', '--name', name,
+        '--label', `nova.worker=${workerId()}`, '--label', 'nova.job=true',
         '--network=none', '--read-only', '--cap-drop=ALL', '--security-opt=no-new-privileges',
         '--memory=256m', '--memory-swap=256m', '--pids-limit=32', '--cpus=1',
-        '--ulimit', 'nofile=64:64', '--ulimit', 'fsize=16384:16384',
+        '--ulimit', 'nofile=64:64', '--ulimit', 'fsize=16777216:16777216',
         '--user', `${uid}:${gid}`, '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
         '--mount', `type=bind,source=${cwd},target=${cwd}`, '--workdir', cwd,
-        '--env', 'NOVA_HOME=/opt/nova', process.env.NOVA_WORKER_IMAGE || 'novacomp-worker:local', ...args],
+        // GNU timeout inside the container enforces the deadline even if this server dies.
+        '--env', 'NOVA_HOME=/opt/nova', '--entrypoint', '/usr/bin/timeout',
+        process.env.NOVA_WORKER_IMAGE || 'novacomp-worker:local',
+        '--signal=KILL', `${deadline(options) / 1000}s`, '/opt/nova/nova', ...args],
     };
   }
 
   function spawnCompiler(args, options = {}) {
-    if (active >= maxConcurrent) throw new Error('Execution server is busy. Try again shortly.');
+    const kind = options.kind === 'repl' ? 'repl' : 'batch';
+    const userId = options.userId || 'internal';
+    const key = `${kind}:${userId}`;
+    if (active[kind] >= (kind === 'repl' ? maxRepl : maxConcurrent) || (byUser.get(key) || 0) >= (kind === 'repl' ? 1 : maxPerUser))
+      throw Object.assign(new Error('Execution server is busy. Try again shortly.'), { type: 'busy', status: 503 });
     const spec = buildCommand(args, options);
     const child = spawn(spec.command, spec.args, {
       cwd: spec.cwd, env: spec.env, shell: false, windowsHide: true,
       detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'],
     });
-    active++;
+    active[kind]++;
+    byUser.set(key, (byUser.get(key) || 0) + 1);
     const result = new EventEmitter();
     result.stdout = new PassThrough();
     result.stderr = new PassThrough();
@@ -102,7 +123,7 @@ function createExecutor(config = {}) {
       } catch { child.kill('SIGKILL'); }
     }
     result.kill = () => { stop('cancelled'); return true; };
-    const timeout = Math.min(Math.max(Number(options.timeoutMs) || 30000, 1), 300000);
+    const timeout = deadline(options);
     const timer = setTimeout(() => stop('timeout'), timeout);
     timer.unref();
     child.stdin.on('error', () => {}); // A stopped job can close stdin before the caller finishes writing.
@@ -123,8 +144,12 @@ function createExecutor(config = {}) {
     child.on('close', (code, signal) => {
       if (finished) return;
       finished = true;
-      active--;
+      active[kind]--;
+      const remaining = (byUser.get(key) || 1) - 1;
+      if (remaining) byUser.set(key, remaining); else byUser.delete(key);
       clearTimeout(timer);
+      // SIGKILL from the in-container deadline surfaces as exit status 137.
+      if (spec.containerName && code === 137 && !result.stopReason) result.stopReason = 'timeout';
       result.exitCode = result.stopReason ? 1 : code;
       // PassThroughs deliver asynchronously: report 'close' only once both have emitted 'end',
       // i.e. after the caller has received every byte, or it would miss the program's last output.
@@ -141,9 +166,32 @@ function createExecutor(config = {}) {
   return { spawnCompiler, buildCommand };
 }
 
+// These configure only the host Docker CLI, never the compiler container.
+function dockerEnvironment() {
+  const env = { PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin' };
+  for (const key of ['DOCKER_HOST', 'DOCKER_CONFIG', 'DOCKER_CONTEXT', 'DOCKER_TLS_VERIFY', 'DOCKER_CERT_PATH', 'DOCKER_API_VERSION', 'SSH_AUTH_SOCK', 'HOME'])
+    if (process.env[key]) env[key] = process.env[key];
+  return env;
+}
+function workerId() {
+  const id = process.env.NOVA_WORKER_ID || 'novacomp';
+  if (!/^[a-zA-Z0-9_.-]{1,64}$/.test(id)) throw new Error('Invalid NOVA_WORKER_ID');
+  return id;
+}
+// Remove job containers left behind by a previous run of this backend instance.
+async function sweepContainers() {
+  if ((process.env.NOVA_EXECUTION_MODE || 'docker') !== 'docker') return;
+  const options = { env: dockerEnvironment(), timeout: 15000, maxBuffer: 1024 * 1024 };
+  const { stdout } = await execFileAsync('docker', ['ps', '-aq', '--filter', 'label=nova.job=true', '--filter', `label=nova.worker=${workerId()}`], options);
+  const ids = stdout.trim().split(/\s+/).filter(Boolean);
+  if (ids.some(id => !/^[a-f0-9]{12,64}$/.test(id))) throw new Error('Invalid container ID from Docker');
+  // Bound argv size even after repeated server crashes.
+  for (let i = 0; i < ids.length; i += 100) await execFileAsync('docker', ['rm', '-f', ...ids.slice(i, i + 100)], options);
+}
+
 let defaultExecutor;
 function spawnCompiler(args, options) {
   defaultExecutor ||= createExecutor();
   return defaultExecutor.spawnCompiler(args, options);
 }
-module.exports = { createExecutor, spawnCompiler };
+module.exports = { createExecutor, spawnCompiler, sweepContainers };

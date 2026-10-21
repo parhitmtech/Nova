@@ -54,8 +54,9 @@ function validateSource(source) {
 // ── Temp File Helpers ─────────────────────────────────────────────────────────
 
 // Per-job temp dirs live under server/_tmp by default (NOVA_TEMP_DIR overrides).
-const LOCAL_TEMP = paths.TEMP_DIR;
+let LOCAL_TEMP = paths.TEMP_DIR;
 if (!fs.existsSync(LOCAL_TEMP)) fs.mkdirSync(LOCAL_TEMP, { recursive: true });
+LOCAL_TEMP = fs.realpathSync(LOCAL_TEMP);
 
 const activeTempDirs = new Set();
 function writeTempFile(source) {
@@ -90,7 +91,8 @@ const cleanupTimer = setInterval(() => {
 cleanupTimer.unref();
 // ── Run Helper ────────────────────────────────────────────────────────────────
 
-function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECUTION_MS) {
+// userId selects the per-user execution quota; omitted, the job counts as internal.
+function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECUTION_MS, userId) {
   console.log(`\n🚀 runCompiler START`);
   console.log(`   tmpFile: ${tmpFile}`);
   console.log(`   timeout: ${timeoutMs}ms (${timeoutMs/1000}s)`);
@@ -105,7 +107,7 @@ function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECU
     const child = spawnCompiler( [tmpFile, ...extraArgs], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: path.dirname(tmpFile),
-      timeoutMs,
+      timeoutMs, userId,
       shell: process.platform === 'win32'
     });
 
