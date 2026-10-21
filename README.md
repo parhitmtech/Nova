@@ -5,6 +5,10 @@ syntax and built-in tensors, autograd and GPU-cluster training. This document de
 built. For running it locally see [Setup and verification](docs/SETUP.md); for production see
 [Deployment](docs/DEPLOY.md); for the language itself see [Nova syntax](docs/SYNTAX.md).
 
+## Contributor application portal
+
+The standalone job/contributor portal is in [sites/nova-contributors](sites/nova-contributors/README.md). It welcomes every experience level interested in compilers and includes interactive project exploration, a guided application form and private database storage. Its setup, tests and hosting notes are documented in that directory. The portal is developed on the `job-portal` branch and does not replace the compiler IDE.
+
 ---
 
 ## 1. What Is NovaComp?

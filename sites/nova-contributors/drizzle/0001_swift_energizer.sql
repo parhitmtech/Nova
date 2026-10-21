@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `applications_reference_unique` ON `applications` (`reference`);

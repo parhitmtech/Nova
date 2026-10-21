@@ -1,0 +1,61 @@
+name: Job portal
+on:
+  push:
+    paths:
+      - 'sites/nova-contributors/**'
+      - '.github/workflows/job-portal.yml'
+  pull_request:
+    paths:
+      - 'sites/nova-contributors/**'
+      - '.github/workflows/job-portal.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: job-portal-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  portal:
+    name: Job portal validation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: sites/nova-contributors
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+          cache-dependency-path: sites/nova-contributors/package-lock.json
+      - run: npm run install:ci
+      - name: Application validation tests
+        run: node --experimental-strip-types --test tests/application.test.mjs
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+      - name: Apply local database migrations
+        run: |
+          for migration in drizzle/*.sql; do
+            node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file "$migration"
+          done
+      - name: Application API and persistence checks
+        run: |
+          npm run start -- --port 4178 > "$RUNNER_TEMP/nova-portal-preview.log" 2>&1 &
+          preview_pid=$!
+          trap 'kill "$preview_pid" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 45); do
+            if curl --fail --silent http://127.0.0.1:4178/ > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            cat "$RUNNER_TEMP/nova-portal-preview.log"
+            exit 1
+          fi
+          node tests/integration.mjs
