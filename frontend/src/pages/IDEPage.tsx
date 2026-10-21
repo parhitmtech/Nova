@@ -186,6 +186,7 @@ export default function IDEPage() {
           onExportBytecode={() => void exportBytecode()}
           onRunGpu={() => void gpu.submit(document.code)}
           gpuBusy={gpu.busy}
+          gpuEnabled={gpu.enabled}
         >
           <BottomPanel
             output={runner.output}

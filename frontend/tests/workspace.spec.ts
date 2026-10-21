@@ -19,7 +19,7 @@ async function workspace(page: Page) {
   ).toString('base64url')
   const token = `eyJhbGciOiJIUzI1NiJ9.${payload}.test-fixture`
   await page.route(
-    (url) => /^\/(auth|files|agent|gpu|run-stream)(\/|$)/.test(url.pathname),
+    (url) => /^\/(auth|files|agent|gpu|run-stream|api)(\/|$)/.test(url.pathname),
     async (route) => {
       const url = new URL(route.request().url())
       const body = route.request().postDataJSON()
@@ -41,6 +41,7 @@ async function workspace(page: Page) {
         delete files[url.searchParams.get('fileName')!]
         return json({ ok: true })
       }
+      if (url.pathname === '/api/capabilities') return json({ gpu: false, ml: false })
       if (url.pathname === '/agent/history') return json({ history: [] })
       if (url.pathname === '/agent/memory') return json({ memory: {} })
       if (url.pathname === '/gpu/submit')
@@ -143,15 +144,17 @@ test('creating a file cannot overwrite the currently open source', async ({ page
   expect(state.saves).toHaveLength(0)
 })
 
-test('runs with standard input and displays unavailable GPU capability explicitly', async ({ page }) => {
+test('runs with standard input and hides disabled GPU capability', async ({ page }) => {
   const state = await workspace(page)
   await page.getByRole('button', { name: 'Standard input', exact: true }).click()
   await page.getByLabel('Input values, one per line').fill('3\n4')
   await page.getByRole('button', { name: /^Run/ }).click()
   await expect(page.locator('pre').filter({ hasText: '12' }).first()).toBeVisible()
   expect(state.inputs()).toBe('3\n4')
-  await page.getByRole('button', { name: 'GPU', exact: true }).click()
-  await expect(page.getByText('GPU execution is disabled on this deployment')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'GPU', exact: true })).toHaveCount(0)
+  // The session token is tab-scoped: never in localStorage.
+  expect(await page.evaluate(() => localStorage.getItem('novacomp_token'))).toBeNull()
+  expect(await page.evaluate(() => sessionStorage.getItem('novacomp_token'))).toBeTruthy()
 })
 
 test('binary artifacts cannot be overwritten by autosave and delete confirmation is keyboard accessible', async ({

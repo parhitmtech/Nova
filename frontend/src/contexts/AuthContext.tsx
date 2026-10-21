@@ -10,30 +10,26 @@ interface AuthContextType {
 }
 const AuthContext = createContext<AuthContextType | null>(null)
 
+// Tokens are tab-scoped (sessionStorage), so a token never outlives its tab's session.
 export function AuthProvider({ children }: { children: ReactNode }) {
+  // Discard long-lived tokens retained by older versions of the client.
+  useEffect(() => localStorage.removeItem('novacomp_token'), [])
   const [session, setSession] = useState<Session | null>(() =>
-    readSession(localStorage.getItem('novacomp_token')),
+    readSession(sessionStorage.getItem('novacomp_token')),
   )
   const logout = useCallback(() => {
-    localStorage.removeItem('novacomp_token')
+    sessionStorage.removeItem('novacomp_token')
     setSession(null)
   }, [])
   const saveToken = useCallback((token: string) => {
     const next = readSession(token)
     if (!next) throw new Error('The server returned an invalid or expired session. Please sign in again.')
-    localStorage.setItem('novacomp_token', token)
+    sessionStorage.setItem('novacomp_token', token)
     setSession(next)
   }, [])
   useEffect(() => {
-    const sync = (event: StorageEvent) => {
-      if (event.key === 'novacomp_token') setSession(readSession(event.newValue))
-    }
     window.addEventListener('novacomp:session-expired', logout)
-    window.addEventListener('storage', sync)
-    return () => {
-      window.removeEventListener('novacomp:session-expired', logout)
-      window.removeEventListener('storage', sync)
-    }
+    return () => window.removeEventListener('novacomp:session-expired', logout)
   }, [logout])
   useEffect(() => {
     if (!session) return

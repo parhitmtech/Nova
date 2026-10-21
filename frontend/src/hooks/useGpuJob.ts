@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { submitGpuJob, getGpuStatus, getGpuResults } from '../api/compiler'
+import { submitGpuJob, getGpuStatus, getGpuResults, getCapabilities } from '../api/compiler'
 import { errorMessage } from '../lib/workspace'
 
 export type GpuStatus = 'idle' | 'submitting' | 'pending' | 'running' | 'completed' | 'failed' | 'unavailable'
@@ -12,6 +12,23 @@ export function useGpuJob(token: string | null, onCompleted: () => void) {
   const [scenario, setScenario] = useState('')
   const [benefit, setBenefit] = useState('')
   const poll = useRef<ReturnType<typeof setInterval> | null>(null)
+  // GPU runs stay hidden unless the server reports them as available.
+  const [enabled, setEnabled] = useState(false)
+
+  useEffect(() => {
+    if (!token) return
+    let current = true
+    getCapabilities(token)
+      .then((res) => {
+        if (current) setEnabled(res.data.gpu === true)
+      })
+      .catch(() => {
+        if (current) setEnabled(false)
+      })
+    return () => {
+      current = false
+    }
+  }, [token])
 
   useEffect(
     () => () => {
@@ -58,5 +75,5 @@ export function useGpuJob(token: string | null, onCompleted: () => void) {
   }
 
   const busy = ['submitting', 'pending', 'running'].includes(status)
-  return { status, output, error, scenario, benefit, busy, submit }
+  return { status, output, error, scenario, benefit, busy, enabled, submit }
 }

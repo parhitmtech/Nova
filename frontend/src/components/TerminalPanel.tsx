@@ -57,11 +57,13 @@ export default function TerminalPanel({ onClose, onWsReady }: Props) {
     // layout pass before its dimensions are stable enough for FitAddon to read.
     requestAnimationFrame(() => fitAddon.fit())
 
-    // Attach the JWT so the server can authorise the terminal WebSocket session.
-    const token = localStorage.getItem('novacomp_token') ?? ''
-    const ws = new WebSocket(`${WS_URL}/terminal?token=${encodeURIComponent(token)}`)
+    // The JWT goes in the first frame, never the URL (proxies may log URLs). The
+    // server starts no shell until this frame authenticates the session.
+    const token = sessionStorage.getItem('novacomp_token') ?? ''
+    const ws = new WebSocket(`${WS_URL}/terminal`)
 
     ws.onopen = () => {
+      ws.send(JSON.stringify({ type: 'auth', token }))
       fitAddon.fit() // refit now that the connection is live
       onReadyRef.current?.(ws) // hand the socket to IDEPage for file-write commands
     }
