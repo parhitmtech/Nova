@@ -78,7 +78,15 @@ class LexicalAnalyzer {
     int GetPosition() const { return index; }  // where the next GetToken() reads ...
     void SetPosition(int i) { index = i; }     // ... and going back there (to compile a generic function again)
     Token TokenAt(int i) const { return tokenList[i]; }
-    void SetTokenAt(int i, const Token& t) { tokenList[i] = t; }
+    // A generic class's copy is compiled from its tokens with each type parameter replaced, appended after the 
+    // program's tokens and removed again once compiled (an argument can be several tokens, e.g. vector<int>).
+    int AppendTokens(const std::vector<Token>& tokens)
+    {
+      int at = (int)tokenList.size();
+      tokenList.insert(tokenList.end(), tokens.begin(), tokens.end());
+      return at;
+    }
+    void TruncateTokens(int size) { tokenList.resize(size); }
 
   private:
     std::vector<Token> tokenList;

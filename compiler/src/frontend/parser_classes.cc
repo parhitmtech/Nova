@@ -185,49 +185,88 @@ static string pendingClassCopyName;  // set by instantiate_generic_class for the
 
 bool is_generic_class(const string& name) { return genericClasses.count(name) > 0; }
 
-// The copy of generic class `name` for these type arguments (each one token: int, double, Tensor, ...).
-// Returns the copy's name, e.g. "Box<int>", or "" after an error.
-static string instantiate_generic_class(const string& name, const vector<Token>& args, int line)
+// A type argument's tokens as a type name ("int", "vector<int>", "map<string, int>"), or "" when they are not a
+// type a field or parameter can have: a built-in type, or a container of built-in types.
+static string type_argument_name(const vector<Token>& arg)
+{
+    if (arg.size() == 1 && type_of_keyword(arg[0].token_type) != TYPE_UNKNOWN) return arg[0].lexeme;
+    ContainerInfo info;
+    bool vec = arg.size() == 4 && arg[0].lexeme == "vector" && arg[1].token_type == LESS && arg[3].token_type == GREATER;
+    bool map = arg.size() == 6 && arg[0].lexeme == "map" && arg[1].token_type == LESS && arg[3].token_type == COMMA &&
+               arg[5].token_type == GREATER;
+    if (!vec && !map) return "";
+    info.isMap = map;
+    info.elem = type_of_keyword(arg[vec ? 2 : 4].token_type);
+    if (info.elem == TYPE_UNKNOWN) return "";
+    if (map)
+    {
+        info.key = type_of_keyword(arg[2].token_type);
+        if (info.key != TYPE_INT && info.key != TYPE_STRING) return "";
+    }
+    return container_type_name(info);
+}
+
+// A type argument's text for an error message.
+static string spelled(const vector<Token>& arg)
+{
+    string s;
+    for (const Token& t : arg)
+    {
+        s += (t.token_type == LESS) ? "<" : (t.token_type == GREATER) ? ">" : (t.token_type == COMMA) ? ", " : t.lexeme;
+    }
+    return s;
+}
+
+// The copy of generic class `name` for these type arguments (each a token sequence: int, vector<int>, ...).
+// Returns the copy's name, e.g. "Box<vector<int>>", or "" after an error.
+static string instantiate_generic_class(const string& name, const vector<vector<Token>>& args, int line)
 {
     GenericClass& g = genericClasses[name];
-    string copyName = name + "<";
-    for (int i = 0; i < (int)args.size(); i++) copyName += (i ? ", " : "") + args[i].lexeme;
-    copyName += ">";
-    if (classTable.count(copyName)) return copyName;
     if (args.size() != g.typeParams.size())
     {
-        report_error(line, "class '" + name + "' takes " + to_string(g.typeParams.size()) + " type argument(s) but got " + 
-                            to_string(args.size()));
+        report_error(line, "class '" + name + "' takes " + to_string(g.typeParams.size()) + " type argument(s) but got " +
+                           to_string(args.size()));
         return "";
     }
-    for (const Token& a : args)
+    string copyName = name + "<";
+    for (int i = 0; i < (int)args.size(); i++)
     {
-        // A built-in type only: an object cannot be a field's or parameter's value yet
-        if (type_of_keyword(a.token_type) == TYPE_UNKNOWN)
+        string argName = type_argument_name(args[i]);
+        if (argName.empty())
         {
-            report_error(line, "'" + a.lexeme + "' cannot be a type argument: use int, float, double, bool, string or Tensor");
+            // An object cannot be a field's or parameter's value yet
+            report_error(line, "'" + spelled(args[i]) + "' cannot be a type argument: use int, float, double, bool, string, "
+                               "Tensor, vector<T> or map<K, V>");
             return "";
         }
+        copyName += (i ? ", " : "") + argName;
     }
+    copyName += ">";
+    if (classTable.count(copyName)) return copyName;
 
-    // Replace each type parameter in the class's tokens by its argument while the copy is compiled.
-    vector<Token> original;
-    for (int i = g.start; i < g.end; i++) original.push_back(lexer.TokenAt(i));
+    // The class's tokens with each type parameter replaced by its argument, appended after the program's tokens
+    // and compiled from there; the program's own tokens never change.
+    vector<Token> copy;
+    int headerEnd = g.start;  // the '>' closing `class Box<T>`, which names the parameters and stays as it is
+    while (headerEnd < g.end && lexer.TokenAt(headerEnd).token_type != GREATER) headerEnd++;
     for (int i = g.start; i < g.end; i++)
     {
         Token t = lexer.TokenAt(i);
-        if (t.token_type != ID) continue;
-        for (int k = 0; k < (int)g.typeParams.size(); k++)
+        int k = -1;
+        if (t.token_type == ID && i > headerEnd)
+            for (int j = 0; j < (int)g.typeParams.size(); j++)
+                if (t.lexeme == g.typeParams[j]) k = j;
+        if (k < 0) { copy.push_back(t); continue; }
+        for (Token a : args[k])
         {
-            if (t.lexeme != g.typeParams[k]) continue;
-            Token r = args[k];
-            r.line_no = t.line_no;  // errors still pointinto  the class
-            lexer.SetTokenAt(i, r);
+            a.line_no = t.line_no;  // errors still point into the class
+            copy.push_back(a);
         }
     }
+    int at = lexer.AppendTokens(copy);
     pendingClassCopyName = copyName;
-    compile_with_caller_aside(g.start, parse_class_definition);
-    for (int i = g.start; i < g.end; i++) lexer.SetTokenAt(i, original[i - g.start]);
+    compile_with_caller_aside(at, parse_class_definition);
+    lexer.TruncateTokens(at);
     return copyName;
 }
 
@@ -235,15 +274,21 @@ string parse_generic_class_type()
 {
     string name = token.lexeme;
     int line = token.line_no;
-    vector<Token> args;
+    // The type arguments, split at top-level commas: Pair<map<string, int>, int> has two.
+    vector<vector<Token>> args(1);
+    int depth = 0;
     token = lexer.GetToken();  // '<'
-    token = lexer.GetToken();  // first type argument
-    while (token.token_type != GREATER && token.token_type != END_OF_FILE)
+    token = lexer.GetToken();  // first token of the first argument
+    while (token.token_type != END_OF_FILE)
     {
-        if (token.token_type != COMMA) args.push_back(token);
+        if (token.token_type == GREATER && depth == 0) break;
+        if (token.token_type == LESS) depth++;
+        if (token.token_type == GREATER) depth--;
+        if (token.token_type == COMMA && depth == 0) args.emplace_back();
+        else args.back().push_back(token);
         token = lexer.GetToken();
     }
-    return instantiate_generic_class(name, args, line);  // token is on '>'
+    return instantiate_generic_class(name, args, line);  // token is on the closing '>'
 }
 
 // The number of tokens from peek(k) on that spell the class name `name` ("Linear" is one token,
@@ -252,22 +297,25 @@ static int class_name_tokens_at(int k, const string& name)
 {
     Token t = lexer.peek(k);
     if (t.token_type != ID) return 0;
-    string spelled = t.lexeme;
+    string spelledName = t.lexeme;
     int n = 1;
     if (lexer.peek(k + 1).token_type == LESS)
     {
-        spelled += "<";
+        spelledName += "<";
         n++;
+        int depth = 0;  // Box<vector<int>>: the inner '>' closes vector<, the outer one Box<
         while (true)
         {
             Token a = lexer.peek(k + n);
             n++;
-            if (a.token_type == GREATER) { spelled += ">"; break; }
             if (a.token_type == END_OF_FILE) return 0;
-            spelled += (a.token_type == COMMA) ? ", " : a.lexeme;
+            if (a.token_type == GREATER && depth == 0) { spelledName += ">"; break; }
+            if (a.token_type == LESS) depth++;
+            if (a.token_type == GREATER) depth--;
+            spelledName += (a.token_type == LESS) ? "<" : (a.token_type == GREATER) ? ">" : (a.token_type == COMMA) ? ", " : a.lexeme;
         }
     }
-    return spelled == name ? n : 0;
+    return spelledName == name ? n : 0;
 }
 
 void parse_class_definition()
@@ -697,11 +745,13 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
         token = lexer.GetToken();  // past '('
         vector<int> argIndices;
         vector<VarType> argTypes;
+        vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
         while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
         {
             int argIdx = parse_expression(head, tracker);
             argIndices.push_back(argIdx);
             argTypes.push_back(lastExprType);
+            argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
             if (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
@@ -812,6 +862,12 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
                     if (i < (int)argTypes.size() && !types_compatible(atypes[i], ptypes[i]))
                         report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " +
                                               typeToString(ptypes[i]) + " but got " + typeToString(atypes[i]));
+                    else if ((ptypes[i] == TYPE_VECTOR || ptypes[i] == TYPE_MAP) && i < (int)argContainers.size() &&
+                             i < (int)classMethodParamContainers[className]["init"].size() &&
+                             !same_container(atypes[i], argContainers[i], classMethodParamContainers[className]["init"][i]))
+                        report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " +
+                                              container_type_name(classMethodParamContainers[className]["init"][i]) +
+                                              " but got " + container_type_name(argContainers[i]));
                 }
                 callNode->call_inst.param_types = ptypes;
                 callNode->call_inst.arg_types = atypes;

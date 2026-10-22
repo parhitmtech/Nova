@@ -283,7 +283,7 @@ class Vocab:
         return self.words
 ```
 
-Not yet: a container as a generic class's type argument (stage A3).
+A container can also be a generic class's type argument: `Box<vector<int>>`, `Pair<map<string, int>, int>`.
 
 A vector also has the usual algorithms as methods (`v.sort()`, `v.reverse()`, `v.contains(x)`,
 `v.index_of(x)`, `v.binary_search(x)`, `v.min()`, `v.max()`, `v.sum()`). Strings compare by their text; a
@@ -372,5 +372,8 @@ commit.
    - A2 (done): container fields (created empty with each object, inherited), and container method
      parameters and returns. Also: a method's return nested in an `if` wrote into the surrounding function's
      return slot when the class was a generic copy compiled inside a function.
-   - Next: A3 `Box<vector<int>>`, B objects as references (`Box<P>`, `vector<P>`).
+   - A3 (done): container type arguments (`Box<vector<int>>`). A copy is compiled from the class's tokens with
+     each type parameter replaced by its argument's tokens, appended after the program's tokens and removed once
+     compiled, so an argument can be several tokens. The constructor checks container arguments' full types.
+   - Next: B objects as references (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

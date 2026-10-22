@@ -371,7 +371,7 @@ ignite:
 \`\`\`
 
 - Write the type arguments in the declaration and the constructor: \`Box<int> a = Box<int>(5)\`
-- Type arguments are built-in types only: \`int\`, \`float\`, \`double\`, \`bool\`, \`string\`, \`Tensor\`
+- Type arguments are built-in types (\`int\`, \`float\`, \`double\`, \`bool\`, \`string\`, \`Tensor\`) or containers of them (\`Box<vector<int>>\`, \`Pair<map<string, int>, int>\`); not class types yet
 - Several parameters: \`class Pair<A, B>\`, used as \`Pair<int, double>\`
 
 ---

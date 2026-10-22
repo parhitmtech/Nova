@@ -1,1 +1,1 @@
-Error at line 16: 'P' cannot be a type argument: use int, float, double, bool, string or Tensor
+Error at line 16: 'P' cannot be a type argument: use int, float, double, bool, string, Tensor, vector<T> or map<K, V>

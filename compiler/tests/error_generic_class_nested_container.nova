@@ -1,0 +1,12 @@
+# A container's elements must be built-in types, so a type argument cannot nest containers.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+def main():
+    Box<vector<vector<int>>> b = Box<vector<vector<int>>>(vector<int>())

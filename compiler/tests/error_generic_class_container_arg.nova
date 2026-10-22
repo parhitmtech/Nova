@@ -1,0 +1,13 @@
+# A container type argument is checked in the constructor: Box<vector<int>> takes a vector<int>.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+def main():
+    vector<double> d = vector<double>()
+    Box<vector<int>> b = Box<vector<int>>(d)
