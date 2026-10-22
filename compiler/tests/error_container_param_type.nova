@@ -1,0 +1,7 @@
+# A container parameter takes exactly its declared type.
+def total(vector<int> v) -> int:
+    return v.size()
+
+def main():
+    vector<double> d = vector<double>()
+    print(total(d))

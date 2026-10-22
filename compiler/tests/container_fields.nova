@@ -1,0 +1,112 @@
+# Container fields: each object starts with new, empty containers; self.ids / obj.ids are the containers;
+# methods take and return containers; fields are inherited; assigning a field shares the container.
+class Vocab:
+    map<string, int> ids
+    vector<string> words
+
+    def init():
+        self.words.push("<pad>")
+        self.ids["<pad>"] = 0
+
+    def add(string w) -> int:
+        if (self.ids.has(w)):
+            return self.ids[w]
+        int id = self.words.size()
+        self.words.push(w)
+        self.ids[w] = id
+        return id
+
+    def size() -> int:
+        return self.words.size()
+
+    def all_words() -> vector<string>:
+        return self.words
+
+class Bag:
+    vector<int> items
+
+    def init():
+        self.items.push(1)
+
+    def reset():
+        self.items = vector<int>()
+
+    def take(vector<int> xs):
+        self.items = xs
+
+    def add_all(vector<int> xs):
+        int i = 0
+        while (i < xs.size()):
+            self.items.push(xs[i])
+            i += 1
+
+class Base:
+    vector<int> xs
+
+    def init():
+        self.xs.push(1)
+
+class Child extends Base:
+    def init():
+        self.xs.push(2)
+
+    def count() -> int:
+        return self.xs.size()
+
+class Layers:
+    vector<Tensor> ws
+
+    def init():
+        self.ws.push(ones(2, 2))
+        self.ws.push(ones(3, 3) * 2.0)
+
+def count_words(int n) -> int:  # an object with container fields inside a function
+    Vocab v = Vocab()
+    int i = 0
+    while (i < n):
+        v.add("w")
+        i += 1
+    return v.size()
+
+def main():
+    Vocab v = Vocab()
+    print(v.add("the"))
+    print(v.add("cat"))
+    print(v.add("the"))
+    print(v.size())
+    print(v.words[1])
+    print(v.ids["cat"])
+    print(v.all_words()[2])
+    v.words.push("extra")
+    v.ids["extra"] = 9
+    print(v.size())
+    print(v.ids.has("extra"))
+
+    Vocab other = Vocab()
+    print(other.size())
+
+    Bag b = Bag()
+    print(b.items.size())
+    b.reset()
+    print(b.items.size())
+    vector<int> mine = vector<int>()
+    mine.push(7)
+    b.take(mine)
+    mine.push(8)
+    print(b.items.size())
+    print(b.items[1])
+    vector<int> more = vector<int>()
+    more.push(4)
+    b.add_all(more)
+    print(mine.size())
+
+    Child c = Child()
+    print(c.count())
+    Layers l = Layers()
+    print(l.ws[1][0, 0])
+    print(count_words(3))
+    int k = 0
+    while (k < 2):
+        Vocab t = Vocab()
+        print(t.size())
+        k += 1

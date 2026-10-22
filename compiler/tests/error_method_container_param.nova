@@ -1,0 +1,14 @@
+# A method's container parameter takes exactly its declared type.
+class Acc:
+    int total
+
+    def init():
+        self.total = 0
+
+    def add_all(vector<int> xs):
+        self.total = xs.size()
+
+def main():
+    Acc a = Acc()
+    vector<double> d = vector<double>()
+    a.add_all(d)

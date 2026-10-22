@@ -254,8 +254,36 @@ if (vocab.has("a")):
 vocab.remove("a")
 ```
 
-Elements are `int`, `float`, `double`, `bool`, `string` or `Tensor`; map keys are `int` or `string`. For now a
-container is a local variable: it cannot yet be passed to a function, returned, copied, or stored in a field.
+Elements are `int`, `float`, `double`, `bool`, `string` or `Tensor`; map keys are `int` or `string`.
+
+A container is a reference, as in Python and Java: passing it to a function, returning it or assigning it
+(`w = v`) shares the one container, so a function that pushes to its parameter changes the caller's vector.
+Parameters and return types name the full type, and a generic function gets a copy per container type:
+
+```python
+def total(vector<int> v) -> int:
+    ...
+def make(int n) -> vector<int>:
+    ...
+def size_of(v):               # size_of<vector<int>>, size_of<vector<string>>, ...
+    return v.size()
+
+print(make(5).size())         # [i] and methods work on any container value
+```
+
+A class can have container fields. Each object starts with new, empty ones, and `self.ids` / `obj.ids` is
+the container itself:
+
+```python
+class Vocab:
+    map<string, int> ids
+    vector<string> words
+
+    def all_words() -> vector<string>:      # methods take and return containers too
+        return self.words
+```
+
+A container can also be a generic class's type argument: `Box<vector<int>>`, `Pair<map<string, int>, int>`.
 
 A vector also has the usual algorithms as methods (`v.sort()`, `v.reverse()`, `v.contains(x)`,
 `v.index_of(x)`, `v.binary_search(x)`, `v.min()`, `v.max()`, `v.sum()`). Strings compare by their text; a
@@ -336,7 +364,16 @@ commit.
      keeps in a container heap; a Tensor element is reference-counted. Containers are local variables for
      now. Also: a method's locals leave every name table (as a function's do since 9a).
    - 9d (done): the algorithms are vector methods (`sort`, `reverse`, `contains`, `index_of`,
-     `binary_search`, `min`, `max`, `sum`), since a container cannot be passed to a function yet;
+     `binary_search`, `min`, `max`, `sum`), since a container could not be passed to a function then;
      `orbit std.math` gives generic `abs`, `min`, `max`, `clamp` written in Nova (the int-only `math`
      module stays for existing code).
+   - A1 (done): containers as values: parameters, return types, generic copies per container type,
+     sharing on assignment, `vector<int>()` as an expression, and postfixes on any container value.
+   - A2 (done): container fields (created empty with each object, inherited), and container method
+     parameters and returns. Also: a method's return nested in an `if` wrote into the surrounding function's
+     return slot when the class was a generic copy compiled inside a function.
+   - A3 (done): container type arguments (`Box<vector<int>>`). A copy is compiled from the class's tokens with
+     each type parameter replaced by its argument's tokens, appended after the program's tokens and removed once
+     compiled, so an argument can be several tokens. The constructor checks container arguments' full types.
+   - Next: B objects as references (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

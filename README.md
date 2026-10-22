@@ -3,7 +3,8 @@
 NovaComp is a cloud IDE for **Nova**, a statically typed language for machine learning with a Python-like
 syntax and built-in tensors, autograd and GPU-cluster training. This document describes how the system is
 built. For running it locally see [Setup and verification](docs/SETUP.md); for production see
-[Deployment](docs/DEPLOY.md); for the language itself see [Nova syntax](docs/SYNTAX.md).
+[Deployment](docs/DEPLOY.md); for the language itself see [Nova syntax](docs/SYNTAX.md); for what comes next
+see the [Roadmap](docs/ROADMAP.md).
 
 ---
 
@@ -323,8 +324,9 @@ The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
   `orbit novatorch.nn` / `novatorch.optim` / `novatorch.data`, `orbit collections`.
 - **Integrations:** `hf.*` (HuggingFace datasets and models) and `sol.*` (training on the SOL cluster).
 
-Known limits, being worked on: a container or object cannot yet be passed to a function, returned or stored
-in a field, and a generic class's type argument must be a built-in type.
+Containers are references: they can be passed to functions, returned and assigned (sharing one container).
+They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Known limit, being worked
+on: an object cannot yet be passed or stored, so a class type cannot be a type argument (`Box<P>`).
 
 ---
 
@@ -546,7 +548,7 @@ NovaComp/
 │   └── vite.config.ts
 │
 ├── examples/                   # Nova example programs + generate_mnist_data.py
-├── docs/                       # SETUP.md, DEPLOY.md, SYNTAX.md, REVIEW.md
+├── docs/                       # SETUP.md, DEPLOY.md, SYNTAX.md, ROADMAP.md, REVIEW.md
 ├── deploy/                     # compose.prod.yml + deploy.sh for the EC2 host
 ├── tools/                      # sol-tunnel/ (Start/Stop-SolTunnel.ps1), syntax/ (source migration scripts)
 ├── scripts/check-repo-hygiene.js

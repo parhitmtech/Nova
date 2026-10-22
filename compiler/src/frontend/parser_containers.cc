@@ -5,8 +5,13 @@
 
 static const char* ELEMENT_TYPES = "int, float, double, bool, string or Tensor";
 
+bool at_container_type()
+{
+    return (token.lexeme == "vector" || token.lexeme == "map") && lexer.peek(1).token_type == LESS;
+}
+
 // vector<T> / map<K, V> with token on 'vector' / 'map': reads the type arguments into info. Token ends on '>'.
-static bool parse_container_type(ContainerInfo& info)
+bool parse_container_type(ContainerInfo& info)
 {
     int line = token.line_no;
     info.isMap = (token.lexeme == "map");
@@ -43,7 +48,7 @@ static bool parse_container_type(ContainerInfo& info)
     return true;
 }
 
-static string container_type_name(const ContainerInfo& info)
+string container_type_name(const ContainerInfo& info)
 {
     return info.isMap ? "map<" + typeToString(info.key) + ", " + typeToString(info.elem) + ">"
                       : "vector<" + typeToString(info.elem) + ">";
@@ -68,6 +73,73 @@ static int int_constant_slot(int v)
     int s = alloc_slot();
     mem[s] = v;
     return s;
+}
+
+bool same_container(VarType t, const ContainerInfo& c, const ContainerInfo& want)
+{
+    return t == (want.isMap ? TYPE_MAP : TYPE_VECTOR) && container_type_name(c) == container_type_name(want);
+}
+
+static int emit_container_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, VarType resultType,
+                             int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+
+// A new, empty container of this type: its handle. Sets lastExprType / lastExprContainer.
+int emit_container_new(const ContainerInfo& info, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    vector<int> args;
+    if (info.isMap) args.push_back(int_constant_slot(info.key));
+    args.push_back(int_constant_slot(info.elem));
+    vector<VarType> types(args.size(), TYPE_INT);
+    int handle = emit_container_op(info.isMap ? CON_MAP_NEW : CON_VEC_NEW, args, types, TYPE_INT, line, head, tracker);
+    lastExprType = info.isMap ? TYPE_MAP : TYPE_VECTOR;
+    lastExprContainer = info;
+    return handle;
+}
+
+int parse_container_constructor(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int line = token.line_no;
+    ContainerInfo info;
+    if (!parse_container_type(info) || lexer.peek(1).token_type != LPAREN || lexer.peek(2).token_type != RPAREN)
+    {
+        if (info.elem != TYPE_UNKNOWN) report_error(line, "expected " + container_type_name(info) + "()");
+        token = lexer.GetToken();
+        lastExprType = TYPE_UNKNOWN;
+        return 0;
+    }
+    token = lexer.GetToken();  // '('
+    token = lexer.GetToken();  // ')'
+    token = lexer.GetToken();  // the token after the expression
+    return emit_container_new(info, line, head, tracker);
+}
+
+// The right side of `vector<int> v = ...` or `v = ...`, with token on its first token: an expression giving a 
+// container of exactly this type (vector<int>(), another vector<int>, a function returning one). The two
+// variables then share one container. Returns the handle's slot, or -1 after an error.
+static int parse_container_value(const ContainerInfo& info, const string& name, int line,
+                                 struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    int slot = parse_expression(head, tracker);
+    if (lastExprType == TYPE_UNKNOWN) return -1;  // already reported
+    if (!same_container(lastExprType, lastExprContainer, info))
+    {
+        string got = (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? container_type_name(lastExprContainer)
+                                                                               : typeToString(lastExprType);
+        report_error(line, "'" + name + "' is a " + container_type_name(info) + ", not " + got);
+        return -1;
+    }
+    return slot;
+}
+
+static void emit_copy(int dst, int src, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    struct InstructionNode* node = new InstructionNode();
+    node->line_no = line;
+    node->type = ASSIGN;
+    node->assign_inst.left_hand_side_index = dst;
+    node->assign_inst.operand1_index = src;
+    node->assign_inst.op = OPERATOR_NONE;
+    append(head, tracker, node);
 }
 
 // A container op as a TENSOR_CALL. resultType says where the result goes (TYPE_UNKNOWN: no result): a float or
@@ -140,53 +212,33 @@ void parse_container_declaration(struct InstructionNode*& head, struct Instructi
         return;
     }
     token = lexer.GetToken();  // '=' or ';'
+    int handle;
     if (token.token_type == EQUAL)
     {
-        // the constructor: the same type again, then ()
-        token = lexer.GetToken();
-        ContainerInfo rhs;
-        bool ok = (token.lexeme == "vector" || token.lexeme == "map") && lexer.peek(1).token_type == LESS &&
-                  parse_container_type(rhs) && container_type_name(rhs) == container_type_name(info) &&
-                  lexer.peek(1).token_type == LPAREN && lexer.peek(2).token_type == RPAREN;
-        if (!ok)
+        token = lexer.GetToken();  // first token of the value
+        handle = parse_container_value(info, name, line, head, tracker);
+        if (handle < 0)
         {
-            report_error(line, "'" + name + "' must start as " + container_type_name(info) + "()");
             while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
             return;
         }
-        token = lexer.GetToken();  // '('
-        token = lexer.GetToken();  // ')'
-        token = lexer.GetToken();  // ';'
     }
-
-    vector<int> args;
-    if (info.isMap) args.push_back(int_constant_slot(info.key));
-    args.push_back(int_constant_slot(info.elem));
-    vector<VarType> types(args.size(), TYPE_INT);
-    int handle = emit_container_op(info.isMap ? CON_MAP_NEW : CON_VEC_NEW, args, types, TYPE_INT, line, head, tracker);
-
+    else
+    {
+        handle = emit_container_new(info, line, head, tracker);  // vector<int> v: empty
+    }
     symbolTable[name] = alloc_slot();
     typeTable[name] = info.isMap ? TYPE_MAP : TYPE_VECTOR;
     containerTable[name] = info;
-    struct InstructionNode* node = new InstructionNode();
-    node->line_no = line;
-    node->type = ASSIGN;
-    node->assign_inst.left_hand_side_index = symbolTable[name];
-    node->assign_inst.operand1_index = handle;
-    node->assign_inst.op = OPERATOR_NONE;
-    append(head, tracker, node);
+    emit_copy(symbolTable[name], handle, line, head, tracker);
 }
 
-// v[i], m[k], v.size(), v.pop(), m.has(k) in an expression, with token on the container's name.
-// Token ends on the token after it.
-int parse_container_expression(struct InstructionNode*& head, struct InstructionNode*& tracker)
+// [i] / [k] or .method(...) on a container value (a variable, a field, a call's result), with token on the '['
+// or '.'. `name` is what error messages call it. Token ends on the token after it.
+int parse_container_postfix(int handle, const ContainerInfo& info, const string& name, int line, 
+                               struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    string name = token.lexeme;
-    int line = token.line_no;
-    ContainerInfo info = containerTable[name];
-    int handle = symbolTable[name];
     bool dmemElem = (info.elem == TYPE_FLOAT || info.elem == TYPE_DOUBLE);
-    token = lexer.GetToken();
     if (token.token_type == LBRAC)
     {
         token = lexer.GetToken();  // first token of the index
@@ -250,23 +302,34 @@ int parse_container_expression(struct InstructionNode*& head, struct Instruction
         lastExprType = TYPE_UNKNOWN;
         return 0;
     }
-    report_error(line, "a " + container_type_name(info) + " cannot be used as a value yet (passed, returned or copied): "
-                       "index it or call a method");
     lastExprType = TYPE_UNKNOWN;
     return 0;
 }
 
-// v[i] = x, m[k] = x, v.push(x), v.pop(), v.clear(), m.remove(k) as a statement, with token on the container's
-// name. Token ends on ';'.
-void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
+// v[i], m[k], v.size(), v.pop(), m.has(k), or the container itself in an expression, with token on its name.
+// Token ends on the token after it.
+int parse_container_expression(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     string name = token.lexeme;
     int line = token.line_no;
     ContainerInfo info = containerTable[name];
     int handle = symbolTable[name];
-    if (lexer.peek(1).token_type == LBRAC)
+    token = lexer.GetToken();
+    if (token.token_type == LBRAC || token.token_type == DOT)
     {
-        token = lexer.GetToken();  // '['
+        return parse_container_postfix(handle, info, name, line, head, tracker);
+    }
+    // The container itself, as a value: passed, returned or assigned (the handle; both sides share it)
+    lastExprType = info.isMap ? TYPE_MAP : TYPE_VECTOR;
+    lastExprContainer = info;
+    return handle;
+}
+
+void parse_container_statement_at(int handle, const ContainerInfo& info, const string& name, int line, 
+                                  struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (token.token_type == LBRAC)
+    {
         token = lexer.GetToken();  // first token of the index
         int index = parse_index(info, name, line, head, tracker);
         VarType indexType = lastExprType;
@@ -283,9 +346,8 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
         emit_container_op(CON_SET, {handle, index, value}, {TYPE_INT, indexType, valueType}, TYPE_UNKNOWN, line, head, tracker);
         return;  // token is on ';'
     }
-    if (lexer.peek(1).token_type == DOT)
+    if (token.token_type == DOT)
     {
-        token = lexer.GetToken();  // '.'
         token = lexer.GetToken();  // method name
         string method = token.lexeme;
         token = lexer.GetToken();  // '('
@@ -326,6 +388,27 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
         token = lexer.GetToken();  // past ')' -> ';'
         return;
     }
-    report_error(line, "a " + container_type_name(info) + " cannot be assigned or copied yet: use " + name + "[...] = x");
+    if (token.token_type == EQUAL)
+    {
+        // v = w: v now names the same container as w
+        token = lexer.GetToken();  // first token of the value
+        int value = parse_container_value(info, name, line, head, tracker);
+        if (value >= 0) emit_copy(handle, value, line, head, tracker);
+        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+        return;
+    }
+    report_error(line, "expected '[', '.' or '=' after '" + name + "'");
     while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+}
+
+//v[i] = x, m[k] = x, v.push(x), v.pop(), v.clear(), m.remove(k), v = w as a statement, with token on the 
+// container's name. Token ends on ';'.
+void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    string name = token.lexeme;
+    int line = token.line_no;
+    ContainerInfo info = containerTable[name];
+    int handle = symbolTable[name];
+    token = lexer.GetToken();  // '[', '.' or '='
+    parse_container_statement_at(handle, info, name, line, head, tracker);
 }

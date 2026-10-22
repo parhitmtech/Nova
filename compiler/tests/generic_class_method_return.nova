@@ -1,0 +1,32 @@
+# A method's return inside an if must write the method's own return slot, also when the class is a generic
+# copy compiled in the middle of a function (it used to write the surrounding function's slot: 1, not 5).
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def pick(T other, bool first) -> T:
+        if (first):
+            return self.value
+        return other
+
+def with_arrow(int n) -> int:
+    Box<int> b = Box<int>(n)
+    return b.pick(99, true) + 1
+
+def without_arrow(int n):
+    Box<int> b = Box<int>(n)
+    return b.pick(99, true) + 1
+
+def halve(double d) -> double:
+    Box<double> b = Box<double>(d)
+    return b.pick(0.5, true) * 2.0
+
+def main():
+    print(with_arrow(4))
+    print(without_arrow(4))
+    print(halve(1.25))
+    Box<int> b = Box<int>(4)
+    print(b.pick(99, true) + 1)
+    print(b.pick(99, false))

@@ -486,13 +486,20 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             vector<VarType> retExprTypes;
             retExprs.push_back(parse_expression(head, tracker));
             retExprTypes.push_back(lastExprType);
+            ContainerInfo retContainer = lastExprContainer;  // when the first value is a container
             while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
                 retExprTypes.push_back(lastExprType);
             }
-            if (currentFuncReturnPending) infer_return_type(retExprTypes, token.line_no);
+            if (currentFuncReturnPending) infer_return_type(retExprTypes, retContainer, token.line_no);
+            if ((currentFuncRetType == TYPE_VECTOR || currentFuncRetType == TYPE_MAP) && retExprTypes.size() == 1 &&
+                 retExprTypes[0] == currentFuncRetType && !same_container(retExprTypes[0], retContainer, currentFuncRetContainer))
+            {
+                report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(currentFuncRetContainer) + 
+                                            ", not " + container_type_name(retContainer));
+            }
             int nExpected = currentFuncRetSlots.empty() ? 1 : (int)currentFuncRetSlots.size();
             if ((int)retExprs.size() != nExpected)
             {
@@ -558,7 +565,16 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
-            tensorField = currentSelfFieldTypes.count(fieldPath) && currentSelfFieldTypes[fieldPath] == TYPE_TENSOR;
+            tensorField = currentSelfFieldTypes.count(fieldPath) && 
+                          (currentSelfFieldTypes[fieldPath] == TYPE_TENSOR || currentSelfFieldTypes[fieldPath] == TYPE_VECTOR || 
+                           currentSelfFieldTypes[fieldPath] == TYPE_MAP);
+        }
+        // self.ids.push(x), self.ids[0] = x, self.ids = w
+        if (tensorField && currentSelfFieldTypes[fieldPath] != TYPE_TENSOR)
+        {
+            parse_container_statement_at(currentSelfFieldSlots[fieldPath], classFieldContainers[currentSelfClassName][fieldPath],
+                                         "self." + fieldPath, token.line_no, head, tracker);
+            return;
         }
         // self.W[i, j] = value (element of a Tensor field)
         if (token.token_type == LBRAC && tensorField)
@@ -707,6 +723,14 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             }
             else
             {
+                // obj.ids.push(x), obj.ids[0] = x, obj.ids = w (a container field)
+                if (classFieldTypes.count(name) && classFieldTypes[name].count(memberName) && 
+                    (classFieldTypes[name][memberName] == TYPE_VECTOR || classFieldTypes[name][memberName] == TYPE_MAP))
+                {
+                    parse_container_statement_at(classFieldSlots[name][memberName], classFieldContainers[varClassType[name]][memberName],
+                                                 name + "." + memberName, objLine, head, tracker);
+                    return;
+                }
                 // obj.W[i, j] = value (element of a Tensor field)
                 if (token.token_type == LBRAC && classFieldTypes.count(name) && classFieldTypes[name].count(memberName) 
                     && classFieldTypes[name][memberName] == TYPE_TENSOR)

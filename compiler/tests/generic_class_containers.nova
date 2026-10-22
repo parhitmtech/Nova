@@ -1,0 +1,56 @@
+# Generic classes with container type arguments: Box<vector<int>> is compiled from the class's tokens with T
+# replaced by `vector<int>` (several tokens). The field shares the container it is given.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+class Pair<A, B>:
+    A first
+    B second
+
+    def init(A a, B b):
+        self.first = a
+        self.second = b
+
+def first(v):
+    return v[0]
+
+def make() -> int:  # a container-typed copy compiled in the middle of a function
+    Box<vector<double>> b = Box<vector<double>>(vector<double>())
+    b.value.push(1.5)
+    b.value.push(2.5)
+    return b.value.size()
+
+def main():
+    vector<int> v = vector<int>()
+    v.push(3)
+    Box<vector<int>> b = Box<vector<int>>(v)
+    print(b.get().size())
+    b.value.push(4)
+    print(v.size())
+    print(b.get()[1])
+    print(first(b.get()))
+
+    map<string, int> m = map<string, int>()
+    m["a"] = 1
+    Box<map<string, int>> bm = Box<map<string, int>>(m)
+    print(bm.get()["a"])
+    print(bm.value.has("a"))
+
+    vector<string> w = vector<string>()
+    w.push("hi")
+    Pair<map<string, int>, vector<string>> p = Pair<map<string, int>, vector<string>>(map<string, int>(), w)
+    p.first["k"] = 5
+    print(p.first["k"])
+    print(p.second[0])
+
+    Box<vector<int>> other = Box<vector<int>>(vector<int>())  # the same copy, its own container
+    print(other.value.size())
+    Box<int> plain = Box<int>(7)  # a single-token argument still works
+    print(plain.get())
+    print(make())

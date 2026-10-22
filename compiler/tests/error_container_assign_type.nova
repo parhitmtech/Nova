@@ -1,0 +1,4 @@
+# A container variable takes only a container of its own type.
+def main():
+    vector<int> a = vector<int>()
+    vector<double> d = a

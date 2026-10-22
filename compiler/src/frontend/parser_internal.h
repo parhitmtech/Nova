@@ -70,6 +70,27 @@ struct ContainerInfo
     VarType elem = TYPE_UNKNOWN;
 };
 extern map<string, ContainerInfo> containerTable;
+// The container type of the last expression parsed, valid when lastExprType is TYPE_VECTOR or TYPE_MAP
+// (every expression that gives a container sets it, as every expression sets lastExprType).
+extern ContainerInfo lastExprContainer;
+extern map<string, vector<ContainerInfo>> functionParamContainers;  // per parameter (used for container ones)
+extern map<string, ContainerInfo> functionReturnContainer;  // when the function returns a container
+extern ContainerInfo currentFuncRetContainer;  // the function being compiled
+extern map<string, map<string, ContainerInfo>> classFieldContainers;  // class -> container field -> type
+extern map<string, map<string, vector<ContainerInfo>>> classMethodParamContainers;  // class -> method -> per param
+extern map<string, map<string, ContainerInfo>> classMethodReturnContainer;   // class -> method returning a container
+int emit_container_new(const ContainerInfo& info, int line, struct InstructionNode*& head, struct InstructionNode *& tracker);
+// v[i] = x, v.push(x), v = w, ... on a container (a variable or a field), with token on the '[', '.' or '='
+// after its name. Token ends on ';'.
+void parse_container_statement_at(int handle, const ContainerInfo& info, const string& name, int line,
+                                  struct InstructionNode*& head, struct InstructionNode*& tracker);
+bool at_container_type();  // token is 'vector' / 'map' followed by '<'
+bool parse_container_type(ContainerInfo& info);  // reads vector<T> / map<K, V>; token ends on '>'
+string container_type_name(const ContainerInfo& info);  // "vector<int>"
+bool same_container(VarType t, const ContainerInfo& c, const ContainerInfo& want);  // t / c is a `want`
+int parse_container_constructor(struct InstructionNode*& head, struct InstructionNode*& tracker);  // vector<int>()
+int parse_container_postfix(int handle, const ContainerInfo& info, const string& name, int line,
+                            struct InstructionNode*& head, struct InstructionNode*& tracker);
 void parse_container_declaration(struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_container_expression(struct InstructionNode*& head, struct InstructionNode*& tracker);
 void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker);
@@ -105,11 +126,11 @@ void set_loops_aside();  // likewise for the loops 'break' and 'continue' jump o
 void restore_loops();
 bool is_generic_function(const string& name);
 int generic_parameter_count(const string& name);
-string instantiate_generic_function(const string& name, const vector<VarType>& argTypes);
+string instantiate_generic_function(const string& name, const vector<VarType>& argTypes, const vector<ContainerInfo>& argContainers);
 void compile_with_caller_aside(int position, void (*compile)());  // compile a definition from the token at position
 bool is_generic_class(const string& name);
 string parse_generic_class_type();  // Box<int> with token on Box: compiles the copy, returns "Box<int>"; token ends on '>'
-void infer_return_type(const vector<VarType>& types, int line);
+void infer_return_type(const vector<VarType>& types, const ContainerInfo& container, int line);
 extern bool currentFuncReturnPending;  // compiling a function without '-> type' that has not returned a value yet
 extern bool currentFuncSelfCalled;  // ... and it has called itself meanwhile
 bool name_is_declared(const string& name);  // a variable, array, struct or object with this name is visible
