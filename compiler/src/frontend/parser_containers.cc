@@ -84,7 +84,7 @@ static int emit_container_op(TensorOp op, const vector<int>& args, const vector<
                              int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
 
 // A new, empty container of this type: its handle. Sets lastExprType / lastExprContainer.
-static int emit_container_new(const ContainerInfo& info, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+int emit_container_new(const ContainerInfo& info, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     vector<int> args;
     if (info.isMap) args.push_back(int_constant_slot(info.key));
@@ -325,17 +325,11 @@ int parse_container_expression(struct InstructionNode*& head, struct Instruction
     return handle;
 }
 
-// v[i] = x, m[k] = x, v.push(x), v.pop(), v.clear(), m.remove(k) as a statement, with token on the container's
-// name. Token ends on ';'.
-void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
+void parse_container_statement_at(int handle, const ContainerInfo& info, const string& name, int line, 
+                                  struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    string name = token.lexeme;
-    int line = token.line_no;
-    ContainerInfo info = containerTable[name];
-    int handle = symbolTable[name];
-    if (lexer.peek(1).token_type == LBRAC)
+    if (token.token_type == LBRAC)
     {
-        token = lexer.GetToken();  // '['
         token = lexer.GetToken();  // first token of the index
         int index = parse_index(info, name, line, head, tracker);
         VarType indexType = lastExprType;
@@ -352,9 +346,8 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
         emit_container_op(CON_SET, {handle, index, value}, {TYPE_INT, indexType, valueType}, TYPE_UNKNOWN, line, head, tracker);
         return;  // token is on ';'
     }
-    if (lexer.peek(1).token_type == DOT)
+    if (token.token_type == DOT)
     {
-        token = lexer.GetToken();  // '.'
         token = lexer.GetToken();  // method name
         string method = token.lexeme;
         token = lexer.GetToken();  // '('
@@ -395,10 +388,9 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
         token = lexer.GetToken();  // past ')' -> ';'
         return;
     }
-    if (lexer.peek(1).token_type == EQUAL)
+    if (token.token_type == EQUAL)
     {
         // v = w: v now names the same container as w
-        token = lexer.GetToken();  // '='
         token = lexer.GetToken();  // first token of the value
         int value = parse_container_value(info, name, line, head, tracker);
         if (value >= 0) emit_copy(handle, value, line, head, tracker);
@@ -407,4 +399,16 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
     }
     report_error(line, "expected '[', '.' or '=' after '" + name + "'");
     while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+}
+
+//v[i] = x, m[k] = x, v.push(x), v.pop(), v.clear(), m.remove(k), v = w as a statement, with token on the 
+// container's name. Token ends on ';'.
+void parse_container_statement(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    string name = token.lexeme;
+    int line = token.line_no;
+    ContainerInfo info = containerTable[name];
+    int handle = symbolTable[name];
+    token = lexer.GetToken();  // '[', '.' or '='
+    parse_container_statement_at(handle, info, name, line, head, tracker);
 }

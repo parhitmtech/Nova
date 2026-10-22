@@ -290,6 +290,11 @@ void compile_with_caller_aside(int position, void (*compile)())
     map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
     map<string, int> savedSelfArraySizes = currentSelfFieldArraySizes;
     insideFunction = false;
+    currentFuncReturnPending = false;  // the caller's return type may still be pending; the copy's is its own
+    currentFuncSelfCalled = false;
+    currentFuncRetContainer = ContainerInfo();
+    currentFuncRetSlots.clear();
+    currentFuncRetTypes.clear();
     currentSelfClassName.clear();
     currentSelfFieldSlots.clear();
     currentSelfFieldTypes.clear();

@@ -271,7 +271,19 @@ def size_of(v):               # size_of<vector<int>>, size_of<vector<string>>, .
 print(make(5).size())         # [i] and methods work on any container value
 ```
 
-Not yet: a container as a class field (stage A2) or as a generic class's type argument (stage A3).
+A class can have container fields. Each object starts with new, empty ones, and `self.ids` / `obj.ids` is
+the container itself:
+
+```python
+class Vocab:
+    map<string, int> ids
+    vector<string> words
+
+    def all_words() -> vector<string>:      # methods take and return containers too
+        return self.words
+```
+
+Not yet: a container as a generic class's type argument (stage A3).
 
 A vector also has the usual algorithms as methods (`v.sort()`, `v.reverse()`, `v.contains(x)`,
 `v.index_of(x)`, `v.binary_search(x)`, `v.min()`, `v.max()`, `v.sum()`). Strings compare by their text; a
@@ -357,5 +369,8 @@ commit.
      module stays for existing code).
    - A1 (done): containers as values: parameters, return types, generic copies per container type,
      sharing on assignment, `vector<int>()` as an expression, and postfixes on any container value.
-   - Next: A2 container fields, A3 `Box<vector<int>>`, B objects as references (`Box<P>`, `vector<P>`).
+   - A2 (done): container fields (created empty with each object, inherited), and container method
+     parameters and returns. Also: a method's return nested in an `if` wrote into the surrounding function's
+     return slot when the class was a generic copy compiled inside a function.
+   - Next: A3 `Box<vector<int>>`, B objects as references (`Box<P>`, `vector<P>`).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

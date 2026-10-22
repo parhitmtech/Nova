@@ -1,0 +1,9 @@
+# A container field takes only a container of its own type.
+class Bag:
+    vector<int> items
+
+    def init():
+        self.items = vector<double>()
+
+def main():
+    Bag b = Bag()

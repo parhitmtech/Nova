@@ -76,6 +76,14 @@ extern ContainerInfo lastExprContainer;
 extern map<string, vector<ContainerInfo>> functionParamContainers;  // per parameter (used for container ones)
 extern map<string, ContainerInfo> functionReturnContainer;  // when the function returns a container
 extern ContainerInfo currentFuncRetContainer;  // the function being compiled
+extern map<string, map<string, ContainerInfo>> classFieldContainers;  // class -> container field -> type
+extern map<string, map<string, vector<ContainerInfo>>> classMethodParamContainers;  // class -> method -> per param
+extern map<string, map<string, ContainerInfo>> classMethodReturnContainer;   // class -> method returning a container
+int emit_container_new(const ContainerInfo& info, int line, struct InstructionNode*& head, struct InstructionNode *& tracker);
+// v[i] = x, v.push(x), v = w, ... on a container (a variable or a field), with token on the '[', '.' or '='
+// after its name. Token ends on ';'.
+void parse_container_statement_at(int handle, const ContainerInfo& info, const string& name, int line,
+                                  struct InstructionNode*& head, struct InstructionNode*& tracker);
 bool at_container_type();  // token is 'vector' / 'map' followed by '<'
 bool parse_container_type(ContainerInfo& info);  // reads vector<T> / map<K, V>; token ends on '>'
 string container_type_name(const ContainerInfo& info);  // "vector<int>"

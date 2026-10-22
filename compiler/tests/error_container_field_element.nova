@@ -1,0 +1,9 @@
+# A container field holds one element type.
+class Bag:
+    vector<int> items
+
+    def init():
+        self.items.push("no")
+
+def main():
+    Bag b = Bag()

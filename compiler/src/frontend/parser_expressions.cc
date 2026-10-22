@@ -392,6 +392,10 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
                     return 0;
                 }
                 lastExprType = classFieldTypes[varName][memberName];
+                if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
+                {
+                    lastExprContainer = classFieldContainers[varClassType[varName]][memberName];
+                }
                 return classFieldSlots[varName][memberName];
             }
         }
@@ -466,8 +470,10 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
-            // a Tensor field ends the path: a '.' or '[' after it is a tensor postfix (self.W.T, self.W[0, 1])
-            tensorField = currentSelfFieldTypes.count(fieldPath) && currentSelfFieldTypes[fieldPath] == TYPE_TENSOR;
+            // a Tensor or container field ends the path: a '.' or '[' after it is a postfix (self.W.T, self.ids[0])
+            tensorField = currentSelfFieldTypes.count(fieldPath) &&
+                          (currentSelfFieldTypes[fieldPath] == TYPE_TENSOR || currentSelfFieldTypes[fieldPath] == TYPE_VECTOR ||
+                           currentSelfFieldTypes[fieldPath] == TYPE_MAP);
         }
         // self.field[index] (array read)
         if (token.token_type == LBRAC && !tensorField)
@@ -508,6 +514,10 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             return 0;
         }
         lastExprType = currentSelfFieldTypes[fieldPath];
+        if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
+        {
+            lastExprContainer = classFieldContainers[currentSelfClassName][fieldPath];
+        }
         return currentSelfFieldSlots[fieldPath];
     }
     else if (token.token_type == FLOAT_TYPE || token.token_type == DOUBLE_TYPE || token.token_type == INT_TYPE)

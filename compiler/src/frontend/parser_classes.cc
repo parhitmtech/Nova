@@ -336,6 +336,7 @@ void parse_class_definition()
             {
                 def.fields.push_back(f);
             }
+            classFieldContainers[className] = classFieldContainers[parentName];
         }
         token = lexer.GetToken();  // '{'
     }
@@ -362,11 +363,19 @@ void parse_class_definition()
             while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
             {
                 VarType pType = TYPE_UNKNOWN;
+                ContainerInfo pContainer;
                 if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { pType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
+                else if (at_container_type() && parse_container_type(pContainer))  // vector<int> xs
+                {
+                    pType = pContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
+                    token = lexer.GetToken();  // past '>' to the name
+                }
                 if (token.token_type == ID)
                 {
                     params.push_back(token.lexeme);
                     paramTypes.push_back(pType);
+                    classMethodParamContainers[className][methodName].push_back(pContainer);
+                    if (pType == TYPE_VECTOR || pType == TYPE_MAP) containerTable[token.lexeme] = pContainer;
                     int pSlot = (pType == TYPE_FLOAT) ? alloc_float_slot() : 
                                 (pType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
                     if (pType == TYPE_FLOAT) floatSymbolTable[token.lexeme] = pSlot;
@@ -383,10 +392,16 @@ void parse_class_definition()
 
             token = lexer.GetToken();  // ARROW or '{'
             VarType retType = TYPE_UNKNOWN;
+            ContainerInfo retContainer;
             if (token.token_type == ARROW)
             {
                 token = lexer.GetToken();
                 if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) retType = type_of_keyword(token.token_type);
+                else if (at_container_type() && parse_container_type(retContainer)) // -> vector<int>
+                {
+                    retType = retContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
+                    classMethodReturnContainer[className][methodName] = retContainer;
+                }
                 else if (token.token_type == ID && classTable.count(token.lexeme)) retType = TYPE_CLASS;
                 token = lexer.GetToken();  // '{'
             }
@@ -422,6 +437,9 @@ void parse_class_definition()
             bool savedInsideFunc = insideFunction;
             int savedRetIdx = currentFuncRetIdx;
             VarType savedRetType = currentFuncRetType;
+            ContainerInfo savedRetContainer = currentFuncRetContainer;
+            vector<int> savedRetSlots = currentFuncRetSlots;
+            vector<VarType> savedRetTypes = currentFuncRetTypes;
             string savedFunctionLabel = currentFunctionLabel;
             string savedSelfClass = currentSelfClassName;
             map<string, int> savedSelfSlots = currentSelfFieldSlots;
@@ -431,6 +449,11 @@ void parse_class_definition()
             insideFunction = true;
             currentFuncRetIdx = retIdx;
             currentFuncRetType = retType;
+            currentFuncRetContainer = retContainer;
+            // A return nested in an if / loop goes through parse_statement, which writes these: without them
+            // it wrote into whatever function was being compiled around this class (a generic copy's caller).
+            currentFuncRetSlots = {retIdx};
+            currentFuncRetTypes = {retType};
             currentFunctionLabel = className + "." + methodName;
             currentSelfClassName = className;
             currentSelfFieldSlots = selfSlots;
@@ -449,6 +472,12 @@ void parse_class_definition()
                     token = lexer.GetToken();
                     int resultIdx = parse_expression(mhead, mtracker);
                     check_return_type(lastExprType, retType, token.line_no);
+                    if ((retType == TYPE_VECTOR || retType == TYPE_MAP) && lastExprType == retType && 
+                         !same_container(lastExprType, lastExprContainer, retContainer))
+                    {
+                        report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(retContainer) + 
+                                                    ", not " + container_type_name(lastExprContainer));
+                    }
 
                     struct InstructionNode* an = new InstructionNode();
                     an->line_no = token.line_no;
@@ -494,6 +523,9 @@ void parse_class_definition()
             insideFunction = savedInsideFunc;
             currentFuncRetIdx = savedRetIdx;
             currentFuncRetType = savedRetType;
+            currentFuncRetContainer = savedRetContainer;
+            currentFuncRetSlots = savedRetSlots;
+            currentFuncRetTypes = savedRetTypes;
             currentFunctionLabel = savedFunctionLabel;
             currentSelfClassName = savedSelfClass;
             currentSelfFieldSlots = savedSelfSlots;
@@ -535,6 +567,27 @@ void parse_class_definition()
             def.fields.push_back(fi);
             token = lexer.GetToken();  // next member or '}'
         }
+        else if (at_container_type())
+        {
+            // vector<int> ids: a container field; each object starts with a new, empty one
+            ContainerInfo ci;
+            if (!parse_container_type(ci))
+            {
+                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+                token = lexer.GetToken();
+                continue;
+            }
+            token = lexer.GetToken();  // field name
+            ClassFieldInfo fi;
+            fi.name = token.lexeme;
+            fi.type = ci.isMap ? TYPE_MAP : TYPE_VECTOR;
+            fi.struct_type = "";
+            fi.array_size = 0;
+            def.fields.push_back(fi);
+            classFieldContainers[className][fi.name] = ci;
+            token = lexer.GetToken();  // ';'
+            token = lexer.GetToken();  // next member or '}'
+        }
         else if (token.token_type == ID && classTable.count(token.lexeme))
         {
             // nested class type field: ClassName fieldName ;
@@ -548,6 +601,10 @@ void parse_class_definition()
                 fi.type = nf.type;
                 fi.struct_type = nf.struct_type;
                 def.fields.push_back(fi);
+                if (classFieldContainers[nestedClass].count(nf.name))
+                {
+                    classFieldContainers[className][fi.name] = classFieldContainers[nestedClass][nf.name];
+                }
             }
             token = lexer.GetToken();  // ';'
             token = lexer.GetToken();  // next member or '}'
@@ -610,6 +667,20 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     }
     classFieldSlots[varName] = fieldSlots;
     classFieldTypes[varName] = fieldTypes;
+
+    // Each container field starts as a new, empty container of its type (before init runs).
+    for (auto& field : def.fields)
+    {
+        if (field.type != TYPE_VECTOR && field.type != TYPE_MAP) continue;
+        int handle = emit_container_new(classFieldContainers[className][field.name], varLine, head, tracker);
+        struct InstructionNode* store = new InstructionNode();
+        store->line_no = varLine;
+        store->type = ASSIGN;
+        store->assign_inst.left_hand_side_index = fieldSlots[field.name];
+        store->assign_inst.operand1_index = handle;
+        store->assign_inst.op = OPERATOR_NONE;
+        append(head, tracker, store);
+    }
 
     token = lexer.GetToken();  // '=' or ';'
     // Linear l = Linear(2, 4): the constructor form. Skip "= Linear" so the '(' below runs init.
@@ -933,9 +1004,20 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     // parse arguments
     vector<int>     argIndices;
     vector<VarType> argTypes;
+    int argLine = token.line_no;
+    vector<ContainerInfo>& wantContainers = classMethodParamContainers[lookupClass][methodName];
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
     {
         int argIdx = parse_expression(head, tracker);
+        int i = (int)argIndices.size();
+        if (i < (int)wantContainers.size() && wantContainers[i].elem != TYPE_UNKNOWN && 
+            !same_container(lastExprType, lastExprContainer, wantContainers[i]))
+        {
+            string got = (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? container_type_name(lastExprContainer)
+                                                                                   : typeToString(lastExprType);
+            report_error(argLine, "argument " + to_string(i + 1) + " of '" + className + "." + methodName + "' expects " + 
+                                  container_type_name(wantContainers[i]) + " but got " + got);
+        }
         argIndices.push_back(argIdx);
         argTypes.push_back(lastExprType);
         if (token.token_type == COMMA) token = lexer.GetToken();
@@ -1113,5 +1195,6 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     }
     append(head, tracker, copyRet);
     lastExprType = mRetType;  // the call's value has the method's declared return type
+    if (mRetType == TYPE_VECTOR || mRetType == TYPE_MAP) lastExprContainer = classMethodReturnContainer[lookupClass][methodName];
     return freshSlot;
 }
