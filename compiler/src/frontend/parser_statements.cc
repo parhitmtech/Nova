@@ -487,13 +487,19 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             retExprs.push_back(parse_expression(head, tracker));
             retExprTypes.push_back(lastExprType);
             ContainerInfo retContainer = lastExprContainer;  // when the first value is a container
-            while (token.token_type == COMMA)
+            string retClass = (lastExprType == TYPE_CLASS) ? lastExprClass : "";  // ... or an object
+while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
                 retExprTypes.push_back(lastExprType);
             }
-            if (currentFuncReturnPending) infer_return_type(retExprTypes, retContainer, token.line_no);
+            if (currentFuncReturnPending) infer_return_type(retExprTypes, retContainer, retClass, token.line_no);
+            if (currentFuncRetType == TYPE_CLASS && retExprTypes.size() == 1 && retExprTypes[0] == TYPE_CLASS && 
+                retClass != currentFuncRetClass)
+            {
+                report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + currentFuncRetClass + ", not " + retClass);
+            }
             if ((currentFuncRetType == TYPE_VECTOR || currentFuncRetType == TYPE_MAP) && retExprTypes.size() == 1 &&
                  retExprTypes[0] == currentFuncRetType && !same_container(retExprTypes[0], retContainer, currentFuncRetContainer))
             {
@@ -624,6 +630,13 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             // class instantiation: MyClass obj ; or MyClass obj = { ... } ;
             parse_class_instantiation(name, head, tracker);
         }
+        else if (varClassType.count(name) && lexer.peek(1).token_type == EQUAL)
+        {
+            // p = q, p = Point(1, 2), p = make(): p refers to the value's object
+            int line = token.line_no;
+            token = lexer.GetToken();  // '='
+            parse_object_value_into(symbolTable[name], varClassType[name], name, line, head, tracker);
+        }
         else if (varClassType.count(name) && lexer.peek(1).token_type == DOT)
         {
             // obj.method(args) ; or obj.field = expr ;
@@ -635,7 +648,8 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
 
             if (token.token_type == LPAREN)
             {
-                parse_method_call(name, memberName, head, tracker);
+                int result = parse_method_call(name, memberName, head, tracker);
+                if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, objLine, head, tracker);
                 // token is now ';'
             }
             else
@@ -657,7 +671,9 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
         {
             // functionParams also covers a function calling itself as a statement while its own
             // body is being parsed
-            parse_function_call(head, tracker);
+            int line = token.line_no;
+            int result = parse_function_call(head, tracker);
+            if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, line, head, tracker);  // unused
         }
         else if (lexer.peek(1).token_type == LPAREN)
         {

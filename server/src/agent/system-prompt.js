@@ -348,7 +348,9 @@ ignite:
 - \`extends ParentClass\` for inheritance (optional)
 - Methods called with dot notation: \`obj.method(args)\`
 - Class fields accessed as \`self.field\` inside methods, \`obj.field\` outside
-- An object is a reference: each \`Dog d = Dog(3)\` is its own object, and a method changes the fields of the object it is called on. An object cannot yet be passed to a function, returned, or stored in a field or container
+- An object is a reference: each \`Dog d = Dog(3)\` is its own object, and a method changes the fields of the object it is called on
+- Objects can be passed and returned with class types: \`def older(Dog d) -> Dog\`; \`e = d\` makes both names refer to one object; \`Dog(3)\` is an expression (\`f(Dog(3))\`, \`return Dog(n)\`). A parameter takes its own class only, not a subclass
+- An object cannot yet be stored in a field or container, and a field cannot be read straight off a call (\`make().age\`): assign the result to a variable first
 - A method cannot yet call another method on \`self\` (\`self.speak()\`); compute the value inline instead
 
 ### Generic classes

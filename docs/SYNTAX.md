@@ -158,9 +158,12 @@ class Box<T>:                                 # generic class: one compiled copy
 method and has no type written.
 
 An object is a reference: `Linear l = Linear(2, 4)` creates a new object, and `l` refers to it. A method
-works on the object it is called on, so `self.W = ...` changes `l`'s field. An object is freed when the
-function that created it returns (a Tensor taken from its fields stays valid). It cannot yet be passed,
-returned or stored (stage B2/B3).
+works on the object it is called on, so `self.W = ...` changes `l`'s field. Objects can be passed and
+returned (`def step(Linear l, Tensor x) -> Linear`), and `m = l` makes both names refer to one object, so
+a function that changes its parameter's fields changes the caller's object. `Point(1, 2)` is an expression:
+`f(Point(1, 2))`, `return Point(x, y)`. An object parameter takes its own class only (not a subclass yet).
+An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid). It
+cannot yet be stored in a field or a container (stage B3).
 
 ## 7. Statements
 
@@ -386,6 +389,10 @@ commit.
      double fields (also inherited ones) now keep their values. An object is freed when its declaration runs
      again (a loop body) or when the function that created it returns. Also: returning from a function put
      its local slots on the free list, so a later `array(n)` could overlap that function's locals.
-   - Next: B2 objects as parameters, returns and in assignment; B3 objects in fields, containers and type
-     arguments (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
+   - B2 (done): objects as parameters, return values and in assignment (`q = p` shares the object), with
+     class types in signatures (`def f(Point p) -> Point`, `Box<int> b`) and generic copies per class
+     (`getx<Point>`). `Point(1, 2)` is an expression. Objects are reference-counted: each call owns the
+     references its variables, parameters and temporaries hold, and drops them when it returns.
+   - Next: B3 objects in fields, containers and type arguments (`Box<P>`, `vector<P>`). See
+     [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

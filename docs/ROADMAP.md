@@ -10,11 +10,12 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
   returned, stored in fields and containers (`vector<P>`), and used as type arguments (`Box<P>`).
   - B1 (done): the object heap; fields and methods go through the handle. An object cannot be shared yet,
     so it is freed when its declaration runs again or its function returns.
-  - B2: objects as parameters, return values and in assignment (`q = p` shares the object). Sharing needs
-    reference counting for objects, as Tensors have.
+  - B2 (done): objects as parameters, return values and in assignment (`q = p` shares the object), with
+    reference counting: each call owns the references its variables, parameters and temporaries hold.
   - B3: objects in fields and containers, and class type arguments (`Box<P>`, `vector<P>`).
-  - Small gaps found on the way: calling a method on `self` (`self.area()`), and freeing an object's arrays
-    (array slots are never reclaimed).
+  - Small gaps found on the way: calling a method on `self` (`self.area()`) and `return self`; a field or
+    method on a call's result (`make().x`); passing a subclass where its parent is expected (needs virtual
+    methods); freeing an object's arrays (array slots are never reclaimed).
 - **Batched matmul (`bmm`)**, with its tests (`tensor_bmm`, `grad_bmm`, `error_bmm_batch_mismatch`).
 
 ## 2. A real middle-end IR ("Nova IR")

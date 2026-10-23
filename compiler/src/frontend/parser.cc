@@ -16,6 +16,7 @@ static map<string, GenericFunction> genericFunctions;
 static string pendingInstanceName;  // set by instantiate_generic_function for the definition ...
 static vector<VarType> pendingInstanceTypes;  // ... it is about to compile
 static vector<ContainerInfo> pendingInstanceContainers;
+static vector<string> pendingInstanceClasses;
 
 bool is_generic_function(const string& name) { return genericFunctions.count(name) > 0; }
 int generic_parameter_count(const string& name) { return genericFunctions[name].paramCount; }
@@ -35,6 +36,22 @@ static bool has_untyped_parameter(int& count)
             afterType = true;  // a container type: vector<int> v
             continue;
         }
+        if (t.token_type == ID && classTable.count(t.lexeme) && lexer.peek(k + 1).token_type == ID)
+        {
+            afterType = true;  // a class type: Point p
+            continue;
+        }
+        if (t.token_type == ID && is_generic_class(t.lexeme) && lexer.peek(k + 1).token_type == LESS)
+        {
+            int depth = 0;  // a generic class type: Box<vector<int>> b
+            for (k++; lexer.peek(k).token_type != END_OF_FILE; k++)
+            {
+                if (lexer.peek(k).token_type == LESS) depth++;
+                if (lexer.peek(k).token_type == GREATER && --depth == 0) break;
+            }
+            afterType = true;
+            continue;
+        }
         if (t.token_type == ID)
         {
             count++;
@@ -47,7 +64,7 @@ static bool has_untyped_parameter(int& count)
 
 // The first 'return value' of a function without '-> type' (currentFuncReturnPending): that value's type becomes
 // the function's return type, and the return slot moves to the matching slot space (fmem / dmem for float / double).
-void infer_return_type(const vector<VarType>& types, const ContainerInfo&  container, int line)
+void infer_return_type(const vector<VarType>& types, const ContainerInfo&  container, const string& cls, int line)
 {
     currentFuncReturnPending = false;
     string name = currentFunctionLabel;
@@ -75,6 +92,11 @@ void infer_return_type(const vector<VarType>& types, const ContainerInfo&  conta
         currentFuncRetContainer = container;
         functionReturnContainer[name] = container;
     }
+    if (rt == TYPE_CLASS)
+    {
+        currentFuncRetClass = cls;
+        functionReturnClass[name] = cls;
+    }
 }
 
 void parse_function_definition()
@@ -88,6 +110,7 @@ void parse_function_definition()
     bool instance = !pendingInstanceName.empty();
     vector<VarType> instanceTypes = pendingInstanceTypes;
     vector<ContainerInfo> instanceContainers = pendingInstanceContainers;
+    vector<string> instanceClasses = pendingInstanceClasses;
     if (instance)
     {
         funcName = pendingInstanceName;
@@ -120,6 +143,7 @@ void parse_function_definition()
     vector<string>  params;
     vector<VarType> paramTypes;
     vector<ContainerInfo> paramContainers;
+    vector<string> paramClasses;  // an object parameter's class
 
     // The parameters and everything the body declares are gone after the function (all of the name tables, 
     // so an object or array declared in one function does not clash with one in the next)
@@ -129,11 +153,18 @@ void parse_function_definition()
     while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
         VarType paramType = TYPE_UNKNOWN;
         ContainerInfo paramContainer;
+        string paramClass;
         if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { paramType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
         else if (at_container_type() && parse_container_type(paramContainer))  // vector<int> v
         {
             paramType = paramContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
             token = lexer.GetToken();  // past '>' to the name
+        }
+        else if (lexer.peek(1).token_type != COMMA && lexer.peek(1).token_type != RPAREN && 
+                 parse_class_type_name(paramClass))  // Point p, Box<int> b
+        {
+            paramType = TYPE_CLASS;
+            token = lexer.GetToken();  // past the type to the name
         }
         if (token.token_type == ID) 
         {
@@ -141,11 +172,14 @@ void parse_function_definition()
             {
                 paramType = instanceTypes[params.size()];  // an untyped parameter takes its argument's type
                 paramContainer = instanceContainers[params.size()];
+                paramClass = instanceClasses[params.size()];
             }
             params.push_back(token.lexeme);
             paramTypes.push_back(paramType);
             paramContainers.push_back(paramContainer);
+            paramClasses.push_back(paramClass);
             if (paramType == TYPE_VECTOR || paramType == TYPE_MAP) containerTable[token.lexeme] = paramContainer;
+            if (paramType == TYPE_CLASS) varClassType[token.lexeme] = paramClass;
             int pSlot = (paramType == TYPE_FLOAT) ? alloc_float_slot() :
                         (paramType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
             if (paramType == TYPE_FLOAT) floatSymbolTable[token.lexeme]  = pSlot;
@@ -160,6 +194,7 @@ void parse_function_definition()
     functionParams[funcName]     = params;
     functionParamTypes[funcName] = paramTypes;
     functionParamContainers[funcName] = paramContainers;
+    functionParamClasses[funcName] = paramClasses;
 
     // persist param slots before symbol table is restored at end of body
     {
@@ -185,11 +220,17 @@ void parse_function_definition()
         {
             VarType rt = TYPE_UNKNOWN;
             ContainerInfo rc;
+            string rClass;
             if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) rt = type_of_keyword(token.token_type);
             else if (at_container_type() && parse_container_type(rc))  // -> vector<int>
             {
                 rt = rc.isMap ? TYPE_MAP : TYPE_VECTOR;
                 functionReturnContainer[funcName] = rc;
+            }
+            else if (parse_class_type_name(rClass))  // -> Point
+            {
+                rt = TYPE_CLASS;
+                functionReturnClass[funcName] = rClass;
             }
             else report_error(token.line_no, "expected type after '->' or ','");
             retTypes.push_back(rt);
@@ -225,6 +266,7 @@ void parse_function_definition()
     currentFuncReturnPending = !returnTypeKnown;
     currentFuncSelfCalled = false;      
     currentFuncRetContainer = functionReturnContainer.count(funcName) ? functionReturnContainer[funcName] : ContainerInfo();
+    currentFuncRetClass = functionReturnClass.count(funcName)? functionReturnClass[funcName] : "";
     functionTable[funcName] = nullptr;
 
     while (token.token_type != RBRACE && token.token_type != END_OF_FILE)
@@ -244,6 +286,7 @@ void parse_function_definition()
     currentFuncRetType = TYPE_UNKNOWN;
     currentFuncRetSlots.clear();
     currentFuncRetTypes.clear();
+    currentFuncRetClass.clear();
 
     exit_block();  // remove the parameters and locals
 
@@ -285,12 +328,14 @@ void compile_with_caller_aside(int position, void (*compile)())
     vector<VarType> savedRetTypes = currentFuncRetTypes;
     bool savedPending = currentFuncReturnPending, savedSelfCalled = currentFuncSelfCalled;
     ContainerInfo savedRetContainer = currentFuncRetContainer;
+    string savedRetClass = currentFuncRetClass;
     string savedSelfClass = currentSelfClassName;  // a generic function is not a method, even if called from one
     int savedSelfHandle = currentSelfHandle;
     insideFunction = false;
     currentFuncReturnPending = false;  // the caller's return type may still be pending; the copy's is its own
     currentFuncSelfCalled = false;
     currentFuncRetContainer = ContainerInfo();
+    currentFuncRetClass.clear();
     currentFuncRetSlots.clear();
     currentFuncRetTypes.clear();
     currentSelfClassName.clear();
@@ -308,6 +353,7 @@ void compile_with_caller_aside(int position, void (*compile)())
     currentFuncReturnPending = savedPending;
     currentFuncSelfCalled = savedSelfCalled;
     currentFuncRetContainer = savedRetContainer;
+    currentFuncRetClass = savedRetClass;
     currentFuncRetTypes = savedRetTypes;
     currentFuncRetSlots = savedRetSlots;
     currentFuncRetType = savedRetType;
@@ -321,13 +367,12 @@ void compile_with_caller_aside(int position, void (*compile)())
 // The copy of generic function `name` for these argument types, compiled the first time a call needs it.
 // Returns the copy's name, e.g. "scale<double, double>".
 string instantiate_generic_function(const string& name, const vector<VarType>& argTypes,
-                                    const vector<ContainerInfo>& argContainers)
+                                    const vector<ContainerInfo>& argContainers, const vector<string>& argClasses)
 {
     string copyName = name + "<";
     for (int i = 0; i < (int)argTypes.size(); i++) 
     {
-        bool container = (argTypes[i] == TYPE_VECTOR || argTypes[i] == TYPE_MAP);
-        copyName += (i ? ", " : "") + (container ? container_type_name(argContainers[i]) : typeToString(argTypes[i]));
+        copyName += (i ? ", " : "") + value_type_name(argTypes[i], argContainers[i], argClasses[i]);  // f<Point>
     }
     copyName += ">";
     if (functionTable.count(copyName)) return copyName;  // compiled already, or being compiled (a recursive call)
@@ -335,6 +380,7 @@ string instantiate_generic_function(const string& name, const vector<VarType>& a
     pendingInstanceName = copyName;
     pendingInstanceTypes = argTypes;
     pendingInstanceContainers = argContainers;
+    pendingInstanceClasses = argClasses;
     compile_with_caller_aside(genericFunctions[name].position, parse_function_definition);
     return copyName;
 }

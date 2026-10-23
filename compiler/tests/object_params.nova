@@ -1,0 +1,90 @@
+# Objects as values (stage B2): passed to functions and methods, returned, and assigned. An object is a
+# reference, so a function that changes its parameter's fields changes the caller's object, and q = p makes
+# both names refer to one object. Point(1, 2) is an expression, so a new object can be an argument or a return
+# value. A generic function gets one copy per class it is called with.
+class Vec:
+    int x
+    int y
+
+    def init(int a, int b):
+        self.x = a
+        self.y = b
+
+    def add(Vec o) -> Vec:
+        return Vec(self.x + o.x, self.y + o.y)
+
+    def dot(Vec o) -> int:
+        return self.x * o.x + self.y * o.y
+
+class Tag:
+    int x
+
+    def init(int a):
+        self.x = a + 100
+
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def shift(Vec v, int d):
+    v.x = v.x + d
+
+def make(int a) -> Vec:
+    Vec v = Vec(a, a * 2)
+    return v
+
+def fresh(int a) -> Vec:
+    return Vec(a, 0)
+
+def same(Vec v) -> Vec:  # small enough to inline: a call that passes an object must stay a call
+    return v
+
+def getx(p):
+    return p.x
+
+def mk(n):
+    return Vec(n, n)
+
+def unbox(Box<int> b) -> int:
+    return b.value
+
+def depth(Vec v, int n) -> int:
+    if (n == 0):
+        return v.x
+    return depth(v, n - 1) + 1
+
+def rebind(Vec v) -> int:
+    v = Vec(100, 100)
+    return v.x
+
+def main():
+    Vec a = Vec(1, 2)
+    shift(a, 10)
+    print(a.x)              # 11: shift changed a's object
+    Vec b = make(3)
+    print(b.x + b.y)        # 9
+    Vec c = a
+    c.y = 50
+    print(a.y)              # 50: c and a are one object
+    Vec d = a.add(b)
+    print(d.x)              # 14
+    print(d.y)              # 56
+    print(a.dot(Vec(1, 1))) # 61
+    Vec s = same(a)
+    s.y = 7
+    print(a.y)              # 7: same returned a's object
+    print(getx(a))          # 11: getx<Vec>
+    print(getx(Tag(1)))     # 101: getx<Tag>
+    Vec m = mk(4)
+    print(m.y)              # 4: mk's return type is taken from its return
+    Box<int> bx = Box<int>(42)
+    print(unbox(bx))        # 42
+    print(depth(a, 5))      # 16
+    print(rebind(a))        # 100
+    print(a.x)              # 11: rebinding a parameter leaves the caller's variable alone
+    fresh(9)                # a result nothing uses is released
+    a = fresh(5)
+    print(a.x)              # 5
+    print(c.x)              # 11: c still refers to the first object

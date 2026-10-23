@@ -105,7 +105,34 @@ extern int currentSelfHandle;                                    // the slot hol
 extern map<string, map<string, int>> classMethodSelfHandle;      // class -> method -> its hidden self parameter slot
 const ClassFieldInfo* class_field(const string& cls, const string& field, int* index);  // nullptr if none
 int emit_object_new(const string& cls, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
-void free_object_held_by(int slot, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+extern string lastExprClass;  // the class of the last expression, when it is an object
+extern bool lastExprTemp;     // ... and whether it is a temporary (a new object, a call's result)
+extern string currentFuncRetClass;    // the class the function being compiled returns, when it returns an object
+extern map<string, vector<string>> functionParamClasses;                  // function -> each parameter's class
+extern map<string, string> functionReturnClass;
+extern map<string, map<string, vector<string>>> classMethodParamClasses;  // class -> method -> each parameter's class
+extern map<string, map<string, string>> classMethodReturnClass;
+bool parse_class_type_name(string& cls);  // Point / Box<int> as a type; token ends on its last token
+string value_type_name(VarType t, const ContainerInfo& container, const string& cls);
+void emit_object_store(int slot, int value, bool temp, int line, struct InstructionNode*& head,
+                       struct InstructionNode*& tracker);
+void release_object_temps(const vector<int>& temps, int line, struct InstructionNode*& head,
+                          struct InstructionNode*& tracker);
+// A call's arguments; temps are the ones that are temporary objects, released after the call.
+struct CallArgs
+{
+    vector<int> slots;
+    vector<VarType> types;
+    vector<ContainerInfo> containers;  // an argument's container type, when it is one
+    vector<string> classes;  // an argument's class, when it is an object
+    vector<int> temps;
+};
+CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionNode*& tracker);  // token ends past ')'
+void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line);
+int parse_constructor_expression(const string& cls, int line, struct InstructionNode*& head,
+                                 struct InstructionNode*& tracker);  // token on '('
+void parse_object_value_into(int slot, const string& cls, const string& shown, int line,
+                             struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '='
 int object_field_read(int handle, const string& cls, const string& field, int line,
                       struct InstructionNode*& head, struct InstructionNode*& tracker);
 void object_field_write(int handle, const string& cls, const string& field, int value, VarType valueType,
@@ -145,11 +172,12 @@ void set_loops_aside();  // likewise for the loops 'break' and 'continue' jump o
 void restore_loops();
 bool is_generic_function(const string& name);
 int generic_parameter_count(const string& name);
-string instantiate_generic_function(const string& name, const vector<VarType>& argTypes, const vector<ContainerInfo>& argContainers);
+string instantiate_generic_function(const string& name, const vector<VarType>& argTypes, const vector<ContainerInfo>& argContainers,
+                                    const vector<string>& argClasses);
 void compile_with_caller_aside(int position, void (*compile)());  // compile a definition from the token at position
 bool is_generic_class(const string& name);
 string parse_generic_class_type();  // Box<int> with token on Box: compiles the copy, returns "Box<int>"; token ends on '>'
-void infer_return_type(const vector<VarType>& types, const ContainerInfo& container, int line);
+void infer_return_type(const vector<VarType>& types, const ContainerInfo& container, const string& cls, int line);
 extern bool currentFuncReturnPending;  // compiling a function without '-> type' that has not returned a value yet
 extern bool currentFuncSelfCalled;  // ... and it has called itself meanwhile
 bool name_is_declared(const string& name);  // a variable, array, struct or object with this name is visible

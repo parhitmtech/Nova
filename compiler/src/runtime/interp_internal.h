@@ -23,8 +23,10 @@ InstructionNode* exec_ret(InstructionNode* pc);
 InstructionNode* exec_tensor_call(InstructionNode* pc);
 InstructionNode* exec_container_call(InstructionNode* pc);  // the CON_* ops (interp_containers.cc)
 InstructionNode* exec_object_call(InstructionNode* pc);     // the OBJ_* ops (interp_objects.cc)
-void objects_enter_call();  // a call starts: objects created from here on belong to it
-void objects_exit_call();  // it returns: free them (an object never outlives its function yet)
+void objects_enter_call();  // a call starts: it gets its own object references
+void objects_bind_param(int slot, int h);  // an object parameter: one of the call's references
+void objects_exit_call(int returned);      // it returns: its references go (an object it returns, if not 
+                                           // 0, becomes the caller's temporary first)
 InstructionNode* exec_tensor_release(InstructionNode* pc);
 InstructionNode* exec_hf_infer(InstructionNode* pc);
 InstructionNode* exec_sol_call(InstructionNode* pc);

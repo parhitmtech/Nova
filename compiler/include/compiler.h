@@ -149,7 +149,9 @@ enum TensorOp {
     OBJ_GET,      // a field: args handle, field index -> its value (mem[])
     OBJ_GET_D,    // the same for a float / double field (dmem[])
     OBJ_SET,      // args handle, field index, value
-    OBJ_FREE,     // args handle: free that object (nothing if it is 0); see parse_class_instantiation
+    OBJ_STORE,    // args slot, value: the variable in slot refers to the value's object (one more reference)
+    OBJ_MOVE,     // the same for a temporary value: its reference becomes the variable's
+    OBJ_RELEASE,  // args value: drops a temporary nothing took (an argument after its call, a discarded result)
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────

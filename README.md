@@ -325,8 +325,9 @@ The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
 - **Integrations:** `hf.*` (HuggingFace datasets and models) and `sol.*` (training on the SOL cluster).
 
 Containers are references: they can be passed to functions, returned and assigned (sharing one container).
-They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Known limit, being worked
-on: an object cannot yet be passed or stored, so a class type cannot be a type argument (`Box<P>`).
+They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Objects are references
+too: they can be passed, returned and assigned. Known limit, being worked on: an object cannot yet be stored
+in a field or a container, so a class type cannot be a type argument (`Box<P>`).
 
 ---
 

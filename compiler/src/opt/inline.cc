@@ -28,7 +28,8 @@ using namespace std;
 // dmem[] (float/double), tensors, nested calls or multiple return slots is left as a real CALL.
 static bool is_int_like(VarType t)
 {
-    return t != TYPE_FLOAT && t != TYPE_DOUBLE && t != TYPE_TENSOR;
+    return t != TYPE_FLOAT && t != TYPE_DOUBLE && t != TYPE_TENSOR && t != TYPE_CLASS;  // a call passing or returning
+                                                                                    // an object counts references
 }
 
 static bool inlinable_call(struct InstructionNode* call, int bodyNodes)

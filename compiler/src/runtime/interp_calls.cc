@@ -167,6 +167,7 @@ InstructionNode* exec_call(InstructionNode* pc)
             for (int i = 0; i < count; i++)
                 frame.savedSlots.push_back(mem[base + i]);
 
+            objects_enter_call();  // before the parameters: an object parameter is one of the call's references
             for (int i = 0; i < pc->call_inst.num_params; i++)
             {
                 int pSlot = pc->call_inst.param_slots[i];
@@ -187,10 +188,10 @@ InstructionNode* exec_call(InstructionNode* pc)
                 // two sides' independent TENSOR_RELEASE insertions (see insert_tensor_releases) each
                 // own one reference instead of double-freeing a single one.
                 if (g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
+                if (pt == TYPE_CLASS) objects_bind_param(pSlot, mem[pSlot]);
             }
 
             callStack.push(frame);
-            objects_enter_call();
             pc = pc->call_inst.function_head;
             break;
     } while (0);
@@ -206,7 +207,6 @@ InstructionNode* exec_ret(InstructionNode* pc)
                 exit(1);
             }
             CallFrame frame = callStack.top();
-            objects_exit_call();
             callStack.pop();
 
             // capture return value before restoring slots
@@ -272,6 +272,9 @@ InstructionNode* exec_ret(InstructionNode* pc)
                            (rt == TYPE_DOUBLE) ? dmem[slot] : (double)mem[slot];
                 capturedRetVals.push_back(v);
             }
+
+            // The call's object references go; an object it returns is handed to the caller first
+            objects_exit_call(frame.dest_type == TYPE_CLASS ? (int)capturedRetVals[0] : 0);
 
             // memo cache stays int-only (safe: edit 2 keeps non-int functions out)
             if (frame.is_memoizable && frame.memo_func)

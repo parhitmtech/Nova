@@ -2,10 +2,48 @@
 // (src/runtime/interp_objects.cc); every field read or write is an OBJ_GET / OBJ_SET on that handle, compiled to
 // a TENSOR_CALL like the container ops. A method receives its object's handle as a hidden first parameter
 // (currentSelfHandle while the method is compiled), so a method call copies nothing in or out.
+//
+// An object is reference-counted by the runtime. A store into a variable (OBJ_STORE, or OBJ_MOVE for a temporary)
+// counts the variable's reference; a temporary (a new object, a call's object result) is one reference that a
+// store takes, or OBJ_RELEASE drops when nothing does (an argument after its call, a discarded result).
 #include "parser_internal.h"
 
 int currentSelfHandle = -1;
 map<string, map<string, int>> classMethodSelfHandle;
+
+string lastExprClass;        // the class of the last expression, when it is an object (lastExprType TYPE_CLASS)
+bool lastExprTemp = false;   // ... and whether it is a temporary: a new object or a call's result
+string currentFuncRetClass;  // the class the function being compiled returns, when it returns an object
+map<string, vector<string>> functionParamClasses;                  // function -> each parameter's class ("" if none)
+map<string, string> functionReturnClass;
+map<string, map<string, vector<string>>> classMethodParamClasses;  // class -> method -> each parameter's class
+map<string, map<string, string>> classMethodReturnClass;
+
+// With token on a type's first token: whether it is a class (Point p) or a generic class (Box<int> b, compiled
+// here). If so, cls is its name and token is on its last token (the name, or the closing '>').
+bool parse_class_type_name(string& cls)
+{
+    if (token.token_type != ID) return false;
+    if (classTable.count(token.lexeme))
+    {
+        cls = token.lexeme;
+        return true;
+    }
+    if (is_generic_class(token.lexeme) && lexer.peek(1).token_type == LESS)
+    {
+        cls = parse_generic_class_type();
+        return !cls.empty();
+    }
+    return false;
+}
+
+// The type of a value as a message names it: its class, its container type, or its built-in type.
+string value_type_name(VarType t, const ContainerInfo& container, const string& cls)
+{
+    if (t == TYPE_CLASS) return cls;
+    if (t == TYPE_VECTOR || t == TYPE_MAP) return container_type_name(container);
+    return typeToString(t);
+}
 
 // The field of class `cls` named `field` (dotted for a nested class's flattened fields), or nullptr. Its
 // position in the class's field list is the index the object heap uses (a parent's fields come first).
@@ -96,9 +134,128 @@ int emit_object_new(const string& cls, int line, struct InstructionNode*& head, 
     return handle;
 }
 
-void free_object_held_by(int slot, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+// An object op that leaves lastExpr* alone (it runs after a value has been parsed)
+static void emit_object_effect(TensorOp op, const vector<int>& args, int result, int line,
+                               struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
-    emit_object_op(OBJ_FREE, {slot}, {TYPE_INT}, TYPE_UNKNOWN, line, head, tracker);
+    struct InstructionNode* node = new InstructionNode();
+    node->line_no = line;
+    node->type = TENSOR_CALL;
+    node->tensor_call_inst.op = op;
+    node->tensor_call_inst.result_slot = result;
+    node->tensor_call_inst.num_args = (int)args.size();
+    for (int i = 0; i < (int)args.size(); i++)
+    {
+        node->tensor_call_inst.arg_slots[i] = args[i];
+        node->tensor_call_inst.arg_types[i] = TYPE_INT;
+    }
+    append(head, tracker, node);
+}
+
+// slot = the object in value: the variable now refers to it (a temporary's reference becomes the variable's), and
+// the object the variable referred to before loses that reference.
+void emit_object_store(int slot, int value, bool temp, int line, struct InstructionNode*& head,
+                       struct InstructionNode*& tracker)
+{
+    emit_object_effect(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, slot, line, head, tracker);
+}
+
+void release_object_temps(const vector<int>& temps, int line, struct InstructionNode*& head,
+                          struct InstructionNode*& tracker)
+{
+    for (int t : temps) emit_object_effect(OBJ_RELEASE, {t}, -1, line, head, tracker);
+}
+
+// With token on the first argument (or ')'): a call's arguments, parsed up to and past the ')'.
+CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    CallArgs a;
+    while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
+    {
+        a.slots.push_back(parse_expression(head, tracker));
+        a.types.push_back(lastExprType);
+        a.containers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
+        a.classes.push_back(lastExprType == TYPE_CLASS ? lastExprClass : "");
+        if (lastExprType == TYPE_CLASS && lastExprTemp) a.temps.push_back(a.slots.back());
+        if (token.token_type == COMMA) token = lexer.GetToken();
+    }
+    token = lexer.GetToken();  // past ')'
+    return a;
+}
+
+// An object argument goes to a parameter of its class (the class itself: a subclass is not accepted yet), and an
+// object parameter takes only an object. Other arguments are left to the caller's own checks.
+void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line)
+{
+    if (a.types[i] != TYPE_CLASS && want != TYPE_CLASS) return;
+    if (a.types[i] == TYPE_CLASS && want == TYPE_CLASS && a.classes[i] == wantClass) return;
+    report_error(line, "argument " + to_string(i + 1) + " of " + callee + " expects " +
+                       (want == TYPE_CLASS ? wantClass : typeToString(want)) + " but got " +
+                       value_type_name(a.types[i], a.containers[i], a.classes[i]));
+}
+
+// With token on the '(' after a class name: a new object, its init run with the arguments. The value is a
+// temporary of class cls.
+int parse_constructor_expression(const string& cls, int line, struct InstructionNode*& head,
+                                 struct InstructionNode*& tracker)
+{
+    int handle = emit_object_new(cls, line, head, tracker);
+    token = lexer.GetToken();  // past '('
+    CallArgs a = parse_call_arguments(head, tracker);
+    if (!classMethodTable.count(cls) || !classMethodTable[cls].count("init"))
+    {
+        report_error(line, "class '" + cls + "' has no constructor 'init'");
+    }
+    else
+    {
+        vector<string>& params = classMethodParams[cls]["init"];
+        if (a.slots.size() != params.size())
+            report_error(line, "'" + cls + "' constructor takes " + to_string(params.size()) + " argument(s) but got " +
+                               to_string(a.slots.size()));
+        vector<VarType>& paramTypes = classMethodParamTypes[cls]["init"];
+        vector<ContainerInfo>& paramContainers = classMethodParamContainers[cls]["init"];
+        vector<string>& paramClasses = classMethodParamClasses[cls]["init"];
+        for (int i = 0; i < (int)a.types.size() && i < (int)paramTypes.size(); i++)
+        {
+            string pClass = i < (int)paramClasses.size() ? paramClasses[i] : "";
+            if (!types_compatible(a.types[i], paramTypes[i]))
+                report_error(line, "argument " + to_string(i + 1) + " of '" + cls + "' constructor expects " +
+                                   value_type_name(paramTypes[i], ContainerInfo(), pClass) + " but got " +
+                                   value_type_name(a.types[i], a.containers[i], a.classes[i]));
+            else if ((paramTypes[i] == TYPE_VECTOR || paramTypes[i] == TYPE_MAP) && i < (int)paramContainers.size() &&
+                     !same_container(a.types[i], a.containers[i], paramContainers[i]))
+                report_error(line, "argument " + to_string(i + 1) + " of '" + cls + "' constructor expects " +
+                                   container_type_name(paramContainers[i]) + " but got " + container_type_name(a.containers[i]));
+            else
+                check_object_argument(a, i, paramTypes[i], pClass, "'" + cls + "' constructor", line);
+        }
+        emit_method_call(cls, "init", handle, a.slots, a.types, line, head, tracker);
+    }
+    release_object_temps(a.temps, line, head, tracker);
+    lastExprType = TYPE_CLASS;
+    lastExprClass = cls;
+    lastExprTemp = true;
+    return handle;
+}
+
+// With token on the '=' of `p = value` or `Point p = value` (shown names the variable): the value must be an
+// object of class cls, and slot then refers to it. Token ends on ';'.
+void parse_object_value_into(int slot, const string& cls, const string& shown, int line,
+                             struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    token = lexer.GetToken();  // first token of the value
+    int value = parse_expression(head, tracker);
+    if (lastExprType != TYPE_CLASS)
+    {
+        report_error(line, "a " + cls + " is created with " + cls + "(...), which runs its init");
+        return;
+    }
+    if (lastExprClass != cls)
+    {
+        report_error(line, "'" + shown + "' is a " + cls + ", not a " + lastExprClass);
+        return;
+    }
+    emit_object_store(slot, value, lastExprTemp, line, head, tracker);
 }
 
 int object_field_read(int handle, const string& cls, const string& field, int line,
@@ -244,6 +401,8 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
                      const vector<VarType>& argTypes, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     string fullName = cls + "::" + method;
+    VarType retType = (classMethodReturnType.count(cls) && classMethodReturnType[cls].count(method))
+                      ? classMethodReturnType[cls][method] : TYPE_UNKNOWN;
     vector<int>& paramSlots = classMethodParamSlots[cls][method];
     vector<VarType>& paramTypes = classMethodParamTypes[cls][method];
     int n = 1 + (int)paramSlots.size();  // the object's handle is parameter 0
@@ -253,7 +412,7 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     callNode->type = CALL;
     callNode->call_inst.function_head = classMethodTable[cls][method];
     callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
-    callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
+    callNode->call_inst.ret_type = retType;  // an object result is handed to the caller (see exec_ret)
     callNode->call_inst.func_slot_base = 0;
     callNode->call_inst.func_slot_count = 0;
     callNode->call_inst.num_params = n;
@@ -281,8 +440,6 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     append(head, tracker, callNode);
 
     // The return value, copied out in its own slot space
-    VarType retType = (classMethodReturnType.count(cls) && classMethodReturnType[cls].count(method))
-                      ? classMethodReturnType[cls][method] : TYPE_UNKNOWN;
     int fresh = (retType == TYPE_FLOAT) ? alloc_float_slot() : (retType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_temp();
     struct InstructionNode* copy = new InstructionNode();
     copy->line_no = line;
@@ -310,5 +467,10 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     append(head, tracker, copy);
     lastExprType = retType;
     if (retType == TYPE_VECTOR || retType == TYPE_MAP) lastExprContainer = classMethodReturnContainer[cls][method];
+    if (retType == TYPE_CLASS)
+    {
+        lastExprClass = classMethodReturnClass[cls][method];
+        lastExprTemp = true;
+    }
     return fresh;
 }

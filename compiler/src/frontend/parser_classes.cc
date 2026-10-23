@@ -291,33 +291,6 @@ string parse_generic_class_type()
     return instantiate_generic_class(name, args, line);  // token is on the closing '>'
 }
 
-// The number of tokens from peek(k) on that spell the class name `name` ("Linear" is one token,
-// "Box<int, float>" is six), or 0 when they spell something else.
-static int class_name_tokens_at(int k, const string& name)
-{
-    Token t = lexer.peek(k);
-    if (t.token_type != ID) return 0;
-    string spelledName = t.lexeme;
-    int n = 1;
-    if (lexer.peek(k + 1).token_type == LESS)
-    {
-        spelledName += "<";
-        n++;
-        int depth = 0;  // Box<vector<int>>: the inner '>' closes vector<, the outer one Box<
-        while (true)
-        {
-            Token a = lexer.peek(k + n);
-            n++;
-            if (a.token_type == END_OF_FILE) return 0;
-            if (a.token_type == GREATER && depth == 0) { spelledName += ">"; break; }
-            if (a.token_type == LESS) depth++;
-            if (a.token_type == GREATER) depth--;
-            spelledName += (a.token_type == LESS) ? "<" : (a.token_type == GREATER) ? ">" : (a.token_type == COMMA) ? ", " : a.lexeme;
-        }
-    }
-    return spelledName == name ? n : 0;
-}
-
 void parse_class_definition()
 {
     int namePosition = lexer.GetPosition();
@@ -402,6 +375,8 @@ void parse_class_definition()
             string fullName = className + "::" + methodName;
             vector<string> params;
             vector<VarType> paramTypes;
+            vector<string> paramClasses;
+            classTable[className] = def;  // the class names itselfin its methods' types: def add(Vec other) -> Vec
 
             // The parameters and everything the body declares are gone after the method (all of the name tables)
             enter_block();
@@ -412,16 +387,25 @@ void parse_class_definition()
             {
                 VarType pType = TYPE_UNKNOWN;
                 ContainerInfo pContainer;
+                string pClass;
                 if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { pType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
                 else if (at_container_type() && parse_container_type(pContainer))  // vector<int> xs
                 {
                     pType = pContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
                     token = lexer.GetToken();  // past '>' to the name
                 }
+                else if (lexer.peek(1).token_type != COMMA && lexer.peek(1).token_type != RPAREN && 
+                         parse_class_type_name(pClass))  // Point p
+                {
+                    pType = TYPE_CLASS;
+                    token = lexer.GetToken();  // past the type to the name
+                }
                 if (token.token_type == ID)
                 {
                     params.push_back(token.lexeme);
                     paramTypes.push_back(pType);
+                    paramClasses.push_back(pClass);
+                    if (pType == TYPE_CLASS) varClassType[token.lexeme] = pClass;
                     classMethodParamContainers[className][methodName].push_back(pContainer);
                     if (pType == TYPE_VECTOR || pType == TYPE_MAP) containerTable[token.lexeme] = pContainer;
                     int pSlot = (pType == TYPE_FLOAT) ? alloc_float_slot() : 
@@ -437,10 +421,12 @@ void parse_class_definition()
             }
             classMethodParams[className][methodName] = params;
             classMethodParamTypes[className][methodName] = paramTypes;
+            classMethodParamClasses[className][methodName] = paramClasses;
 
             token = lexer.GetToken();  // ARROW or '{'
             VarType retType = TYPE_UNKNOWN;
             ContainerInfo retContainer;
+            string retClass;
             if (token.token_type == ARROW)
             {
                 token = lexer.GetToken();
@@ -450,7 +436,11 @@ void parse_class_definition()
                     retType = retContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
                     classMethodReturnContainer[className][methodName] = retContainer;
                 }
-                else if (token.token_type == ID && classTable.count(token.lexeme)) retType = TYPE_CLASS;
+                else if (parse_class_type_name(retClass))  // -> Point
+                {
+                    retType = TYPE_CLASS;
+                    classMethodReturnClass[className][methodName] = retClass;
+                }
                 token = lexer.GetToken();  // '{'
             }
             classMethodReturnType[className][methodName] = retType;
@@ -473,11 +463,14 @@ void parse_class_definition()
             string savedFunctionLabel = currentFunctionLabel;
             string savedSelfClass = currentSelfClassName;
             int savedSelfHandle = currentSelfHandle;
+            string savedRetClass = currentFuncRetClass;
 
             insideFunction = true;
             currentFuncRetIdx = retIdx;
             currentFuncRetType = retType;
             currentFuncRetContainer = retContainer;
+            currentFuncRetClass = retClass;
+
             // A return nested in an if / loop goes through parse_statement, which writes these: without them
             // it wrote into whatever function was being compiled around this class (a generic copy's caller).
             currentFuncRetSlots = {retIdx};
@@ -503,6 +496,10 @@ void parse_class_definition()
                     {
                         report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(retContainer) + 
                                                     ", not " + container_type_name(lastExprContainer));
+                    }
+                    if (retType == TYPE_CLASS && lastExprType == TYPE_CLASS && lastExprClass != retClass)
+                    {
+                        report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + retClass + ", not " + lastExprClass);
                     }
 
                     struct InstructionNode* an = new InstructionNode();
@@ -555,6 +552,7 @@ void parse_class_definition()
             currentFunctionLabel = savedFunctionLabel;
             currentSelfClassName = savedSelfClass;
             currentSelfHandle = savedSelfHandle;
+            currentFuncRetClass = savedRetClass;
 
             exit_block();  // remove the parameters and locals
 
@@ -672,95 +670,29 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     typeTable[varName] = TYPE_CLASS;
     symbolTable[varName] = alloc_slot();
 
-    // A declaration that runs again (a loop body, a function called again) first frees the object the variable
-    // held: nothing else can refer to it yet, since objects are not passed or stored anywhere else.
-    free_object_held_by(symbolTable[varName], varLine, head, tracker);
-    // A new object (its arrays and containers created, its Tensors unset);the variable holds its handle.
-    int handle = emit_object_new(className, varLine, head, tracker);
-    struct InstructionNode* store = new InstructionNode();
-    store->line_no = varLine;
-    store->type = ASSIGN;
-    store->assign_inst.left_hand_side_index = symbolTable[varName];
-    store->assign_inst.operand1_index = handle;
-    store->assign_inst.op = OPERATOR_NONE;
-    append(head, tracker, store);
-
-    token = lexer.GetToken();  // '=' or ';'
-    // Linear l = Linear(2, 4): the constructor form. Skip "= Linear" so the '(' below runs init.
-    int nameTokens = (token.token_type == EQUAL) ? class_name_tokens_at(1, className) : 0;  // Box<int> is 4 tokens
-    if (nameTokens > 0 && lexer.peek(nameTokens + 1).token_type == LPAREN)
+    token = lexer.GetToken();  // '=', '(' or ';'
+    if (token.token_type == EQUAL)
     {
-        for (int i = 0; i < nameTokens; i++) token = lexer.GetToken();  // the class name
-        token = lexer.GetToken();  // '('
-    } 
-
-    if (token.token_type == LPAREN)
-    {
-        // constructor call: MyClass obj(arg1, arg2) ; 
-        token = lexer.GetToken();  // past '('
-        vector<int> argIndices;
-        vector<VarType> argTypes;
-        vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
-        while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
-        {
-            int argIdx = parse_expression(head, tracker);
-            argIndices.push_back(argIdx);
-            argTypes.push_back(lastExprType);
-            argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
-            if (token.token_type == COMMA)
-            {
-                token = lexer.GetToken();
-            }
-        }
-        token = lexer.GetToken();  // past ')'
-
-        if (!classMethodTable.count(className) || !classMethodTable[className].count("init"))
-        {
-            report_error(varLine, "class '" + className + "' has no constructor 'init'");
-        }
-        else
-        {
-            vector<string>& params = classMethodParams[className]["init"];
-            if (argIndices.size() != params.size())
-            {
-                report_error(varLine, "'" + className + "' constructor takes " + to_string(params.size()) + 
-                                      " argument(s) but got " + to_string(argIndices.size()));
-            }
-            vector<VarType>& paramTypes = classMethodParamTypes[className]["init"];
-            for (int i = 0; i < (int)argTypes.size() && i < (int)paramTypes.size(); i++)
-            {
-                if (!types_compatible(argTypes[i], paramTypes[i]))
-                {
-                    report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " + 
-                                          typeToString(paramTypes[i]) + " but got " + typeToString(argTypes[i]));
-                }
-                else if ((paramTypes[i] == TYPE_VECTOR || paramTypes[i] == TYPE_MAP) && 
-                    i < (int)classMethodParamContainers[className]["init"].size() && 
-                    !same_container(argTypes[i], argContainers[i], classMethodParamContainers[className]["init"][i]))   
-                {
-                    report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " + 
-                                          container_type_name(classMethodParamContainers[className]["init"][i]) + 
-                                          " but got " + container_type_name(argContainers[i]));
-                }
-            }
-            emit_method_call(className, "init", symbolTable[varName], argIndices, argTypes, varLine, head, tracker);
-        }
-        // token = ';'
+        // Point p = Point(1, 2), Point p = q, Point p = make(): p refers to the value's object
+        parse_object_value_into(symbolTable[varName], className, varName, varLine, head, tracker);
     }
-    else if (token.token_type == EQUAL)
+    else if (token.token_type == LPAREN)
     {
-        report_error(varLine, "a " + className + " is created with " + className + "(...), which runs its init");
-        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+        // Point p(1, 2): the same as Point p = Point(1, 2)
+        int value = parse_constructor_expression(className, varLine, head, tracker);
+        emit_object_store(symbolTable[varName], value, true, varLine, head, tracker);
     }
     else if (token.token_type == SEMICOLON)
     {
-        // Point p: runs a no-argument init() if the class has one
+        // Point p: a new object, its init run if it takes no arguments
+        int value = emit_object_new(className, varLine, head, tracker);
         if (classMethodTable.count(className) && classMethodTable[className].count("init") && classMethodParams[className]["init"].empty())
         {
-            emit_method_call(className, "init", symbolTable[varName], {}, {}, varLine, head, tracker);
+            emit_method_call(className, "init", value, {}, {}, varLine, head, tracker);
         }
+        emit_object_store(symbolTable[varName], value, true, varLine, head, tracker);
     }
-    // else token = ';'
+    // token = ';'
 }
 
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
@@ -793,34 +725,34 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     }
 
     token = lexer.GetToken();  // past '('
-    // parse arguments
-    vector<int>     argIndices;
-    vector<VarType> argTypes;
     int argLine = token.line_no;
+    CallArgs args = parse_call_arguments(head, tracker);
     vector<ContainerInfo>& wantContainers = classMethodParamContainers[lookupClass][methodName];
-    while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
+    vector<VarType>& wantTypes = classMethodParamTypes[lookupClass][methodName];
+    vector<string>& wantClasses = classMethodParamClasses[lookupClass][methodName];
+    string callee = "'" + className + "." + methodName + "'";
+    for (int i = 0; i < (int)args.slots.size(); i++)
     {
-        int argIdx = parse_expression(head, tracker);
-        int i = (int)argIndices.size();
         if (i < (int)wantContainers.size() && wantContainers[i].elem != TYPE_UNKNOWN && 
-            !same_container(lastExprType, lastExprContainer, wantContainers[i]))
+            !same_container(args.types[i], args.containers[i], wantContainers[i]))
         {
-            string got = (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? container_type_name(lastExprContainer)
-                                                                                   : typeToString(lastExprType);
-            report_error(argLine, "argument " + to_string(i + 1) + " of '" + className + "." + methodName + "' expects " + 
-                                  container_type_name(wantContainers[i]) + " but got " + got);
+            report_error(argLine, "argument " + to_string(i + 1) + " of " + callee + " expects " + 
+                                  container_type_name(wantContainers[i]) + " but got " + 
+                                  value_type_name(args.types[i], args.containers[i], args.classes[i]));
         }
-        argIndices.push_back(argIdx);
-        argTypes.push_back(lastExprType);
-        if (token.token_type == COMMA) token = lexer.GetToken();
+        else if (i < (int)wantTypes.size())
+        {
+            check_object_argument(args, i, wantTypes[i], i < (int)wantClasses.size() ? wantClasses[i] : "", callee, argLine);
+        }
     }
-    token = lexer.GetToken();  // past ')'
 
-    if (argIndices.size() != classMethodParams[lookupClass][methodName].size())
+    if (args.slots.size() != classMethodParams[lookupClass][methodName].size())
     {
-        report_error(argLine, "'" + className + "." + methodName + "' takes " + 
-                               to_string(classMethodParams[lookupClass][methodName].size()) + " argument(s) but got " + 
-                               to_string(argIndices.size()));
+        report_error(argLine, callee + " takes "+ to_string(classMethodParams[lookupClass][methodName].size()) + 
+                              " argument(s) but got " + to_string(args.slots.size()));
     }
-    return emit_method_call(lookupClass, methodName, symbolTable[varName], argIndices, argTypes, argLine, head, tracker);
+    int result = emit_method_call(lookupClass, methodName, symbolTable[varName], args.slots, args.types, argLine,
+                                  head, tracker);
+    release_object_temps(args.temps, argLine, head, tracker);
+    return result;
 }

@@ -12,18 +12,10 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     token = lexer.GetToken();  // '('
     token = lexer.GetToken();  // first arg or ')'
 
-    vector<int>     argIndices;
-    vector<VarType> argTypes;
-    vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
-
-    while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
-        int argIdx = parse_expression(head, tracker);
-        argIndices.push_back(argIdx);
-        argTypes.push_back(lastExprType);
-        argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
-        if (token.token_type == COMMA) token = lexer.GetToken();
-    }
-    token = lexer.GetToken();  // past ')'
+    CallArgs args = parse_call_arguments(head, tracker);  // token ends past ')'
+    vector<int>& argIndices = args.slots;
+    vector<VarType>& argTypes = args.types;
+    vector<ContainerInfo>& argContainers = args.containers;
 
     // A generic function: call the copy compiled for these argument types.
     if (is_generic_function(funcName))
@@ -35,7 +27,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
             lastExprType = TYPE_UNKNOWN;
             return 0;
         }
-        funcName = instantiate_generic_function(funcName, argTypes, argContainers);
+        funcName = instantiate_generic_function(funcName, argTypes, argContainers, args.classes);
     }
     // A function without '-> type' calling itself before its return type is known (see parse_function_definition).
     if (funcName == currentFunctionLabel && currentFuncReturnPending) currentFuncSelfCalled = true;
@@ -46,15 +38,23 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
 
     if (functionParamTypes.count(funcName)) {
         vector<VarType>& pTypes = functionParamTypes[funcName];
+        vector<string>& pClasses = functionParamClasses[funcName];
         for (int i = 0; i < (int)argTypes.size() && i < (int)pTypes.size(); i++) {
+            string pClass = i < (int)pClasses.size() ? pClasses[i] : "";
             if (!types_compatible(argTypes[i], pTypes[i]))
-                report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + typeToString(pTypes[i]) + " but got " + typeToString(argTypes[i]));
+                report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + 
+                                            value_type_name(pTypes[i], ContainerInfo(), pClass) + " but got " + 
+                                            value_type_name(argTypes[i], argContainers[i], args.classes[i]));
             else if ((pTypes[i] == TYPE_VECTOR || pTypes[i] == TYPE_MAP) && i < (int)functionParamContainers[funcName].size() && 
                      !same_container(argTypes[i], argContainers[i], functionParamContainers[funcName][i]))
             {
                 report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + 
                                             container_type_name(functionParamContainers[funcName][i]) + " but got " + 
                                             container_type_name(argContainers[i]));
+            }
+            else
+            {
+                check_object_argument(args, i, pTypes[i], pClass, "'" + funcName + "'", token.line_no);
             }
         }
     }
@@ -146,6 +146,12 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     append(head, tracker, copyRetNode);
     lastExprType = funcRetType;
     if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) lastExprContainer = functionReturnContainer[funcName];
+    if (funcRetType == TYPE_CLASS)
+    {
+        lastExprClass = functionReturnClass[funcName];
+        lastExprTemp = true;
+    }
+    release_object_temps(args.temps, token.line_no, head, tracker);
     return freshSlot;
 }
 
@@ -313,6 +319,28 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         }
 
         if (functionTable.find(token.lexeme) != functionTable.end() || is_generic_function(token.lexeme)) return parse_function_call(head, tracker);
+        // Point(1, 2), Box<int>(5): a new object
+        if (classTable.count(token.lexeme) && lexer.peek(1).token_type == LPAREN)
+        {
+            string cls = token.lexeme;
+            int line = token.line_no;
+            token = lexer.GetToken();  // '('
+            return parse_constructor_expression(cls, line, head, tracker);
+        }
+        if (is_generic_class(token.lexeme) && lexer.peek(1).token_type == LESS)
+        {
+            int line = token.line_no;
+            string cls = parse_generic_class_type();  // token ends on '>'
+            token = lexer.GetToken();  // '('
+            if (cls.empty() || token.token_type != LPAREN)
+            {
+                report_error(line, "expected '(' after the class type: a new object is written " + 
+                                   (cls.empty() ? string("Box<int>") : cls) + "(...)");
+                lastExprType = TYPE_UNKNOWN;
+                return 0;
+            }
+            return parse_constructor_expression(cls, line, head, tracker);
+        }
 
         if (TENSOR_OP_MAP.count(token.lexeme))
         {
@@ -419,6 +447,11 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         if (!check_declared(token.lexeme, token.line_no)) { token = lexer.GetToken(); lastExprType = TYPE_UNKNOWN; return 0; }
 
         lastExprType = typeTable.count(token.lexeme) ? typeTable[token.lexeme] : TYPE_UNKNOWN;
+        if (lastExprType == TYPE_CLASS)
+        {
+            lastExprClass = varClassType[token.lexeme];
+            lastExprTemp = false;  // the variable keeps itsreference
+        }
         int idx = symbolTable[token.lexeme];
         token = lexer.GetToken();
         return idx;
