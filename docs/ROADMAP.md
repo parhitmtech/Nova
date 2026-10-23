@@ -6,8 +6,15 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
 ## 1. Finish the language
 
 - **B: objects as references.** Objects get a handle into a runtime object heap, like Python, Java and C#, in
-  place of today's flattened fields with copy-in/copy-out on every method call. Then objects can be passed,
+  place of flattened fields with copy-in/copy-out on every method call. Then objects can be passed,
   returned, stored in fields and containers (`vector<P>`), and used as type arguments (`Box<P>`).
+  - B1 (done): the object heap; fields and methods go through the handle. An object cannot be shared yet,
+    so it is freed when its declaration runs again or its function returns.
+  - B2: objects as parameters, return values and in assignment (`q = p` shares the object). Sharing needs
+    reference counting for objects, as Tensors have.
+  - B3: objects in fields and containers, and class type arguments (`Box<P>`, `vector<P>`).
+  - Small gaps found on the way: calling a method on `self` (`self.area()`), and freeing an object's arrays
+    (array slots are never reclaimed).
 - **Batched matmul (`bmm`)**, with its tests (`tensor_bmm`, `grad_bmm`, `error_bmm_batch_mismatch`).
 
 ## 2. A real middle-end IR ("Nova IR")

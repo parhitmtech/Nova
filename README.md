@@ -505,8 +505,8 @@ NovaComp/
 │   ├── src/
 │   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc, novavm_main.cc (bytecode VM)
 │   │   ├── frontend/           # lexer, inputbuf, imports (orbit); parser.cc (functions, generics) +
-│   │   │                       # parser_{state,util,classes,builtins,statements,expressions,containers}.cc
-│   │   ├── runtime/            # interpreter.cc (dispatch) + interp_{core,calls,tensor,containers,integrations}.cc,
+│   │   │                       # parser_{state,util,classes,builtins,statements,expressions,containers,objects}.cc
+│   │   ├── runtime/            # interpreter.cc (dispatch) + interp_{core,calls,tensor,containers,objects,integrations}.cc,
 │   │   │                       # state.cc, memory.cc, tensor.cc, autograd.cc, memoize.cc
 │   │   ├── opt/                # constant_fold, copy_propagation, dead_code, licm, inline, tensor_release
 │   │   ├── regalloc/           # liveness.cc, coloring.cc (Chaitin-Briggs)

@@ -384,19 +384,9 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             }
             else
             {
-                // field read: obj.field
-                if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(memberName))
-                {
-                    report_error(token.line_no, "class instance '" + varName + "' has no field '" + memberName + "'");
-                    lastExprType = TYPE_UNKNOWN;
-                    return 0;
-                }
-                lastExprType = classFieldTypes[varName][memberName];
-                if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
-                {
-                    lastExprContainer = classFieldContainers[varClassType[varName]][memberName];
-                }
-                return classFieldSlots[varName][memberName];
+                // field read: obj.field (token is on the token after the field name)
+                return parse_field_expression(symbolTable[varName], varClassType[varName], memberName, token.line_no,
+                                              head, tracker);
             }
         }
 
@@ -471,54 +461,10 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
             // a Tensor or container field ends the path: a '.' or '[' after it is a postfix (self.W.T, self.ids[0])
-            tensorField = currentSelfFieldTypes.count(fieldPath) &&
-                          (currentSelfFieldTypes[fieldPath] == TYPE_TENSOR || currentSelfFieldTypes[fieldPath] == TYPE_VECTOR ||
-                           currentSelfFieldTypes[fieldPath] == TYPE_MAP);
+            const ClassFieldInfo* f = class_field(currentSelfClassName, fieldPath, nullptr);
+            tensorField = f && (f->type == TYPE_TENSOR || f->type == TYPE_VECTOR || f->type == TYPE_MAP);
         }
-        // self.field[index] (array read)
-        if (token.token_type == LBRAC && !tensorField)
-        {
-            if (!currentSelfFieldSlots.count(fieldPath))
-            {
-                report_error(token.line_no, "'" + currentSelfClassName + "' has no array field '" + fieldPath + "'");
-                lastExprType = TYPE_UNKNOWN;
-                return 0;
-            }
-            int indexLine = token.line_no;
-            token = lexer.GetToken();  // first token of index expression
-            int indexSlot = parse_expression(head, tracker);
-            token = lexer.GetToken();  // past ']'
-
-            int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
-
-            int tempSlot = alloc_temp();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = ARRAY_READ;
-            node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
-            node->array_inst.dynamic_base = true;
-            node->array_inst.index_slot = indexSlot;
-            node->array_inst.target_index = tempSlot;
-            node->array_inst.array_size = arrSize;
-            node->array_inst.size_slot = -1;
-            node->array_inst.line_no = indexLine;
-            append(head, tracker, node);
-
-            lastExprType = TYPE_INT;
-            return tempSlot;
-        }
-        if (!currentSelfFieldSlots.count(fieldPath))
-        {
-            report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
-            lastExprType = TYPE_UNKNOWN;
-            return 0;
-        }
-        lastExprType = currentSelfFieldTypes[fieldPath];
-        if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
-        {
-            lastExprContainer = classFieldContainers[currentSelfClassName][fieldPath];
-        }
-        return currentSelfFieldSlots[fieldPath];
+        return parse_field_expression(currentSelfHandle, currentSelfClassName, fieldPath, token.line_no, head, tracker);
     }
     else if (token.token_type == FLOAT_TYPE || token.token_type == DOUBLE_TYPE || token.token_type == INT_TYPE)
     {

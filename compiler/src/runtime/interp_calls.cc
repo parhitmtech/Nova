@@ -190,6 +190,7 @@ InstructionNode* exec_call(InstructionNode* pc)
             }
 
             callStack.push(frame);
+            objects_enter_call();
             pc = pc->call_inst.function_head;
             break;
     } while (0);
@@ -205,6 +206,7 @@ InstructionNode* exec_ret(InstructionNode* pc)
                 exit(1);
             }
             CallFrame frame = callStack.top();
+            objects_exit_call();
             callStack.pop();
 
             // capture return value before restoring slots
@@ -300,18 +302,8 @@ InstructionNode* exec_ret(InstructionNode* pc)
             else if (frame.dest_type == TYPE_DOUBLE) dmem[frame.dest_index] = capturedRetVals[0];
             else mem[frame.dest_index] = (int)capturedRetVals[0];
 
-            // free all function-local slots EXCEPT dest_index
-            // dest_index must survive until the callers ASSIGN copies to it
-            // that ASSIGN emits no alloc_slot calls, so dest_index is dafe
-            int count = (int)frame.savedSlots.size();
-            for (int i = 0;i < count;i++)
-            {
-                int slot = frame.slot_base + i;
-                if (slot != frame.dest_index)
-                {
-                    free_slot(slot);
-                }
-            }
+            // The function's local slots stay its own: they were assigned when it was compiled, and its next call
+            // uses them again. (They used to go on freeList here, so a later ALLOC could hand them out as an array.)
             pc = frame.returnAddress;
             break;
     } while (0);

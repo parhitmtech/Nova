@@ -97,10 +97,29 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
 extern map<string, string> varStructType;
 extern map<string, map<string, int>> structFieldSlots;
 extern map<string, map<string, VarType>> structFieldTypes;
-extern map<string, int> currentSelfFieldSlots;
-extern map<string, VarType> currentSelfFieldTypes;
-extern map<string, int> currentSelfFieldArraySizes;
-extern map<string, map<string, map<string, int>>> classMethodArraySizes;
+// t[i, j] = value with token on '[': stores one element of the Tensor in slot t (parser_statements.cc)
+void parse_tensor_element_store(int t, const string& name, int line,
+                                struct InstructionNode*& head, struct InstructionNode*& tracker);
+// Class instances as references (parser_objects.cc)
+extern int currentSelfHandle;                                    // the slot holding self's handle in a method, else -1
+extern map<string, map<string, int>> classMethodSelfHandle;      // class -> method -> its hidden self parameter slot
+const ClassFieldInfo* class_field(const string& cls, const string& field, int* index);  // nullptr if none
+int emit_object_new(const string& cls, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+void free_object_held_by(int slot, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+int object_field_read(int handle, const string& cls, const string& field, int line,
+                      struct InstructionNode*& head, struct InstructionNode*& tracker);
+void object_field_write(int handle, const string& cls, const string& field, int value, VarType valueType,
+                        const ContainerInfo& valueContainer, const string& shown, int line,
+                        struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.f / self.f in an expression, with token on the token after the field name (an array field's [i] included)
+int parse_field_expression(int handle, const string& cls, const string& field, int line,
+                           struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.f = x, self.f[i] = x, self.ids.push(x), ... with token on the token after the field name; ends on ';'
+void parse_field_statement(int handle, const string& cls, const string& field, const string& shown, int line,
+                           struct InstructionNode*& head, struct InstructionNode*& tracker);
+int emit_method_call(const string& cls, const string& method, int objectSlot, const vector<int>& args,
+                     const vector<VarType>& argTypes, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+
 extern map<string, map<string, vector<int>>> classMethodParamSlots;
 extern string currentSelfClassName;
 extern map<string, vector<int>> functionReturnSlots;

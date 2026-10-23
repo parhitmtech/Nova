@@ -286,9 +286,7 @@ void compile_with_caller_aside(int position, void (*compile)())
     bool savedPending = currentFuncReturnPending, savedSelfCalled = currentFuncSelfCalled;
     ContainerInfo savedRetContainer = currentFuncRetContainer;
     string savedSelfClass = currentSelfClassName;  // a generic function is not a method, even if called from one
-    map<string, int> savedSelfSlots = currentSelfFieldSlots;
-    map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
-    map<string, int> savedSelfArraySizes = currentSelfFieldArraySizes;
+    int savedSelfHandle = currentSelfHandle;
     insideFunction = false;
     currentFuncReturnPending = false;  // the caller's return type may still be pending; the copy's is its own
     currentFuncSelfCalled = false;
@@ -296,9 +294,7 @@ void compile_with_caller_aside(int position, void (*compile)())
     currentFuncRetSlots.clear();
     currentFuncRetTypes.clear();
     currentSelfClassName.clear();
-    currentSelfFieldSlots.clear();
-    currentSelfFieldTypes.clear();
-    currentSelfFieldArraySizes.clear();
+    currentSelfHandle = -1;
     set_variables_aside();
     set_loops_aside();
 
@@ -308,9 +304,7 @@ void compile_with_caller_aside(int position, void (*compile)())
     restore_loops();
     restore_variables();
     currentSelfClassName = savedSelfClass;
-    currentSelfFieldSlots = savedSelfSlots;
-    currentSelfFieldTypes = savedSelfTypes;
-    currentSelfFieldArraySizes = savedSelfArraySizes;
+    currentSelfHandle = savedSelfHandle;
     currentFuncReturnPending = savedPending;
     currentFuncSelfCalled = savedSelfCalled;
     currentFuncRetContainer = savedRetContainer;

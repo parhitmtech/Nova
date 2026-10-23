@@ -348,6 +348,8 @@ ignite:
 - \`extends ParentClass\` for inheritance (optional)
 - Methods called with dot notation: \`obj.method(args)\`
 - Class fields accessed as \`self.field\` inside methods, \`obj.field\` outside
+- An object is a reference: each \`Dog d = Dog(3)\` is its own object, and a method changes the fields of the object it is called on. An object cannot yet be passed to a function, returned, or stored in a field or container
+- A method cannot yet call another method on \`self\` (\`self.speak()\`); compute the value inline instead
 
 ### Generic classes
 

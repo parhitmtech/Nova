@@ -71,16 +71,12 @@ int import_line_offset = 0; // lines added by imports - used to skip imported co
 // Map Definitions for Class 
 map<string, ClassDef> classTable;
 map<string, string> varClassType;
-map<string, map<string, int>> classFieldSlots;
-map<string, map<string, VarType>> classFieldTypes;
 map<string, map<string, InstructionNode*>> classMethodTable;
 map<string, map<string, vector<string>>> classMethodParams;
 map<string, map<string, vector<VarType>>> classMethodParamTypes;
 map<string, map<string, VarType>> classMethodReturnType;
 int currentSelfBase = -1;
 string currentSelfName = "";
-map<string, map<string, map<string, int>>> classMethodSelfSlots;
-map<string, map<string, map<string, VarType>>> classMethodSelfTypes;
 
 // Global memory vectors
 

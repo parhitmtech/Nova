@@ -19,10 +19,10 @@ SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
         src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/imports.cc \
         src/frontend/parser.cc src/frontend/parser_state.cc src/frontend/parser_util.cc \
         src/frontend/parser_classes.cc src/frontend/parser_builtins.cc \
-        src/frontend/parser_statements.cc src/frontend/parser_expressions.cc  src/frontend/parser_containers.cc \
+        src/frontend/parser_statements.cc src/frontend/parser_expressions.cc  src/frontend/parser_containers.cc src/frontend/parser_objects.cc \
         src/runtime/state.cc src/runtime/memory.cc src/runtime/tensor.cc src/runtime/interpreter.cc \
         src/runtime/interp_core.cc src/runtime/interp_calls.cc src/runtime/interp_tensor.cc \
-        src/runtime/interp_integrations.cc src/runtime/interp_containers.cc \
+        src/runtime/interp_integrations.cc src/runtime/interp_containers.cc src/runtime/interp_objects.cc \
         src/runtime/memoize.cc \
         src/codegen/bytecode.cc src/codegen/cuda.cc src/codegen/x86_asm.cc src/codegen/jit.cc \
         src/opt/constant_fold.cc src/opt/copy_propagation.cc src/opt/dead_code.cc \

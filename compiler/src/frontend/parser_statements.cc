@@ -8,7 +8,7 @@
 
 // t[i, j, ...] = value with token on '[': store one element of the Tensor in slot t (one index per dimension). Shared 
 // by a local (w[0, 1] = v), a self field (self.W[0, 1] = v) and an object field.
-static void parse_tensor_element_store(int t, const string& name, int line,
+void parse_tensor_element_store(int t, const string& name, int line,
                                        struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     vector<int> args = {t};
@@ -565,94 +565,11 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             if (!fieldPath.empty()) fieldPath += ".";
             fieldPath += token.lexeme;
             token = lexer.GetToken();  // consume field segment → next token
-            tensorField = currentSelfFieldTypes.count(fieldPath) && 
-                          (currentSelfFieldTypes[fieldPath] == TYPE_TENSOR || currentSelfFieldTypes[fieldPath] == TYPE_VECTOR || 
-                           currentSelfFieldTypes[fieldPath] == TYPE_MAP);
+            const ClassFieldInfo* f = class_field(currentSelfClassName, fieldPath, nullptr);
+            tensorField = f && (f->type == TYPE_TENSOR || f->type == TYPE_VECTOR || f->type == TYPE_MAP);
         }
-        // self.ids.push(x), self.ids[0] = x, self.ids = w
-        if (tensorField && currentSelfFieldTypes[fieldPath] != TYPE_TENSOR)
-        {
-            parse_container_statement_at(currentSelfFieldSlots[fieldPath], classFieldContainers[currentSelfClassName][fieldPath],
-                                         "self." + fieldPath, token.line_no, head, tracker);
-            return;
-        }
-        // self.W[i, j] = value (element of a Tensor field)
-        if (token.token_type == LBRAC && tensorField)
-        {
-            parse_tensor_element_store(currentSelfFieldSlots[fieldPath], "self." + fieldPath, token.line_no, head, tracker);
-            return;
-        }
-        // self.field[index] = value (array write)
-        if (token.token_type == LBRAC)
-        {
-            if (!currentSelfFieldSlots.count(fieldPath))
-            {
-                report_error(token.line_no, "'" + currentSelfClassName + "' has no array field '" + fieldPath + "'");
-                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
-                {
-                    token = lexer.GetToken();
-                }
-                return;
-            }
-            token = lexer.GetToken();  // first token of index expression
-            int indexSlot = parse_expression(head, tracker);
-            token = lexer.GetToken();  // past ']' -> '='
-            token = lexer.GetToken();  // past '=' -> value expression
-            int valueSlot = parse_expression(head, tracker);
-
-            int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
-
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = ARRAY_WRITE;
-            node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
-            node->array_inst.dynamic_base = true;
-            node->array_inst.index_slot = indexSlot;
-            node->array_inst.target_index = valueSlot;
-            node->array_inst.array_size = arrSize;
-            node->array_inst.size_slot = -1;
-            node->array_inst.line_no = token.line_no;
-            append(head, tracker, node);
-            return;
-        }
-        // token = '='
-        token = lexer.GetToken();  // consume '=' → RHS
-        int resultIdx = parse_expression(head, tracker);
-
-        if (!currentSelfFieldSlots.count(fieldPath))
-        {
-            report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
-            return;
-        }
-        int slot = currentSelfFieldSlots[fieldPath];
-        VarType fType = currentSelfFieldTypes[fieldPath];
-        if (fType != TYPE_CLASS && !types_compatible(lastExprType, fType))
-            report_error(token.line_no, "cannot assign " + typeToString(lastExprType) + " to " + typeToString(fType) +
-                         " field '" + fieldPath + "' of class '" + currentSelfClassName + "'");
-        struct InstructionNode* node = new InstructionNode();
-        node->line_no = token.line_no;
-        if (fType == TYPE_FLOAT)
-        {
-            node->type = ASSIGN_F;
-            node->assign_f_inst.left_hand_side_index = slot;
-            node->assign_f_inst.operand1_index = resultIdx;
-            node->assign_f_inst.op = OPERATOR_NONE;
-        }
-        else if (fType == TYPE_DOUBLE)
-        {
-            node->type = ASSIGN_D;
-            node->assign_d_inst.left_hand_side_index = slot;
-            node->assign_d_inst.operand1_index = resultIdx;
-            node->assign_d_inst.op = OPERATOR_NONE;
-        }
-        else
-        {
-            node->type = ASSIGN;
-            node->assign_inst.left_hand_side_index = slot;
-            node->assign_inst.operand1_index = resultIdx;
-            node->assign_inst.op = OPERATOR_NONE;
-        }
-        append(head, tracker, node);
+        parse_field_statement(currentSelfHandle, currentSelfClassName, fieldPath, "self." + fieldPath, token.line_no,
+                              head, tracker);
     }
     else if (token.token_type == ID)
     {
@@ -723,66 +640,8 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             }
             else
             {
-                // obj.ids.push(x), obj.ids[0] = x, obj.ids = w (a container field)
-                if (classFieldTypes.count(name) && classFieldTypes[name].count(memberName) && 
-                    (classFieldTypes[name][memberName] == TYPE_VECTOR || classFieldTypes[name][memberName] == TYPE_MAP))
-                {
-                    parse_container_statement_at(classFieldSlots[name][memberName], classFieldContainers[varClassType[name]][memberName],
-                                                 name + "." + memberName, objLine, head, tracker);
-                    return;
-                }
-                // obj.W[i, j] = value (element of a Tensor field)
-                if (token.token_type == LBRAC && classFieldTypes.count(name) && classFieldTypes[name].count(memberName) 
-                    && classFieldTypes[name][memberName] == TYPE_TENSOR)
-                {
-                    parse_tensor_element_store(classFieldSlots[name][memberName], name + "." + memberName, objLine,
-                                               head, tracker);
-                    return;
-                }
-                // field assignment
-                if (token.token_type != EQUAL)
-                {
-                    report_error(objLine, "expected '=' or '(' after '" + name + "." + memberName + "'");
-                    while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
-                    return;
-                }
-                token = lexer.GetToken();  // consume '=' → RHS
-                int resultIdx = parse_expression(head, tracker);
-
-                if (!classFieldSlots.count(name) || !classFieldSlots[name].count(memberName))
-                {
-                    report_error(objLine, "class instance '" + name + "' has no field '" + memberName + "'");
-                    return;
-                }
-                int slot = classFieldSlots[name][memberName];
-                VarType fType = classFieldTypes[name][memberName];
-                if (fType != TYPE_CLASS && !types_compatible(lastExprType, fType))
-                    report_error(token.line_no, "cannot assign " + typeToString(lastExprType) + " to " + typeToString(fType) +
-                                 " field '" + memberName + "' of class '" + varClassType[name] + "'");
-                struct InstructionNode* node = new InstructionNode();
-                node->line_no = token.line_no;
-                if (fType == TYPE_FLOAT)
-                {
-                    node->type = ASSIGN_F;
-                    node->assign_f_inst.left_hand_side_index = slot;
-                    node->assign_f_inst.operand1_index = resultIdx;
-                    node->assign_f_inst.op = OPERATOR_NONE;
-                }
-                else if (fType == TYPE_DOUBLE)
-                {
-                    node->type = ASSIGN_D;
-                    node->assign_d_inst.left_hand_side_index = slot;
-                    node->assign_d_inst.operand1_index = resultIdx;
-                    node->assign_d_inst.op = OPERATOR_NONE;
-                }
-                else
-                {
-                    node->type = ASSIGN;
-                    node->assign_inst.left_hand_side_index = slot;
-                    node->assign_inst.operand1_index = resultIdx;
-                    node->assign_inst.op = OPERATOR_NONE;
-                }
-                append(head, tracker, node);
+                parse_field_statement(symbolTable[name], varClassType[name], memberName, name + "." + memberName, objLine,
+                                      head, tracker);
             }
         }
         else if (structTable.count(name) && lexer.peek(1).token_type == ID)

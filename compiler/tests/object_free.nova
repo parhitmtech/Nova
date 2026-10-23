@@ -1,0 +1,54 @@
+# An object frees its Tensors when its variable's declaration runs again (a loop body) and when the function
+# that created it returns. tensor_live_count() must not grow with the number of iterations or calls, and a
+# Tensor returned from an object's field must stay valid after that object is freed.
+class Lin:
+    Tensor W
+    Tensor last
+
+    def init():
+        self.W = ones(2, 2)
+
+    def forward(Tensor x) -> Tensor:
+        self.last = x
+        return x @ self.W
+
+class Hold:
+    Tensor t
+
+    def init(double v):
+        self.t = ones(1, 3) * v
+
+    def get() -> Tensor:
+        return self.t
+
+def once() -> double:
+    Lin l = Lin()
+    Tensor y = l.forward(ones(1, 2))
+    return y[0, 0]
+
+def grab(double v) -> Tensor:
+    Hold h = Hold(v)
+    return h.get()
+
+def main():
+    int i = 0
+    while (i < 20):
+        Lin l = Lin()
+        Tensor y = l.forward(ones(1, 2))
+        i += 1
+    print(tensor_live_count())
+
+    double d = 0.0
+    i = 0
+    while (i < 10):
+        d = d + once()
+        i += 1
+    print(d)
+    print(tensor_live_count())
+
+    Tensor a = grab(2.0)
+    Tensor b = grab(3.0)
+    Tensor c = grab(4.0)
+    print(a[0, 0])
+    print(b[0, 1] + c[0, 2])
+    print(a[0, 2])

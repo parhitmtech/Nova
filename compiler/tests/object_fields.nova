@@ -1,0 +1,70 @@
+# Objects are references to an object on the heap: each object has its own fields, and a method reads and
+# writes the fields of the object it is called on. Covers two objects of one class (each with its own array),
+# float and double fields, inherited fields and methods (a parent's double field read through the child), and
+# objects created inside a function called twice.
+class Stack:
+    int data[4]
+    int top
+
+    def init():
+        self.top = 0
+
+    def push(int v):
+        self.data[self.top] = v
+        self.top += 1
+
+    def peek() -> int:
+        return self.data[self.top - 1]
+
+class Shape:
+    double scale
+    float ratio
+
+    def init():
+        self.scale = 1.25
+        self.ratio = 2.25
+
+    def area() -> double:
+        return self.scale * 2.0
+
+class Square extends Shape:
+    int side
+
+    def init():
+        self.scale = 1.25
+        self.ratio = 2.25
+        self.side = 3
+
+    def scaled() -> double:
+        return self.scale * 4.0
+
+def sum_top(int a, int b) -> int:
+    Stack s = Stack()
+    s.push(a)
+    s.push(b)
+    return s.peek() + s.top
+
+def main():
+    Stack a = Stack()
+    Stack b = Stack()
+    a.push(1)
+    a.push(2)
+    b.push(10)
+    print(a.peek())
+    print(b.peek())
+    print(a.top)
+    print(b.top)
+
+    Shape sh = Shape()
+    print(sh.scale)
+    print(sh.ratio * 2.0)
+    print(sh.area())
+
+    Square sq = Square()
+    print(sq.scale)
+    print(sq.side)
+    print(sq.scaled())
+    print(sq.area())
+
+    print(sum_top(4, 5))
+    print(sum_top(7, 8))

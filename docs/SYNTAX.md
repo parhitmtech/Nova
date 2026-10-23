@@ -157,6 +157,11 @@ class Box<T>:                                 # generic class: one compiled copy
 `Point(1, 2)` builds a struct from its fields in order. `self` is always the first parameter of a
 method and has no type written.
 
+An object is a reference: `Linear l = Linear(2, 4)` creates a new object, and `l` refers to it. A method
+works on the object it is called on, so `self.W = ...` changes `l`'s field. An object is freed when the
+function that created it returns (a Tensor taken from its fields stays valid). It cannot yet be passed,
+returned or stored (stage B2/B3).
+
 ## 7. Statements
 
 All of today's control structures stay, with indentation instead of braces:
@@ -375,5 +380,12 @@ commit.
    - A3 (done): container type arguments (`Box<vector<int>>`). A copy is compiled from the class's tokens with
      each type parameter replaced by its argument's tokens, appended after the program's tokens and removed once
      compiled, so an argument can be several tokens. The constructor checks container arguments' full types.
-   - Next: B objects as references (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
+   - B1 (done): objects as references. An object lives in a runtime object heap and a variable holds its
+     handle; a method gets the handle as a hidden first parameter, so `self.x` reads and writes that object's
+     field (it used to copy every field in and out on each call). Each object has its own arrays; float and
+     double fields (also inherited ones) now keep their values. An object is freed when its declaration runs
+     again (a loop body) or when the function that created it returns. Also: returning from a function put
+     its local slots on the free list, so a later `array(n)` could overlap that function's locals.
+   - Next: B2 objects as parameters, returns and in assignment; B3 objects in fields, containers and type
+     arguments (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.
