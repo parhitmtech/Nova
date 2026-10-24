@@ -1,10 +1,10 @@
-# NovaComp — System Architecture & Technical Overview
+# NovaComp architecture
 
 NovaComp is a cloud IDE for **Nova**, a statically typed language for machine learning with a Python-like
 syntax and built-in tensors, autograd and GPU-cluster training. This document describes how the system is
-built. For running it locally see [Setup and verification](docs/SETUP.md); for production see
-[Deployment](docs/DEPLOY.md); for the language itself see [Nova syntax](docs/SYNTAX.md); for what comes next
-see the [Roadmap](docs/ROADMAP.md).
+built. For running it locally see [Setup and verification](SETUP.md); for production see
+[Deployment](DEPLOY.md); for the language itself see [Nova syntax](SYNTAX.md); for what comes next
+see the [Roadmap](ROADMAP.md).
 
 ---
 
@@ -303,7 +303,7 @@ recursive functions.
 
 ### 6.2 The Language
 
-The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
+The full reference is [docs/SYNTAX.md](SYNTAX.md). In short:
 
 - **Python-like layout:** a `:` and an indented block; `#` comments; no semicolons. The entry point is an
   `ignite:` block (or `def main()`); a file pulled in with `orbit` does not run its `ignite` block.
@@ -490,7 +490,7 @@ Repo hygiene, Backend unit tests, Compiler (g++), Compiler (clang++), Compiler (
 lint and build, Frontend e2e (Playwright), and Docker images. The language tests run twice in each compiler
 job, with and without `--optimize`. When CI passes on `main`, `.github/workflows/deploy.yml` builds the
 server and worker images, pushes them to GHCR and rolls them out to the EC2 host with
-`deploy/deploy.sh` (see [docs/DEPLOY.md](docs/DEPLOY.md)).
+`deploy/deploy.sh` (see [docs/DEPLOY.md](DEPLOY.md)).
 
 ---
 
@@ -515,7 +515,7 @@ NovaComp/
 │   │   └── integrations/       # sol.cc (SOL over SSH), hf.cc (HuggingFace)
 │   ├── stdlib/                 # std.math, novatorch.{nn,optim,data}, collections, math, assert (*.nova)
 │   ├── tests/                  # golden tests (*.nova + *.expected / *.error) and run.js
-│   └── benchmarks/             # Nova vs. C vs. Python
+│   └── benchmarks/             # Nova vs. C vs. Python; compare/ is the like-for-like suite
 │
 ├── server/                     # Node.js + Express backend
 │   ├── src/
@@ -548,7 +548,7 @@ NovaComp/
 │   └── vite.config.ts
 │
 ├── examples/                   # Nova example programs + generate_mnist_data.py
-├── docs/                       # SETUP.md, DEPLOY.md, SYNTAX.md, ROADMAP.md, REVIEW.md
+├── docs/                       # ARCHITECTURE, SETUP, DEPLOY, SYNTAX, ROADMAP, BENCHMARKS, COMPARISON, REVIEW
 ├── deploy/                     # compose.prod.yml + deploy.sh for the EC2 host
 ├── tools/                      # sol-tunnel/ (Start/Stop-SolTunnel.ps1), syntax/ (source migration scripts)
 ├── scripts/check-repo-hygiene.js
