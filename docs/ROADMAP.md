@@ -3,6 +3,20 @@
 Where NovaComp is heading after the syntax redesign (steps 1–9 and stages A1–A3 are done; see
 [SYNTAX.md](SYNTAX.md)). Items are in order: each one builds on the ones before it.
 
+## 0. Fix first
+
+These issues turned up in the like-for-like benchmarks. Each has a minimal reproduction in
+[BENCHMARKS.md](BENCHMARKS.md#issues-found), and each fix should land with a golden test:
+
+- `--optimize` never finishes on a loop that does arithmetic on a vector element.
+- `int` is 32-bit and overflows silently.
+- Memoization treats a function as pure without checking the functions it calls, so their side effects are
+  skipped.
+- Freed `tensor_heap` entries are never reused, so long training runs outgrow the 256 MB worker limit
+  (generational handles).
+- Parts of SYNTAX.md's first example are not implemented yet (`10_000`, `t.grad`, `print(t)`, string
+  escapes).
+
 ## 1. Finish the language
 
 - **B: objects as references.** Objects get a handle into a runtime object heap, like Python, Java and C#, in
