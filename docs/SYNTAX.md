@@ -403,6 +403,8 @@ commit.
      containers (`vector<P>`, `map<K, P>`) and as type arguments (`Box<P>`, `Box<vector<P>>`); `.x` / `.m()`
      on any object value, `self.m()` and `return self`; recursive methods (a method call now saves and
      restores the method's slots, as a function call does). Fields and elements count references too.
-   - Next: B4 freeing containers (a container is never freed yet, so one made in a loop keeps its elements
-     alive). See [ROADMAP.md](ROADMAP.md).
+   - B4 (done): containers are reference-counted like objects and freed, with their elements' references,
+     when nothing refers to them (a container made in a loop used to keep its elements alive for good).
+   - Next: an empty value for object fields (`none`), then passing a subclass where its parent is expected.
+     See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

@@ -24,13 +24,16 @@ InstructionNode* exec_tensor_call(InstructionNode* pc);
 InstructionNode* exec_container_call(InstructionNode* pc);  // the CON_* ops (interp_containers.cc)
 InstructionNode* exec_object_call(InstructionNode* pc);     // the OBJ_* ops (interp_objects.cc)
 void objects_enter_call();  // a call starts: it gets its own object references
-void objects_bind_param(int slot, int h);  // an object parameter: one of the call's references
+void objects_bind_param(int slot, int h, VarType t);   // t: an object or a container
 void objects_retain(int h);                // an object field's / container element's reference
 void objects_release(int h);
 void objects_add_temp(int h);              // a value read from a field or element: the call's temporary
 void objects_take_temp(int h);             // v.pop(): the element's reference becomes the call's temporary
-void objects_exit_call(int returned);      // it returns: its references go (an object it returns, if not 
-                                           // 0, becomes the caller's temporary first)
+void objects_exit_call(int returned, VarType type);
+void objects_add_container_temp(int h);             // a new container: the running call's temporary
+bool containers_live(int h);                        // containers are counted like objects (interp_containers.cc)
+void containers_retain(int h);      
+void containers_release(int h);                     // frees it, and releases its elements, at 0
 InstructionNode* exec_tensor_release(InstructionNode* pc);
 InstructionNode* exec_hf_infer(InstructionNode* pc);
 InstructionNode* exec_sol_call(InstructionNode* pc);

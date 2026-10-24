@@ -106,6 +106,7 @@ int emit_container_new(const ContainerInfo& info, int line, struct InstructionNo
     int handle = emit_container_op(info.isMap ? CON_MAP_NEW : CON_VEC_NEW, args, types, TYPE_INT, line, head, tracker);
     lastExprType = info.isMap ? TYPE_MAP : TYPE_VECTOR;
     lastExprContainer = info;
+    lastExprTemp = true;  // a new container: a store takes it, or it is released
     return handle;
 }
 
@@ -142,17 +143,6 @@ static int parse_container_value(const ContainerInfo& info, const string& name, 
         return -1;
     }
     return slot;
-}
-
-static void emit_copy(int dst, int src, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
-{
-    struct InstructionNode* node = new InstructionNode();
-    node->line_no = line;
-    node->type = ASSIGN;
-    node->assign_inst.left_hand_side_index = dst;
-    node->assign_inst.operand1_index = src;
-    node->assign_inst.op = OPERATOR_NONE;
-    append(head, tracker, node);
 }
 
 // A container op as a TENSOR_CALL. resultType says where the result goes (TYPE_UNKNOWN: no result): a float or
@@ -245,10 +235,12 @@ void parse_container_declaration(struct InstructionNode*& head, struct Instructi
     }
     token = lexer.GetToken();  // '=' or ';'
     int handle;
+    bool temp = true;  // vector<int> v: a new, empty container
     if (token.token_type == EQUAL)
     {
         token = lexer.GetToken();  // first token of the value
         handle = parse_container_value(info, name, line, head, tracker);
+        temp = lastExprTemp;
         if (handle < 0)
         {
             while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
@@ -262,7 +254,7 @@ void parse_container_declaration(struct InstructionNode*& head, struct Instructi
     symbolTable[name] = alloc_slot();
     typeTable[name] = info.isMap ? TYPE_MAP : TYPE_VECTOR;
     containerTable[name] = info;
-    emit_copy(symbolTable[name], handle, line, head, tracker);
+    emit_ref_store(symbolTable[name], handle, typeTable[name], temp, line, head, tracker);
 }
 
 // [i] / [k] or .method(...) on a container value (a variable, a field, a call's result), with token on the '['
@@ -357,6 +349,7 @@ int parse_container_expression(struct InstructionNode*& head, struct Instruction
     // The container itself, as a value: passed, returned or assigned (the handle; both sides share it)
     lastExprType = info.isMap ? TYPE_MAP : TYPE_VECTOR;
     lastExprContainer = info;
+    lastExprTemp = false;  // the variable keeps its reference
     return handle;
 }
 
@@ -442,7 +435,7 @@ void parse_container_statement_at(int handle, const ContainerInfo& info, const s
         // v = w: v now names the same container as w
         token = lexer.GetToken();  // first token of the value
         int value = parse_container_value(info, name, line, head, tracker);
-        if (value >= 0) emit_copy(handle, value, line, head, tracker);
+        if (value >= 0) emit_ref_store(handle, value, lastExprType, lastExprTemp, line, head, tracker);
         while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
         return;
     }

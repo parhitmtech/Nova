@@ -124,7 +124,8 @@ int emit_object_new(const string& cls, int line, struct InstructionNode*& head, 
         else if (f.type == TYPE_VECTOR || f.type == TYPE_MAP)
         {
             int container = emit_container_new(classFieldContainers[cls][f.name], line, head, tracker);
-            emit_set(handle, i, container, TYPE_INT, line, head, tracker);
+            emit_set(handle, i, container, f.type, line, head, tracker);  // the field's reference
+            release_temp(container, f.type, line, head, tracker);
         }
         else if (f.type == TYPE_TENSOR)
         {
@@ -135,8 +136,9 @@ int emit_object_new(const string& cls, int line, struct InstructionNode*& head, 
     return handle;
 }
 
-// An object op that leaves lastExpr* alone (it runs after a value has been parsed)
-static void emit_object_effect(TensorOp op, const vector<int>& args, int result, int line,
+// An object op that leaves lastExpr* alone (it runs after a value has been parsed). types are the args' types
+// (an object's or a container's tells the runtimewhich kind of reference it is).
+static void emit_object_effect(TensorOp op, const vector<int>& args, const vector<VarType>& types, int result, int line,
                                struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     struct InstructionNode* node = new InstructionNode();
@@ -148,9 +150,30 @@ static void emit_object_effect(TensorOp op, const vector<int>& args, int result,
     for (int i = 0; i < (int)args.size(); i++)
     {
         node->tensor_call_inst.arg_slots[i] = args[i];
-        node->tensor_call_inst.arg_types[i] = TYPE_INT;
+        node->tensor_call_inst.arg_types[i] = types[i];
     }
     append(head, tracker, node);
+}
+
+bool is_reference_type(VarType t) { return t == TYPE_CLASS || t == TYPE_VECTOR || t == TYPE_MAP; }
+
+// slot = value, an object or a container (type): the variable now refers to it (a temporary's reference becomes
+// the variable's), and what it referred to before loses that reference.
+void emit_ref_store(int slot, int value, VarType type, bool temp, int line, struct InstructionNode*& head,
+                    struct InstructionNode*& tracker)
+{
+    emit_object_effect(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, {TYPE_INT, type}, slot, line, head, tracker);
+}
+
+// Drops a temporary object or container (type) that nothing took
+void release_temp(int slot, VarType type, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    emit_object_effect(OBJ_RELEASE, {slot}, {type}, -1, line, head, tracker);
+}
+
+void release_call_temps(const CallArgs& a, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    for (size_t i = 0; i < a.temps.size(); i++) release_temp(a.temps[i], a.tempTypes[i], line, head, tracker);
 }
 
 // slot = the object in value: the variable now refers to it (a temporary's reference becomes the variable's), and
@@ -158,13 +181,13 @@ static void emit_object_effect(TensorOp op, const vector<int>& args, int result,
 void emit_object_store(int slot, int value, bool temp, int line, struct InstructionNode*& head,
                        struct InstructionNode*& tracker)
 {
-    emit_object_effect(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, slot, line, head, tracker);
+    emit_ref_store(slot, value, TYPE_CLASS, temp, line, head, tracker);
 }
 
 void release_object_temps(const vector<int>& temps, int line, struct InstructionNode*& head,
                           struct InstructionNode*& tracker)
 {
-    for (int t : temps) emit_object_effect(OBJ_RELEASE, {t}, -1, line, head, tracker);
+    for (int t : temps) release_temp(t, TYPE_CLASS, line, head, tracker);
 }
 
 // With token on the first argument (or ')'): a call's arguments, parsed up to and past the ')'.
@@ -177,7 +200,11 @@ CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionN
         a.types.push_back(lastExprType);
         a.containers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
         a.classes.push_back(lastExprType == TYPE_CLASS ? lastExprClass : "");
-        if (lastExprType == TYPE_CLASS && lastExprTemp) a.temps.push_back(a.slots.back());
+        if (is_reference_type(lastExprType) && lastExprTemp)
+        {
+            a.temps.push_back(a.slots.back());
+            a.tempTypes.push_back(lastExprType);
+        }
         if (token.token_type == COMMA) token = lexer.GetToken();
     }
     token = lexer.GetToken();  // past ')'
@@ -232,7 +259,7 @@ int parse_constructor_expression(const string& cls, int line, struct Instruction
         }
         emit_method_call(cls, "init", handle, a.slots, a.types, line, head, tracker);
     }
-    release_object_temps(a.temps, line, head, tracker);
+    release_call_temps(a, line, head, tracker);
     lastExprType = TYPE_CLASS;
     lastExprClass = cls;
     lastExprTemp = true;
@@ -274,7 +301,11 @@ int object_field_read(int handle, const string& cls, const string& field, int li
     bool inDmem = (t == TYPE_FLOAT || t == TYPE_DOUBLE);
     int r = emit_object_op(inDmem ? OBJ_GET_D : OBJ_GET, {handle, int_constant(index)}, {TYPE_INT, TYPE_INT}, t, line,
                            head, tracker);
-    if (t == TYPE_VECTOR || t == TYPE_MAP) lastExprContainer = classFieldContainers[cls][field];
+    if (t == TYPE_VECTOR || t == TYPE_MAP) 
+    {
+        lastExprContainer = classFieldContainers[cls][field];
+        lastExprTemp = true;  // one more reference (OBJ_GET), as for an object field
+    }
     if (t == TYPE_CLASS)
     {
         lastExprClass = f->struct_type;  // the field's class
@@ -325,7 +356,7 @@ void object_field_write(int handle, const string& cls, const string& field, int 
         return;
     }
     emit_set(handle, index, value, valueType, line, head, tracker);
-    if (valueTemp) release_object_temps({value}, line, head, tracker);  // the field took its own reference
+    if (valueTemp) release_temp(value, valueType, line, head, tracker);  // the field took its own reference
 }
 
 // An element of an array field, base being the slot that holds where the field's block starts. With value < 0
@@ -382,7 +413,7 @@ void parse_field_statement(int handle, const string& cls, const string& field, c
         int value = parse_expression(head, tracker);
         VarType valueType = lastExprType;
         ContainerInfo valueContainer = lastExprContainer;
-        bool temp = (valueType == TYPE_CLASS && lastExprTemp);
+        bool temp = is_reference_type(valueType) && lastExprTemp;
         object_field_write(handle, cls, field, value, valueType, valueContainer, lastExprClass, temp, shown, line,
                            head, tracker);
         return;  // token is on ';'
@@ -399,8 +430,10 @@ void parse_field_statement(int handle, const string& cls, const string& field, c
     if (f->type == TYPE_VECTOR || f->type == TYPE_MAP)
     {
         // self.ids.push(x), self.ids[0] = x
+        VarType type = f->type;
         int container = object_field_read(handle, cls, field, line, head, tracker);
         parse_container_statement_at(container, classFieldContainers[cls][field], shown, line, head, tracker);
+        release_temp(container, type, line, head, tracker);
         return;
     }
     if (f->type == TYPE_TENSOR && token.token_type == LBRAC)
@@ -499,7 +532,11 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     }
     append(head, tracker, copy);
     lastExprType = retType;
-    if (retType == TYPE_VECTOR || retType == TYPE_MAP) lastExprContainer = classMethodReturnContainer[cls][method];
+    if (retType == TYPE_VECTOR || retType == TYPE_MAP)
+    {
+        lastExprContainer = classMethodReturnContainer[cls][method];
+        lastExprTemp = true;  // the call's result: a temporary
+    }
     if (retType == TYPE_CLASS)
     {
         lastExprClass = classMethodReturnClass[cls][method];
@@ -553,5 +590,5 @@ void finish_call_statement(int result, int line, struct InstructionNode*& head, 
         if (temp) release_object_temps({result}, line, head, tracker);
         return;
     }
-    if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, line, head, tracker);
+    if (is_reference_type(lastExprType) && lastExprTemp) release_temp(result, lastExprType, line, head, tracker);
 }

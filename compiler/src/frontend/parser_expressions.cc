@@ -145,13 +145,17 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
     append(head, tracker, copyRetNode);
     lastExprType = funcRetType;
-    if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) lastExprContainer = functionReturnContainer[funcName];
+    if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) 
+    {
+        lastExprContainer = functionReturnContainer[funcName];
+        lastExprTemp = true;  // the call's result: a temporary
+    }
     if (funcRetType == TYPE_CLASS)
     {
         lastExprClass = functionReturnClass[funcName];
         lastExprTemp = true;
     }
-    release_object_temps(args.temps, token.line_no, head, tracker);
+    release_call_temps(args, token.line_no, head, tracker);
     return freshSlot;
 }
 
@@ -588,7 +592,12 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         else if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)  // make(3).size(), make(3)[0]
         {
             ContainerInfo info = lastExprContainer;
-            v = parse_container_postfix(v, info, container_type_name(info), token.line_no, head, tracker);
+            VarType type = lastExprType;
+            bool temp = lastExprTemp;
+            int line = token.line_no;
+            int r = parse_container_postfix(v, info, container_type_name(info), line, head, tracker);
+            if (temp) release_temp(v, type, line, head, tracker);  // a temporary container, once used
+            v = r;
         }
         else if (lastExprType == TYPE_CLASS && token.token_type == DOT)  // make().x, self.head.value, v[0].move(1)
         {

@@ -14,9 +14,9 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
     reference counting: each call owns the references its variables, parameters and temporaries hold.
   - B3 (done): objects in fields and containers, and class type arguments (`Box<P>`, `vector<P>`); `.x` /
     `.m()` on any object value (`make().x`, `self.area()`, `return self`); recursive methods.
-  - B4: freeing containers. A container is never freed yet, so a `vector` made in a loop keeps its elements
-    (Tensors, objects) alive. Containers get the reference counting objects have: a call's variables,
-    parameters and temporaries, object fields and container elements each hold a reference.
+  - B4 (done): containers are reference-counted as objects are (a call's variables, parameters and
+    temporaries, and object fields each hold a reference), and freed with their elements' references when
+    nothing refers to them, so a `vector` made in a loop no longer keeps its elements alive.
   - Then: an empty value for object fields (a `none`, and a way to test for it), so a linked list can end
     without keeping its own size.
   - Small gaps found on the way: passing a subclass where its parent is expected (needs virtual methods);

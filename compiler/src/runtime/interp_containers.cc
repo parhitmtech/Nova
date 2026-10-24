@@ -21,9 +21,12 @@ struct Container
     vector<double> items;          // vector
     map<long long, double> intKeys;  // map<int, V>
     map<string, double> stringKeys;  // map<string, V>
+    int refs = 0;                    // counted as objects are (interp_objects.cc)
+    bool freed = false;
 };
 
 static vector<Container> container_heap;
+static vector<int> free_containers;  // freed containers' handles, reused by the next CON_*_NEW
 
 // The value in a slot, by the slot's type: float / double live in fmem / dmem, everything else in mem.
 static double read_value(int slot, VarType t)
@@ -50,7 +53,28 @@ static Container& container_at(int h, int line)
 {
     if (h <= 0 || h >= (int)container_heap.size())
         tensor_shape_error(line, "container used before it was created");
+    if (container_heap[h].freed) tensor_shape_error(line, "container used after it was freed");
     return container_heap[h];
+}
+
+bool containers_live(int h) { return h > 0 && h < (int)container_heap.size() && !container_heap[h].freed; }
+
+void containers_retain(int h)
+{
+    if (containers_live(h)) container_heap[h].refs++;
+}
+
+// One reference fewer; at 0 the container is freed and each element loses the reference the container held.
+void containers_release(int h)
+{
+    if (!containers_live(h) || --container_heap[h].refs > 0) return;
+    Container c = container_heap[h];  // a copy: releasing elements can free other containers
+    container_heap[h] = Container();
+    container_heap[h].freed = true;
+    free_containers.push_back(h);
+    for (double v : c.items) release_element(c, v);
+    for (auto& kv : c.intKeys) release_element(c, kv.second);
+    for (auto& kv : c.stringKeys) release_element(c, kv.second);
 }
 
 // A map key from a slot: an int, or the string a strMem index points at.
@@ -127,8 +151,11 @@ InstructionNode* exec_container_call(InstructionNode* pc)
             c.key = c.isMap ? (VarType)mem[a[0]] : TYPE_UNKNOWN;
             c.elem = (VarType)mem[a[c.isMap ? 1 : 0]];
             if (container_heap.empty()) container_heap.push_back(Container());  // handle 0: "no container"
-            container_heap.push_back(c);
-            mem[tc.result_slot] = (int)container_heap.size() - 1;
+            int h;
+            if (!free_containers.empty()) { h = free_containers.back(); free_containers.pop_back(); container_heap[h] = c; }
+            else { h = (int)container_heap.size(); container_heap.push_back(c); }
+            mem[tc.result_slot] = h;
+            objects_add_container_temp(h);  // a temporary: a store takes it, or it is released
             break;
         }
         case CON_PUSH:  // v.push(x)

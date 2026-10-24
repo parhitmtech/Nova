@@ -776,6 +776,6 @@ int parse_method_call_on(int objectSlot, const string& className, const string& 
     }
     int result = emit_method_call(lookupClass, methodName, objectSlot, args.slots, args.types, argLine,
                                   head, tracker);
-    release_object_temps(args.temps, argLine, head, tracker);
+    release_call_temps(args, argLine, head, tracker);
     return result;
 }

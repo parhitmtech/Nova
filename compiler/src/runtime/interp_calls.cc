@@ -188,7 +188,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                 // two sides' independent TENSOR_RELEASE insertions (see insert_tensor_releases) each
                 // own one reference instead of double-freeing a single one.
                 if (g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
-                if (pt == TYPE_CLASS) objects_bind_param(pSlot, mem[pSlot]);
+                if (pt == TYPE_CLASS || pt == TYPE_VECTOR || pt == TYPE_MAP) objects_bind_param(pSlot, mem[pSlot], pt);
             }
 
             callStack.push(frame);
@@ -274,7 +274,9 @@ InstructionNode* exec_ret(InstructionNode* pc)
             }
 
             // The call's object references go; an object it returns is handed to the caller first
-            objects_exit_call(frame.dest_type == TYPE_CLASS ? (int)capturedRetVals[0] : 0);
+            VarType rt = frame.dest_type;
+            bool reference = (rt == TYPE_CLASS || rt == TYPE_VECTOR || rt == TYPE_MAP);
+            objects_exit_call(reference ? (int)capturedRetVals[0] : 0, rt);
 
             // memo cache stays int-only (safe: edit 2 keeps non-int functions out)
             if (frame.is_memoizable && frame.memo_func)

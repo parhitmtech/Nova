@@ -126,9 +126,15 @@ struct CallArgs
     vector<VarType> types;
     vector<ContainerInfo> containers;  // an argument's container type, when it is one
     vector<string> classes;  // an argument's class, when it is an object
-    vector<int> temps;
+    vector<int> temps;       // the temporary objectsand containers among them ...
+    vector<VarType> tempTypes;      // ... and their types
 };
 CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionNode*& tracker);  // token ends past ')'
+bool is_reference_type(VarType t);  // an object or a container: counted references
+void emit_ref_store(int slot, int value, VarType type, bool temp, int line, struct InstructionNode*& head,
+                    struct InstructionNode*& tracker);
+void release_temp(int slot, VarType type, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+void release_call_temps(const CallArgs& a, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
 void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line);
 int parse_constructor_expression(const string& cls, int line, struct InstructionNode*& head,
                                  struct InstructionNode*& tracker);  // token on '('

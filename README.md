@@ -327,8 +327,8 @@ The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
 Containers are references: they can be passed to functions, returned and assigned (sharing one container).
 They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Objects are references
 too: they can be passed, returned, assigned, stored in fields and containers (`vector<Node>`), and used as
-type arguments (`Box<Layer>`). Known limit, being worked on: a container is never freed yet, so one created
-in a loop keeps its elements alive.
+type arguments (`Box<Layer>`). Objects and containers are reference-counted and freed when nothing refers to
+them. Known limit, being worked on: an object field cannot be tested for being unset yet (no `none`).
 
 ---
 
