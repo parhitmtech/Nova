@@ -488,7 +488,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             retExprTypes.push_back(lastExprType);
             ContainerInfo retContainer = lastExprContainer;  // when the first value is a container
             string retClass = (lastExprType == TYPE_CLASS) ? lastExprClass : "";  // ... or an object
-while (token.token_type == COMMA)
+            while (token.token_type == COMMA)
             {
                 token = lexer.GetToken();
                 retExprs.push_back(parse_expression(head, tracker));
@@ -562,20 +562,21 @@ while (token.token_type == COMMA)
             while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
             return;
         }
-        token = lexer.GetToken();  // consume SELF → '.'
-        string fieldPath = "";
-        bool tensorField = false;
-        while (token.token_type == DOT && !tensorField)
+        token = lexer.GetToken();  // past 'self' -> '.'
+        token = lexer.GetToken();  // the field's or method's name
+        string member = token.lexeme;
+        int line = token.line_no;
+        token = lexer.GetToken();
+        if (token.token_type == LPAREN)
         {
-            token = lexer.GetToken();  // consume '.' → field segment
-            if (!fieldPath.empty()) fieldPath += ".";
-            fieldPath += token.lexeme;
-            token = lexer.GetToken();  // consume field segment → next token
-            const ClassFieldInfo* f = class_field(currentSelfClassName, fieldPath, nullptr);
-            tensorField = f && (f->type == TYPE_TENSOR || f->type == TYPE_VECTOR || f->type == TYPE_MAP);
+            // self.reset(): a method on this object
+            int result = parse_method_call_on(currentSelfHandle, currentSelfClassName, member, head, tracker);
+            finish_call_statement(result, line, head, tracker);
         }
-        parse_field_statement(currentSelfHandle, currentSelfClassName, fieldPath, "self." + fieldPath, token.line_no,
-                              head, tracker);
+        else 
+        {
+            parse_field_statement(currentSelfHandle, currentSelfClassName, member, "self." + member, line, head, tracker);
+        }
     }
     else if (token.token_type == ID)
     {
@@ -649,7 +650,7 @@ while (token.token_type == COMMA)
             if (token.token_type == LPAREN)
             {
                 int result = parse_method_call(name, memberName, head, tracker);
-                if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, objLine, head, tracker);
+                finish_call_statement(result, objLine, head, tracker);  // t.add(a).add(b)
                 // token is now ';'
             }
             else
@@ -673,7 +674,7 @@ while (token.token_type == COMMA)
             // body is being parsed
             int line = token.line_no;
             int result = parse_function_call(head, tracker);
-            if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, line, head, tracker);  // unused
+            finish_call_statement(result, line, head, tracker);  // make().x = 1, or the result is unused
         }
         else if (lexer.peek(1).token_type == LPAREN)
         {

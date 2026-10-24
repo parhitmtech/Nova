@@ -484,20 +484,25 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             lastExprType = TYPE_UNKNOWN;
             return 0;
         }
-        token = lexer.GetToken();  // consume SELF → '.'
-        string fieldPath = "";
-        bool tensorField = false;
-        while (token.token_type == DOT && !tensorField)
+        token = lexer.GetToken();  // past 'self'
+        if (token.token_type != DOT)
         {
-            token = lexer.GetToken();  // consume '.' → field segment
-            if (!fieldPath.empty()) fieldPath += ".";
-            fieldPath += token.lexeme;
-            token = lexer.GetToken();  // consume field segment → next token
-            // a Tensor or container field ends the path: a '.' or '[' after it is a postfix (self.W.T, self.ids[0])
-            const ClassFieldInfo* f = class_field(currentSelfClassName, fieldPath, nullptr);
-            tensorField = f && (f->type == TYPE_TENSOR || f->type == TYPE_VECTOR || f->type == TYPE_MAP);
+            // self as a value: return self, f(self)
+            lastExprType = TYPE_CLASS;
+            lastExprClass = currentSelfClassName;
+            lastExprTemp = false;
+            return currentSelfHandle;
         }
-        return parse_field_expression(currentSelfHandle, currentSelfClassName, fieldPath, token.line_no, head, tracker);
+        token = lexer.GetToken();  // the field's or method's name
+        string member = token.lexeme;
+        int line = token.line_no;
+        token = lexer.GetToken();
+        if (token.token_type == LPAREN)
+        {
+            return parse_method_call_on(currentSelfHandle, currentSelfClassName, member, head, tracker);  // self.area()
+        }
+        return parse_field_expression(currentSelfHandle, currentSelfClassName, member, line, head, tracker);  // postfixes
+                                                                                    // on it (self.W.T) come from parse_factor
     }
     else if (token.token_type == FLOAT_TYPE || token.token_type == DOUBLE_TYPE || token.token_type == INT_TYPE)
     {
@@ -569,8 +574,8 @@ static int parse_tensor_postfix(int t, struct InstructionNode*& head, struct Ins
     return emit_tensor_op(op, "'." + member + "'", {t}, {TYPE_TENSOR}, {}, line, head, tracker);
 }
 
-// A primary followed by any tensor or container postfixes, so x.T.T, w[0, 1], matmul(a, b)[0, 0] and
-// make(3).size() all work.
+// A primary followed by any tensor, container or object postfixes,so x.T.T, w[0, 1], matmul(a, b)[0, 0],
+// make(3).size() and make().x all work.
 int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int v = parse_primary(head, tracker);
@@ -584,6 +589,10 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         {
             ContainerInfo info = lastExprContainer;
             v = parse_container_postfix(v, info, container_type_name(info), token.line_no, head, tracker);
+        }
+        else if (lastExprType == TYPE_CLASS && token.token_type == DOT)  // make().x, self.head.value, v[0].move(1)
+        {
+            v = parse_object_postfix(v, head, tracker);
         }
         else
         {

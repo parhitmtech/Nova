@@ -4,9 +4,10 @@
 // runtime only needs to know which slot space (mem / fmem / dmem) a value comes from or goes to, and which
 // fields hold a Tensor (the object owns a reference to it).
 //
-// Objects are reference-counted. Every reference belongs to a running call: a variable or parameter slot of that
-// call, or a temporary (a new object, or one a call returned) that a store will take or OBJ_RELEASE will drop.
-// A call's references are dropped when it returns, and an object is freed when its count reaches 0. A store
+// Objects are reference-counted. A reference belongs to a running call (a variable or parameter slot of that
+// call, or a temporary: a new object, one a call returned, one read from a field or element, which a store will take or
+// OBJ_RELEASE will drop), or to an object field or a container element. A call's references are dropped
+// when it returns, and an object is freed when its count reaches 0. A store
 // releases what its slot referred to before by looking up the slot's reference, not the value in the slot, so a
 // stale value (a slot restored after a call, a recursive call's caller's object) is never released by mistake.
 #include <cstdio>
@@ -22,6 +23,7 @@ struct Object
 {
     vector<double> fields;
     vector<bool> ownsTensor;  // field i holds a Tensor this object has a reference to
+    vector<bool> ownsObject;  // ... or an object
     int refs = 0;
     bool freed = false;
 };
@@ -39,15 +41,28 @@ static vector<vector<ObjectRef>> call_refs(1);  // each running call's reference
 
 static bool live(int h) { return h > 0 && h < (int)object_heap.size() && !object_heap[h].freed; }
 
+// Frees h, and every object that then has no references left because only h's fields referred to it (a list's
+// nodes: one at a time, not recursively, so a long list cannot overflow the stack).
 static void free_object(int h)
 {
-    Object& o = object_heap[h];
-    for (size_t i = 0; i < o.fields.size(); i++)
-        if (o.ownsTensor[i]) tensor_release((int)o.fields[i]);
-    o.fields.clear();
-    o.ownsTensor.clear();
-    o.freed = true;
-    free_handles.push_back(h);
+    vector<int> pending = {h};
+    while (!pending.empty())
+    {
+        int x = pending.back();
+        pending.pop_back();
+        Object& o = object_heap[x];
+        for (size_t i = 0;i < o.fields.size(); i++)
+        {
+            if (o.ownsTensor[i]) tensor_release((int)o.fields[i]);
+            int f = (int)o.fields[i];
+            if (o.ownsObject[i] && live(f) && --object_heap[f].refs <= 0) pending.push_back(f);
+        }
+        o.fields.clear();
+        o.ownsTensor.clear();
+        o.ownsObject.clear();
+        o.freed = true;
+        free_handles.push_back(x);
+    }
 }
 
 static void add_ref(vector<ObjectRef>& refs, int slot, int h)
@@ -81,6 +96,23 @@ static int take_ref(int slot, int h)
 void objects_enter_call() { call_refs.emplace_back(); }
 
 void objects_bind_param(int slot, int h) { add_ref(call_refs.back(), slot, h); }
+
+// A reference that belongs to no call: an object field's, or a container element's 
+void objects_retain(int h)
+{
+    if (live(h)) object_heap[h].refs++;
+}
+
+void objects_release(int h) { drop(h); }
+
+// A value read from a field or an element: a temporary of the running call
+void objects_add_temp(int h) { add_ref(call_refs.back(), TEMP, h); }
+
+// v.pop(): the element's reference becomes the running call's temporary
+void objects_take_temp(int h)
+{
+    if (live(h)) call_refs.back().push_back({TEMP, h});
+}
 
 void objects_exit_call(int returned)
 {
@@ -120,6 +152,7 @@ InstructionNode* exec_object_call(InstructionNode* pc)
             Object o;
             o.fields.assign(mem[a[0]], 0.0);
             o.ownsTensor.assign(mem[a[0]], false);
+            o.ownsObject.assign(mem[a[0]], false);  // an object field starts unset (0)
             int h;
             if (!free_handles.empty()) { h = free_handles.back(); free_handles.pop_back(); object_heap[h] = o; }
             else { h = (int)object_heap.size(); object_heap.push_back(o); }
@@ -147,6 +180,7 @@ InstructionNode* exec_object_call(InstructionNode* pc)
             int i = mem[a[1]];
             double v = o.fields[i];
             if (o.ownsTensor[i]) tensor_retain((int)v);  // the result slot is one more owner
+            if (o.ownsObject[i]) objects_add_temp((int)v);  // ...and of an object, a temporary 
             if (tc.op == OBJ_GET_D) dmem[tc.result_slot] = v;
             else mem[tc.result_slot] = (int)v;
             break;
@@ -157,11 +191,16 @@ InstructionNode* exec_object_call(InstructionNode* pc)
             int i = mem[a[1]];
             double v = read_value(a[2], tc.arg_types[2]);
             bool tensor = (tc.arg_types[2] == TYPE_TENSOR);
+            bool object = (tc.arg_types[2] == TYPE_CLASS);
             if (tensor) tensor_retain((int)v);  // retain before releasing: storing the same tensor back is safe
+            if (object) objects_retain((int)v);
             if (o.ownsTensor[i]) tensor_release((int)o.fields[i]);
+            int old = o.ownsObject[i]? (int)o.fields[i] : 0;
             o.fields[i] = v;
             o.ownsTensor[i] = tensor;
-            break;
+            o.ownsObject[i] = object;
+            drop(old);  // last: it can free objects (o too, if only that object referred to it)
+            break; 
         }
         default: break;
     }

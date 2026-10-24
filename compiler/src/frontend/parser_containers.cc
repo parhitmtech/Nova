@@ -3,7 +3,7 @@
 // v[i], m[k] and method call is type-checked here and compiled to a TENSOR_CALL with a CON_* op.
 #include "parser_internal.h"
 
-static const char* ELEMENT_TYPES = "int, float, double, bool, string or Tensor";
+static const char* ELEMENT_TYPES = "int, float, double, bool, string, Tensor or a class";
 
 bool at_container_type()
 {
@@ -31,6 +31,11 @@ bool parse_container_type(ContainerInfo& info)
         return false;
     }
     info.elem = type_of_keyword(args.back().token_type);
+    if (info.elem == TYPE_UNKNOWN && args.back().token_type == ID && classTable.count(args.back().lexeme))
+    {
+        info.elem = TYPE_CLASS;  // vector<Point>
+        info.elemClass = args.back().lexeme;
+    }
     if (info.elem == TYPE_UNKNOWN)
     {
         report_error(line, "'" + args.back().lexeme + "' cannot be an element type: use " + ELEMENT_TYPES);
@@ -48,22 +53,30 @@ bool parse_container_type(ContainerInfo& info)
     return true;
 }
 
+// The element type's name: a built-in type, or the elements' class
+static string element_name(const ContainerInfo& info)
+{
+    return info.elem == TYPE_CLASS ? info.elemClass : typeToString(info.elem);
+}
+
 string container_type_name(const ContainerInfo& info)
 {
-    return info.isMap ? "map<" + typeToString(info.key) + ", " + typeToString(info.elem) + ">"
-                      : "vector<" + typeToString(info.elem) + ">";
+    return info.isMap ? "map<" + typeToString(info.key) + ", " + element_name(info) + ">"
+                      : "vector<" + element_name(info) + ">";
 }
 
 // The algorithm methods need ordered (or at least comparable) elements: everything but a Tensor, and for
-// sum() a number. Reports and returns false when info's element type does not allow the method.
+// sum() a number. Objects compare by identity only, so they allow contains() and index_of(). Reports and
+// returns false when info's element type does not allow the method.
 static bool element_type_allows(const ContainerInfo& info, const string& name, const string& method, int line)
 {
     bool ok = (method == "sum") ? (info.elem == TYPE_INT || info.elem == TYPE_FLOAT || info.elem == TYPE_DOUBLE) 
-                                : (info.elem != TYPE_TENSOR);
-    if (!ok)
+                                : (info.elem == TYPE_CLASS) ? (method == "contains" || method == "index_of")
+                                                            : (info.elem != TYPE_TENSOR);
+if (!ok)
     {
         report_error(line, "'" + name + "." + method + "()' needs " + (method == "sum" ? "numbers" : "comparable elements") + 
-                           ", but '" + name + "' holds " + typeToString(info.elem));
+                           ", but '" + name + "' holds " + element_name(info));
     }
     return ok;
 }
@@ -181,15 +194,34 @@ static int parse_index(const ContainerInfo& info, const string& name, int line,
     return slot;
 }
 
-// A value to store, with token on its first token.
-static int parse_element_value(const ContainerInfo& info, const string& name, int line, VarType& type,
+// A value to store, with token on its first token. temp is its slot when it is a temporary object (released
+// once the container has its own reference), else -1.
+static int parse_element_value(const ContainerInfo& info, const string& name, int line, VarType& type, int& temp,
                                struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int slot = parse_expression(head, tracker);
     type = lastExprType;
-    if (!types_compatible(type, info.elem))
-        report_error(line, "'" + name + "' holds " + typeToString(info.elem) + ", not " + typeToString(type));
+    temp = (type == TYPE_CLASS && lastExprTemp) ? slot : -1;
+    bool fits = (info.elem == TYPE_CLASS || type == TYPE_CLASS)
+? (info.elem == type && lastExprClass == info.elemClass)
+                : types_compatible(type, info.elem);
+    if (!fits)
+    {
+        report_error(line, "'" + name + "' holds " + element_name(info) + ", not " + 
+                           value_type_name(type, lastExprContainer, lastExprClass));
+    }
     return slot;
+}
+
+// The result of v[i] / v.pop() is an element: an object element is a temporary of its class
+static int element_result(const ContainerInfo& info, int r)
+{
+    if (info.elem == TYPE_CLASS)
+    {
+        lastExprClass = info.elemClass;
+        lastExprTemp = true;
+    }
+    return r;
 }
 
 // vector<int> v = vector<int>()   or   vector<int> v   (empty either way). Token starts on 'vector' / 'map'
@@ -245,8 +277,8 @@ int parse_container_postfix(int handle, const ContainerInfo& info, const string&
         int index = parse_index(info, name, line, head, tracker);
         VarType indexType = lastExprType;
         token = lexer.GetToken();  // past ']'
-        return emit_container_op(dmemElem ? CON_GET_D : CON_GET, {handle, index}, {TYPE_INT, indexType}, info.elem,
-                                 line, head, tracker);
+        return element_result(info, emit_container_op(dmemElem ? CON_GET_D : CON_GET, {handle, index},
+                                                      {TYPE_INT, indexType}, info.elem, line, head, tracker));
     }
     if (token.token_type == DOT)
     {
@@ -262,17 +294,20 @@ int parse_container_postfix(int handle, const ContainerInfo& info, const string&
         if (method == "pop" && !info.isMap && token.token_type == RPAREN)
         {
             token = lexer.GetToken();
-            return emit_container_op(dmemElem ? CON_POP_D : CON_POP, {handle}, {TYPE_INT}, info.elem, line, head, tracker);
+            return element_result(info, emit_container_op(dmemElem ? CON_POP_D : CON_POP, {handle}, {TYPE_INT}, info.elem,
+                                                          line, head, tracker));
         }
         if ((method == "contains" || method == "index_of" || method == "binary_search") && !info.isMap && 
             token.token_type != RPAREN)
         {
             VarType valueType;
-            int value = parse_element_value(info, name, line, valueType, head, tracker);
+            int temp;
+            int value = parse_element_value(info, name, line, valueType, temp, head, tracker);
             token = lexer.GetToken();  // past ')'
             if (!element_type_allows(info, name, method, line)) { lastExprType = TYPE_UNKNOWN; return 0; }
             TensorOp op = (method == "contains") ? CON_CONTAINS : (method == "index_of") ? CON_INDEX_OF : CON_BSEARCH;
             int r = emit_container_op(op, {handle, value}, {TYPE_INT, valueType}, TYPE_INT, line, head, tracker);
+            if (temp >= 0) release_object_temps({temp}, line, head, tracker);
             if (method == "contains") lastExprType = TYPE_BOOL;
             return r;
         }
@@ -334,6 +369,15 @@ void parse_container_statement_at(int handle, const ContainerInfo& info, const s
         int index = parse_index(info, name, line, head, tracker);
         VarType indexType = lastExprType;
         token = lexer.GetToken();  // past ']'
+        if (token.token_type == DOT && info.elem == TYPE_CLASS)
+        {
+            // v[i].x = 5, v[i].move(1): a statement on the element
+            int obj = element_result(info, emit_container_op(CON_GET, {handle, index}, {TYPE_INT, indexType}, info.elem,
+                                                             line, head, tracker));
+            parse_object_member_statement(obj, info.elemClass, name + "[...]", line, head, tracker);
+            release_object_temps({obj}, line, head, tracker);
+            return;  // token is on ';'
+        }
         if (token.token_type != EQUAL)
         {
             report_error(line, "expected '=' after '" + name + "[...]'");
@@ -342,8 +386,10 @@ void parse_container_statement_at(int handle, const ContainerInfo& info, const s
         }
         token = lexer.GetToken();  // the value
         VarType valueType;
-        int value = parse_element_value(info, name, line, valueType, head, tracker);
+        int temp;
+        int value = parse_element_value(info, name, line, valueType, temp, head, tracker);
         emit_container_op(CON_SET, {handle, index, value}, {TYPE_INT, indexType, valueType}, TYPE_UNKNOWN, line, head, tracker);
+        if (temp >= 0) release_object_temps({temp}, line, head, tracker);  // the container has its own reference
         return;  // token is on ';'
     }
     if (token.token_type == DOT)
@@ -355,8 +401,10 @@ void parse_container_statement_at(int handle, const ContainerInfo& info, const s
         if (method == "push" && !info.isMap && token.token_type != RPAREN)
         {
             VarType valueType;
-            int value = parse_element_value(info, name, line, valueType, head, tracker);
+            int temp;
+            int value = parse_element_value(info, name, line, valueType, temp, head, tracker);
             emit_container_op(CON_PUSH, {handle, value}, {TYPE_INT, valueType}, TYPE_UNKNOWN, line, head, tracker);
+            if (temp >= 0) release_object_temps({temp}, line, head, tracker);  // the container has its own reference
         }
         else if (method == "remove" && info.isMap && token.token_type != RPAREN)
         {
@@ -377,8 +425,9 @@ void parse_container_statement_at(int handle, const ContainerInfo& info, const s
         else if (method == "pop" && !info.isMap && token.token_type == RPAREN)
         {
             bool dmemElem = (info.elem == TYPE_FLOAT || info.elem == TYPE_DOUBLE);
-            emit_container_op(dmemElem ? CON_POP_D : CON_POP, {handle}, {TYPE_INT}, info.elem, line, head, tracker);
-        }
+            int r = emit_container_op(dmemElem ? CON_POP_D : CON_POP, {handle}, {TYPE_INT}, info.elem, line, head, tracker);
+            if (info.elem == TYPE_CLASS) release_object_temps({r}, line, head, tracker);  // v.pop() alone: unused
+}
         else
         {
             report_error(line, "'" + name + "." + method + "(...)' is not a " + (info.isMap ? "map" : "vector") + " method: a " +

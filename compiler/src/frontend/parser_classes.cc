@@ -185,18 +185,25 @@ static string pendingClassCopyName;  // set by instantiate_generic_class for the
 
 bool is_generic_class(const string& name) { return genericClasses.count(name) > 0; }
 
-// A type argument's tokens as a type name ("int", "vector<int>", "map<string, int>"), or "" when they are not a
-// type a field or parameter can have: a built-in type, or a container of built-in types.
+// A type argument's tokens as a type name ("int", "Point", "vector<int>", "map<string, Point>"), or "" when they are not a
+// type a field or parameter can have: a built-in type, a class, or a container of either.
 static string type_argument_name(const vector<Token>& arg)
 {
     if (arg.size() == 1 && type_of_keyword(arg[0].token_type) != TYPE_UNKNOWN) return arg[0].lexeme;
+    if (arg.size() == 1 && arg[0].token_type == ID && classTable.count(arg[0].lexeme)) return arg[0].lexeme;  // Box<Point>
     ContainerInfo info;
     bool vec = arg.size() == 4 && arg[0].lexeme == "vector" && arg[1].token_type == LESS && arg[3].token_type == GREATER;
     bool map = arg.size() == 6 && arg[0].lexeme == "map" && arg[1].token_type == LESS && arg[3].token_type == COMMA &&
                arg[5].token_type == GREATER;
     if (!vec && !map) return "";
     info.isMap = map;
-    info.elem = type_of_keyword(arg[vec ? 2 : 4].token_type);
+    const Token& elem = arg[vec ? 2 : 4];
+    info.elem = type_of_keyword(elem.token_type);
+    if (info.elem == TYPE_UNKNOWN && elem.token_type == ID && classTable.count(elem.lexeme))
+    {
+        info.elem = TYPE_CLASS;  // Box<vector<Point>>
+        info.elemClass = elem.lexeme;
+    }
     if (info.elem == TYPE_UNKNOWN) return "";
     if (map)
     {
@@ -234,9 +241,8 @@ static string instantiate_generic_class(const string& name, const vector<vector<
         string argName = type_argument_name(args[i]);
         if (argName.empty())
         {
-            // An object cannot be a field's or parameter's value yet
             report_error(line, "'" + spelled(args[i]) + "' cannot be a type argument: use int, float, double, bool, string, "
-                               "Tensor, vector<T> or map<K, V>");
+                               "Tensor, a class, vector<T> or map<K, V>");
             return "";
         }
         copyName += (i ? ", " : "") + argName;
@@ -339,6 +345,7 @@ void parse_class_definition()
     ClassDef def;
     def.name = className;
     def.parent = "";
+    classTable[className] = def;  // a type in its own body already: Node next, def add(Vec o) -> Vec
 
     token = lexer.GetToken();  // EXTENDS or '{'
 
@@ -376,7 +383,7 @@ void parse_class_definition()
             vector<string> params;
             vector<VarType> paramTypes;
             vector<string> paramClasses;
-            classTable[className] = def;  // the class names itselfin its methods' types: def add(Vec other) -> Vec
+int methodSlotBase = next_available;  // the method's slots, from its parameters on
 
             // The parameters and everything the body declares are gone after the method (all of the name tables)
             enter_block();
@@ -444,6 +451,7 @@ void parse_class_definition()
                 token = lexer.GetToken();  // '{'
             }
             classMethodReturnType[className][methodName] = retType;
+            classMethodTable[className][methodName] = nullptr;  // callable in its own body (its head comes after it)
 
             int retIdx = (retType == TYPE_FLOAT) ? alloc_float_slot() : 
                          (retType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
@@ -564,6 +572,17 @@ void parse_class_definition()
             append(mhead, mtracker, fb);
 
             classMethodTable[className][methodName] = mhead;
+            int methodSlotCount = next_available - methodSlotBase;
+            classMethodSlotRange[className][methodName] = {methodSlotBase, methodSlotCount};
+            for (struct InstructionNode* n = mhead; n != nullptr; n = n->next)
+            {
+                if (n->type == CALL && n->call_inst.function_head == nullptr)  // a call to itself
+                {
+                    n->call_inst.function_head = mhead;
+                    n->call_inst.func_slot_base = methodSlotBase;
+                    n->call_inst.func_slot_count = methodSlotCount;
+                }
+            }
             token = lexer.GetToken();  // advance past method body '}'
         }
         else if (type_of_keyword(token.token_type) != TYPE_UNKNOWN)
@@ -610,24 +629,24 @@ void parse_class_definition()
             token = lexer.GetToken();  // ';'
             token = lexer.GetToken();  // next member or '}'
         }
-        else if (token.token_type == ID && classTable.count(token.lexeme))
+        else if (token.token_type == ID && (classTable.count(token.lexeme) || 
+                                            (is_generic_class(token.lexeme) && lexer.peek(1).token_type == LESS)))
         {
-            // nested class type field: ClassName fieldName ;
-            string nestedClass = token.lexeme;
-            token = lexer.GetToken();  // field name
-            string fieldName = token.lexeme;
-            for (auto& nf : classTable[nestedClass].fields)
+            // Point origin, Node next, Box<int> b: a field that refers to an object (unset until assigned)
+            string fieldClass;
+            if (!parse_class_type_name(fieldClass))
             {
-                ClassFieldInfo fi;
-                fi.name = fieldName + "." + nf.name;
-                fi.type = nf.type;
-                fi.struct_type = nf.struct_type;
-                def.fields.push_back(fi);
-                if (classFieldContainers[nestedClass].count(nf.name))
-                {
-                    classFieldContainers[className][fi.name] = classFieldContainers[nestedClass][nf.name];
-                }
+                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+                token = lexer.GetToken();
+                continue;
             }
+            token = lexer.GetToken();  // field name
+            ClassFieldInfo fi;
+            fi.name = token.lexeme;
+            fi.type = TYPE_CLASS;
+            fi.struct_type = fieldClass;
+            fi.array_size = 0;
+            def.fields.push_back(fi);
             token = lexer.GetToken();  // ';'
             token = lexer.GetToken();  // next member or '}'
         }
@@ -697,8 +716,12 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
 
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
+    return parse_method_call_on(symbolTable[varName], varClassType[varName], methodName, head, tracker);
+}
+
+int parse_method_call_on(int objectSlot, const string& className, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
     // ON ENTRY: token = '('
-    string className = varClassType[varName];
 
     // walk inheritance chain to find the method (supports inherited + overridden methods)
     string lookupClass = className;
@@ -751,7 +774,7 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         report_error(argLine, callee + " takes "+ to_string(classMethodParams[lookupClass][methodName].size()) + 
                               " argument(s) but got " + to_string(args.slots.size()));
     }
-    int result = emit_method_call(lookupClass, methodName, symbolTable[varName], args.slots, args.types, argLine,
+    int result = emit_method_call(lookupClass, methodName, objectSlot, args.slots, args.types, argLine,
                                   head, tracker);
     release_object_temps(args.temps, argLine, head, tracker);
     return result;

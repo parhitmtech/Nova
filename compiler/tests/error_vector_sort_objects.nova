@@ -1,0 +1,11 @@
+# Objects have no order, so a vector of them cannot be sorted (contains() and index_of() compare by identity).
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    vector<P> v = vector<P>()
+    v.push(P(2))
+    v.sort()

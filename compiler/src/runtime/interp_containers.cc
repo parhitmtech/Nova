@@ -33,15 +33,17 @@ static double read_value(int slot, VarType t)
     return mem[slot];
 }
 
-// A Tensor stored in a container is one more owner of its handle.
+// A Tensor or an object stored in a container is one more owner of its handle.
 static void retain_element(const Container& c, double v)
 {
     if (c.elem == TYPE_TENSOR) tensor_retain((int)v);
+    if (c.elem == TYPE_CLASS) objects_retain((int)v);
 }
 
 static void release_element(const Container& c, double v)
 {
     if (c.elem == TYPE_TENSOR) tensor_release((int)v);
+    if (c.elem == TYPE_CLASS) objects_release((int)v);
 }
 
 static Container& container_at(int h, int line)
@@ -143,6 +145,7 @@ InstructionNode* exec_container_call(InstructionNode* pc)
             if (c.items.empty()) tensor_shape_error(line, "pop() on an empty vector");
             double v = c.items.back();
             c.items.pop_back();
+            if (c.elem == TYPE_CLASS) objects_take_temp((int)v);  // an object's: the running call's temporary
             if (tc.op == CON_POP_D) dmem[tc.result_slot] = v;
             else mem[tc.result_slot] = (int)v;
             break;
@@ -151,7 +154,8 @@ InstructionNode* exec_container_call(InstructionNode* pc)
         {
             Container& c = container_at(mem[a[0]], line);
             double v = element(c, a[1], line);
-            retain_element(c, v);  // the result slot is one more owner of a Tensor element
+            if (c.elem == TYPE_CLASS) objects_add_temp((int)v);  // an object: a temporary of the running call
+            else retain_element(c, v);  // the result slot is one more owner of a Tensor element
             if (tc.op == CON_GET_D) dmem[tc.result_slot] = v;
             else mem[tc.result_slot] = (int)v;
             break;

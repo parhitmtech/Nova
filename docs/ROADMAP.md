@@ -12,10 +12,16 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
     so it is freed when its declaration runs again or its function returns.
   - B2 (done): objects as parameters, return values and in assignment (`q = p` shares the object), with
     reference counting: each call owns the references its variables, parameters and temporaries hold.
-  - B3: objects in fields and containers, and class type arguments (`Box<P>`, `vector<P>`).
-  - Small gaps found on the way: calling a method on `self` (`self.area()`) and `return self`; a field or
-    method on a call's result (`make().x`); passing a subclass where its parent is expected (needs virtual
-    methods); freeing an object's arrays (array slots are never reclaimed).
+  - B3 (done): objects in fields and containers, and class type arguments (`Box<P>`, `vector<P>`); `.x` /
+    `.m()` on any object value (`make().x`, `self.area()`, `return self`); recursive methods.
+  - B4: freeing containers. A container is never freed yet, so a `vector` made in a loop keeps its elements
+    (Tensors, objects) alive. Containers get the reference counting objects have: a call's variables,
+    parameters and temporaries, object fields and container elements each hold a reference.
+  - Then: an empty value for object fields (a `none`, and a way to test for it), so a linked list can end
+    without keeping its own size.
+  - Small gaps found on the way: passing a subclass where its parent is expected (needs virtual methods);
+    freeing an object's arrays (array slots are never reclaimed); a cycle of objects (a node referring back
+    to its parent) is never freed; a method can call methods defined before it, and itself, but not later ones.
 - **Batched matmul (`bmm`)**, with its tests (`tensor_bmm`, `grad_bmm`, `error_bmm_batch_mismatch`).
 
 ## 2. A real middle-end IR ("Nova IR")

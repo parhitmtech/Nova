@@ -25,6 +25,10 @@ InstructionNode* exec_container_call(InstructionNode* pc);  // the CON_* ops (in
 InstructionNode* exec_object_call(InstructionNode* pc);     // the OBJ_* ops (interp_objects.cc)
 void objects_enter_call();  // a call starts: it gets its own object references
 void objects_bind_param(int slot, int h);  // an object parameter: one of the call's references
+void objects_retain(int h);                // an object field's / container element's reference
+void objects_release(int h);
+void objects_add_temp(int h);              // a value read from a field or element: the call's temporary
+void objects_take_temp(int h);             // v.pop(): the element's reference becomes the call's temporary
 void objects_exit_call(int returned);      // it returns: its references go (an object it returns, if not 
                                            // 0, becomes the caller's temporary first)
 InstructionNode* exec_tensor_release(InstructionNode* pc);

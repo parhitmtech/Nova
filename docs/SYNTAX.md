@@ -162,8 +162,14 @@ works on the object it is called on, so `self.W = ...` changes `l`'s field. Obje
 returned (`def step(Linear l, Tensor x) -> Linear`), and `m = l` makes both names refer to one object, so
 a function that changes its parameter's fields changes the caller's object. `Point(1, 2)` is an expression:
 `f(Point(1, 2))`, `return Point(x, y)`. An object parameter takes its own class only (not a subclass yet).
-An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid). It
-cannot yet be stored in a field or a container (stage B3).
+An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid).
+
+A field can hold an object (`Node next`, `Layer a`; a class can name itself), and so can a container
+(`vector<Tree> kids`, `map<string, Layer>`) and a generic class (`Box<Layer>`). An object field starts unset
+until it is assigned. `.x` and `.m()` work on any object value, so `l.head.next.value`, `make().x`,
+`t.kids[0].value = 10`, `self.total()`, `return self` and `t.add(a).add(b)` all work, and a method can call
+itself. Objects have no order: a `vector<P>` has `contains` and `index_of` (by identity) but not `sort`,
+`min`, `max`, `sum` or `binary_search`.
 
 ## 7. Statements
 
@@ -393,6 +399,10 @@ commit.
      class types in signatures (`def f(Point p) -> Point`, `Box<int> b`) and generic copies per class
      (`getx<Point>`). `Point(1, 2)` is an expression. Objects are reference-counted: each call owns the
      references its variables, parameters and temporaries hold, and drops them when it returns.
-   - Next: B3 objects in fields, containers and type arguments (`Box<P>`, `vector<P>`). See
-     [ROADMAP.md](ROADMAP.md).
+   - B3 (done): objects in fields (references, not flattened copies; a class can name itself), in
+     containers (`vector<P>`, `map<K, P>`) and as type arguments (`Box<P>`, `Box<vector<P>>`); `.x` / `.m()`
+     on any object value, `self.m()` and `return self`; recursive methods (a method call now saves and
+     restores the method's slots, as a function call does). Fields and elements count references too.
+   - Next: B4 freeing containers (a container is never freed yet, so one made in a loop keeps its elements
+     alive). See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

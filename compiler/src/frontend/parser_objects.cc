@@ -18,6 +18,7 @@ map<string, vector<string>> functionParamClasses;                  // function -
 map<string, string> functionReturnClass;
 map<string, map<string, vector<string>>> classMethodParamClasses;  // class -> method -> each parameter's class
 map<string, map<string, string>> classMethodReturnClass;
+map<string, map<string, pair<int, int>>> classMethodSlotRange;  // saved and restored around a call, as a function's
 
 // With token on a type's first token: whether it is a class (Point p) or a generic class (Box<int> b, compiled
 // here). If so, cls is its name and token is on its last token (the name, or the closing '>').
@@ -274,12 +275,17 @@ int object_field_read(int handle, const string& cls, const string& field, int li
     int r = emit_object_op(inDmem ? OBJ_GET_D : OBJ_GET, {handle, int_constant(index)}, {TYPE_INT, TYPE_INT}, t, line,
                            head, tracker);
     if (t == TYPE_VECTOR || t == TYPE_MAP) lastExprContainer = classFieldContainers[cls][field];
+    if (t == TYPE_CLASS)
+    {
+        lastExprClass = f->struct_type;  // the field's class
+        lastExprTemp = true;  // the read is one more reference (OBJ_GET), released once used
+    }
     return r;
 }
 
 void object_field_write(int handle, const string& cls, const string& field, int value, VarType valueType,
-                        const ContainerInfo& valueContainer, const string& shown, int line,
-                        struct InstructionNode*& head, struct InstructionNode*& tracker)
+                        const ContainerInfo& valueContainer, const string& valueClass, bool valueTemp,
+                        const string& shown, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int index = 0;
     const ClassFieldInfo* f = class_field(cls, field, &index);
@@ -293,7 +299,18 @@ void object_field_write(int handle, const string& cls, const string& field, int 
         report_error(line, "'" + field + "' is an array field: assign its elements, " + field + "[i] = x");
         return;
     }
-    if (f->type != TYPE_CLASS && !types_compatible(valueType, f->type))
+    if (f->type == TYPE_CLASS || valueType == TYPE_CLASS)
+    {
+        // self.next = node: the field refers to an object of its own class
+        if (f->type != TYPE_CLASS || valueType != TYPE_CLASS || valueClass != f->struct_type)
+        {
+            report_error(line, "'" + shown + "' is " + (f->type == TYPE_CLASS ? "a " + f->struct_type : typeToString(f->type)) + 
+                               ", not " + (valueType == TYPE_CLASS ? "a " + valueClass
+                                                                   : value_type_name(valueType, valueContainer, valueClass)));
+            return;
+        }
+    }
+    else if (!types_compatible(valueType, f->type))
     {
         report_error(line, "cannot assign " + typeToString(valueType) + " to " + typeToString(f->type) + " field '" +
                            field + "' of class '" + cls + "'");
@@ -308,6 +325,7 @@ void object_field_write(int handle, const string& cls, const string& field, int 
         return;
     }
     emit_set(handle, index, value, valueType, line, head, tracker);
+    if (valueTemp) release_object_temps({value}, line, head, tracker);  // the field took its own reference
 }
 
 // An element of an array field, base being the slot that holds where the field's block starts. With value < 0
@@ -364,8 +382,19 @@ void parse_field_statement(int handle, const string& cls, const string& field, c
         int value = parse_expression(head, tracker);
         VarType valueType = lastExprType;
         ContainerInfo valueContainer = lastExprContainer;
-        object_field_write(handle, cls, field, value, valueType, valueContainer, shown, line, head, tracker);
+        bool temp = (valueType == TYPE_CLASS && lastExprTemp);
+        object_field_write(handle, cls, field, value, valueType, valueContainer, lastExprClass, temp, shown, line,
+                           head, tracker);
         return;  // token is on ';'
+    }
+    if (f->type == TYPE_CLASS && token.token_type == DOT)
+    {
+        // self.head.value = x, self.head.move(1): a statement on the object in the field
+        string inner = f->struct_type;
+        int obj = object_field_read(handle, cls, field, line, head, tracker);
+        parse_object_member_statement(obj, inner, shown, line, head, tracker);
+        release_object_temps({obj}, line, head, tracker);
+        return;
     }
     if (f->type == TYPE_VECTOR || f->type == TYPE_MAP)
     {
@@ -413,8 +442,12 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     callNode->call_inst.function_head = classMethodTable[cls][method];
     callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
     callNode->call_inst.ret_type = retType;  // an object result is handed to the caller (see exec_ret)
-    callNode->call_inst.func_slot_base = 0;
-    callNode->call_inst.func_slot_count = 0;
+    // The method's slots are saved and restored around the call, so a method can call itself (a recursive call
+    // inside its own body gets them when the body is done: see parse_class_definition)
+    pair<int, int> range = classMethodSlotRange.count(cls) && classMethodSlotRange[cls].count(method)
+                          ? classMethodSlotRange[cls][method] : make_pair(0, 0);
+    callNode->call_inst.func_slot_base = range.first;
+    callNode->call_inst.func_slot_count = range.second;
     callNode->call_inst.num_params = n;
     callNode->call_inst.all_ret_slots = nullptr;
     callNode->call_inst.num_ret_slots = 0;
@@ -425,7 +458,7 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     VarType* aTypes = new VarType[n];
     pSlots[0] = classMethodSelfHandle[cls][method];
     aSlots[0] = objectSlot;
-    pTypes[0] = aTypes[0] = TYPE_INT;
+    pTypes[0] = aTypes[0] = TYPE_CLASS;  // a reference while the method runs: its object cannot be freed under it
     for (int i = 1; i < n; i++)
     {
         pSlots[i] = paramSlots[i - 1];
@@ -473,4 +506,52 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
         lastExprTemp = true;
     }
     return fresh;
+}
+
+// .x or .m(...) on an object value (a call's result, a field, an element, self), with token on the '.': the 
+// member's value. lastExprClass / lastExprTemp describe the object; a temporary is released once used.
+int parse_object_postfix(int obj, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    string cls = lastExprClass;
+    bool temp = lastExprTemp;
+    token = lexer.GetToken();  // the member's name
+    string member = token.lexeme;
+    int line = token.line_no;
+    token = lexer.GetToken();
+    int r = (token.token_type == LPAREN) ? parse_method_call_on(obj, cls, member, head, tracker)
+                                         : parse_field_expression(obj, cls, member, line, head, tracker);
+    if (temp) release_object_temps({obj}, line, head, tracker);
+    return r;
+}
+
+// A statement on a member of the object in obj (of class cls), with token on the '.': obj.x = v, obj.ids.push(v),
+// obj.next.x = v, obj.move(1). `shown` names obj in messages. Token endson ';'.
+void parse_object_member_statement(int obj, const string& cls, const string& shown, int line,
+                                   struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    token = lexer.GetToken();  // the member's name
+    string member = token.lexeme;
+    token = lexer.GetToken();
+    if (token.token_type == LPAREN)
+    {
+        int result = parse_method_call_on(obj, cls, member, head, tracker);
+        finish_call_statement(result, line, head, tracker);
+        return;
+    }
+    parse_field_statement(obj, cls, member, shown + "." + member, line, head, tracker);
+}
+
+// After a call used as a statement, with token on the token after it: t.add(a).add(b) and make().x = 1 go on with
+// the call's object result; otherwise the result is unused, and a temporary object is released.
+void finish_call_statement(int result, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
+    if (lastExprType == TYPE_CLASS && token.token_type == DOT)
+    {
+        string cls = lastExprClass;
+        bool temp = lastExprTemp;
+        parse_object_member_statement(result, cls, cls, line, head, tracker);
+        if (temp) release_object_temps({result}, line, head, tracker);
+        return;
+    }
+    if (lastExprType == TYPE_CLASS && lastExprTemp) release_object_temps({result}, line, head, tracker);
 }

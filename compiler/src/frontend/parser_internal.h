@@ -68,6 +68,7 @@ struct ContainerInfo
     bool isMap = false;
     VarType key = TYPE_UNKNOWN;  // map: TYPE_INT or TYPE_STRING
     VarType elem = TYPE_UNKNOWN;
+    string elemClass;            // TYPE_CLASS elements: their class
 };
 extern map<string, ContainerInfo> containerTable;
 // The container type of the last expression parsed, valid when lastExprType is TYPE_VECTOR or TYPE_MAP
@@ -136,7 +137,8 @@ void parse_object_value_into(int slot, const string& cls, const string& shown, i
 int object_field_read(int handle, const string& cls, const string& field, int line,
                       struct InstructionNode*& head, struct InstructionNode*& tracker);
 void object_field_write(int handle, const string& cls, const string& field, int value, VarType valueType,
-                        const ContainerInfo& valueContainer, const string& shown, int line,
+                        const ContainerInfo& valueContainer, const string& valueClass, bool valueTemp,
+                        const string& shown, int line,
                         struct InstructionNode*& head, struct InstructionNode*& tracker);
 // obj.f / self.f in an expression, with token on the token after the field name (an array field's [i] included)
 int parse_field_expression(int handle, const string& cls, const string& field, int line,
@@ -194,6 +196,14 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
 void parse_class_definition();
 void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.m(...) on the object in objectSlot, of class cls, with token on '(': the call's result
+int parse_method_call_on(int objectSlot, const string& cls, const string& methodName, struct InstructionNode*& head, 
+                         struct InstructionNode*& tracker);
+int parse_object_postfix(int obj, struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '.'
+void finish_call_statement(int result, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+extern map<string, map<string, pair<int, int>>> classMethodSlotRange;  // class -> method -> its slots (base, count)
+void parse_object_member_statement(int obj, const string& cls, const string& shown, int line,
+                                    struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '.'
 int parse_tensor_call(const string& name, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int emit_tensor_op(TensorOp, const string& name, const vector<int>& args, const vector<VarType>& type,
                    const vector<string>& argNames, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
