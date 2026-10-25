@@ -94,4 +94,3 @@ export interface Capabilities {
 }
 export const getCapabilities = (token: string) =>
   axios.get<Capabilities>(`${API}/api/capabilities`, { headers: authHeaders(token) })
-
