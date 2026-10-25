@@ -1,7 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Sparkles, X } from 'lucide-react'
-import { compileBytecode } from '../api/compiler'
 import { shareCode } from '../api/share'
 import { useAuth } from '../contexts/AuthContext'
 import { EXAMPLES, errorMessage, downloadBlob } from '../lib/workspace'
@@ -62,17 +61,7 @@ export default function IDEPage() {
     }
   }
 
-  const exportBytecode = async () => {
-    try {
-      const res = await compileBytecode(document.code, token ?? undefined)
-      downloadBlob(new Blob([res.data]), `${document.name.replace(/\.[^.]+$/, '') || 'program'}.nbc`)
-      notify('Bytecode downloaded')
-    } catch (error) {
-      notify(errorMessage(error, 'Bytecode export failed'), true)
-    }
-  }
-
-  const signOut = () =>
+const signOut = () =>
     void workspace.beforeSwitch(() => {
       logout()
       navigate('/login')
@@ -126,15 +115,7 @@ export default function IDEPage() {
         downloadBlob(new Blob([document.code], { type: 'text/plain' }), document.name || 'program.nova'),
       disabled: document.binary,
     },
-    {
-      id: 'bytecode',
-      label: 'Export compiled bytecode (.nbc)',
-      action: () => {
-        void exportBytecode()
-      },
-      disabled: document.binary,
-    },
-    { id: 'settings', label: 'Editor settings', action: () => setSettingsOpen(true) },
+{ id: 'settings', label: 'Editor settings', action: () => setSettingsOpen(true) },
     { id: 'files', label: 'Toggle file explorer', action: () => setFilesOpen((v) => !v) },
     { id: 'assistant', label: 'Toggle NovaBot', action: () => setAssistantOpen((v) => !v) },
     ...EXAMPLES.map((e) => ({
@@ -183,8 +164,7 @@ export default function IDEPage() {
           settings={settings}
           inputs={inputs}
           onInputsChange={setInputs}
-          onExportBytecode={() => void exportBytecode()}
-          onRunGpu={() => void gpu.submit(document.code)}
+onRunGpu={() => void gpu.submit(document.code)}
           gpuBusy={gpu.busy}
           gpuEnabled={gpu.enabled}
         >

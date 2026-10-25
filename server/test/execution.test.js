@@ -77,7 +77,8 @@ test('production refuses local execution and arguments outside the job directory
   assert.throws(() => createExecutor({ mode: 'local', nodeEnv: 'production' }), /production/i);
   const executor = createExecutor({ mode: 'docker', nodeEnv: 'production' });
   assert.throws(() => executor.spawnCompiler(['/etc/passwd'], { cwd: os.tmpdir() }), /job directory/i);
-  assert.throws(() => executor.spawnCompiler(['--emit-bytecode', '-o', '/etc/evil'], { cwd: os.tmpdir() }), /job directory/i);
+  assert.throws(() => executor.spawnCompiler(['--optimize', '/etc/evil'], { cwd: os.tmpdir() }), /job directory/i);
+  assert.throws(() => executor.spawnCompiler(['-o', 'out'], { cwd: os.tmpdir() }), /unsupported/i);  // no output files any more
 });
 
 test('docker jobs have resource limits and no credentials, host network, or root privileges', () => {

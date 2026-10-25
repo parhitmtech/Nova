@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Statements: declarations, print, assignment, conditions, if/while/do/for/switch. Split out of parser.cc.
 #include "parser_internal.h"
 

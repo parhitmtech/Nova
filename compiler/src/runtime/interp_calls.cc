@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Interpreter: function calls (memoization, JIT fast path) and returns. Split out of execute_program (interpreter.cc).
 #include <iostream>
 #include <cstdio>
@@ -28,7 +23,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -39,9 +33,6 @@
 #include "interp_internal.h"
 
 using namespace std;
-
-// JIT-compile a function after this many interpreted calls (Windows builds only).
-static const int JIT_THRESHOLD = 1;
 
 // A virtual call (a method call): the same call aimed at the method the object's own class runs, so an
 // override runs when the object belongs to a subclass. One copy per call site and class, made the first time.
@@ -77,9 +68,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                 exit(1);
             }
 
-            // JIT hot path check
             InstructionNode* fhead = pc->call_inst.function_head;
-            jit_call_counts[fhead]++;
 
             // Memoization fast path: pure + recursive functions cache arg→result
             bool is_memo = pure_functions.count(fhead) && recursive_functions.count(fhead);
@@ -108,58 +97,6 @@ InstructionNode* exec_call(InstructionNode* pc)
                         break;
                     }
                 }
-            }
-
-            // Fast path: native JIT call (skip if previously deoptimized)
-            if (!jit_deoptimized.count(fhead) && jit_compiled.count(fhead) && jit_compiled[fhead] != nullptr)
-            {
-                typedef int64_t (*JitFunc)(int64_t);
-                JitFunc fn = (JitFunc)jit_compiled[fhead];
-                int argVal = mem[pc->call_inst.arg_val_slots[0]];
-                bool deopt = false;
-                int64_t result = 0;
-
-                #ifdef _MSC_VER
-                __try
-                {
-                    result = fn((int64_t)argVal);
-                }
-                __except (EXCEPTION_EXECUTE_HANDLER)
-                {
-                    deopt = true;
-                }
-                #else
-                result = fn((int64_t)argVal);
-                if (result == INT64_MIN)
-                    deopt = true;
-                #endif
-
-                if (deopt)
-                {
-                    fprintf(stderr, "JIT: deopt function, falling back to interpreter\n");
-                    jit_deoptimized.insert(fhead);
-                    jit_compiled[fhead] = nullptr;
-                    // Fall through to interpreter path below - do NOT break
-                }
-                else
-                {
-                    mem[pc->call_inst.ret_val_index] = (int)result;
-                    pc = pc->next;
-                    break;
-                }
-            }
-            else if (jit_call_counts[fhead] >= JIT_THRESHOLD && !jit_compiled.count(fhead)
-                     && !jit_deoptimized.count(fhead)
-                     && pc->call_inst.num_params <= 1)  // JIT only handles single-param functions
-            {
-    #if defined(NOVA_JIT) && (defined(__x86_64__) || defined(_M_X64))  // opt-in: -DNOVA_JIT (x86-64 only, experimental)
-                jit_compiled[fhead] = jit_compile_function(fhead);
-
-                if (!jit_compiled[fhead])
-                {
-                    jit_compiled[fhead] = nullptr;
-                }
-    #endif
             }
 
             // Interpreter fallback path

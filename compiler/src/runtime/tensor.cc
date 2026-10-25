@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Tensor heap and tensor operations (the tensor_* built-ins). Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>
@@ -28,7 +23,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"

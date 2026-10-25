@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 #ifndef _COMPILER_H_
 #define _COMPILER_H_
 

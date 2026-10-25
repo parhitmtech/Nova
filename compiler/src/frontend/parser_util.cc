@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Parser helpers: error reporting, declaration/bounds/bracket checks, IR list append. Split out of parser.cc.
 #include "parser_internal.h"
 

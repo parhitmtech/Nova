@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Global interpreter/compiler state shared across modules (formerly the top of compiler.cc).
 #include <iostream>
 #include <cstdio>
@@ -24,7 +19,6 @@
 #include <unordered_set>
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -51,11 +45,6 @@ set<int> debug_breakpoints;  // set of line numbers with break points
 extern map<string, int> symbolTable;
 extern map<string, int> floatSymbolTable;
 extern map<string, int> doubleSymbolTable;
-
-// JIT
-unordered_map<InstructionNode*, int> jit_call_counts;
-unordered_map<InstructionNode*, void*> jit_compiled;
-unordered_set<InstructionNode*> jit_deoptimized;
 
 // Memoization for pure recursive functions
 unordered_set<InstructionNode*> pure_functions;

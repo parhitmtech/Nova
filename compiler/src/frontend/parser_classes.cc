@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Structs and classes: definitions, instantiation, method calls. Split out of parser.cc.
 #include "parser_internal.h"
 

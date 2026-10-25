@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Liveness analysis (defs/uses/successors per IR node). Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>

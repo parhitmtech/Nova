@@ -95,7 +95,3 @@ export interface Capabilities {
 export const getCapabilities = (token: string) =>
   axios.get<Capabilities>(`${API}/api/capabilities`, { headers: authHeaders(token) })
 
-// Compile Nova source to bytecode and return the raw binary as a Blob
-// so the browser can trigger a .nbc file download directly.
-export const compileBytecode = (source: string, token?: string) =>
-  axios.post(`${API}/compile-bytecode`, { source }, { responseType: 'blob', headers: authHeaders(token) })

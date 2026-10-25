@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Parser state: symbol tables, function/array/struct/class tables, tensor built-in tables. Split out of parser.cc.
 #include "parser_internal.h"
 

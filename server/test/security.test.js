@@ -52,7 +52,7 @@ test('existing passwords remain usable while signup enforces the new policy', as
   } finally { DynamoDBDocumentClient.prototype.send = originalSend; }
 });
 test('authenticate protected routes before running or touching providers', async () => {
-  for (const [route, method] of [['/fs/tree', 'GET'], ['/run', 'POST'], ['/run-stream', 'POST'], ['/compile-bytecode', 'POST'], ['/compare', 'POST'], ['/gpu/submit', 'POST'], ['/gpu/status/123_abc', 'GET'], ['/api/share', 'POST'], ['/run-debug/start', 'POST']]) {
+  for (const [route, method] of [['/fs/tree', 'GET'], ['/run', 'POST'], ['/run-stream', 'POST'], ['/compare', 'POST'], ['/gpu/submit', 'POST'], ['/gpu/status/123_abc', 'GET'], ['/api/share', 'POST'], ['/run-debug/start', 'POST']]) {
     assert.equal((await request(route, { auth: null, method, body: method === 'POST' ? {} : undefined })).status, 401, route);
   }
 });
@@ -410,7 +410,7 @@ test('batch slot exhaustion returns 503 on all HTTP execution routes and release
   const children = [0, 1].map(() => spawnCompiler(['--repl'], { cwd: job.tmpDir, userId: users[0], timeoutMs: 5000 }));
   children.forEach(child => { child.stdout.resume(); child.stderr.resume(); });
   try {
-    for (const route of ['/run', '/run-stream', '/compile-bytecode', '/compare']) {
+    for (const route of ['/run', '/run-stream', '/compare']) {
       const res = await request(route, { method: 'POST', body: { source: 'ignite:\n    print(42)\n' } });
       assert.equal(res.status, 503, route);
       assert.match((await res.json()).error, /busy/i);
@@ -443,14 +443,6 @@ test('active REPL input resets the idle deadline and closes once input stops', a
     });
     ws.on('error', reject);
   });
-});
-
-test('real bytecode API returns artifacts larger than 16 KiB', async () => {
-  // One-space indentation keeps 900 statements under the 10,000-character source limit.
-  const source = 'ignite:\n' + ' print(1)\n'.repeat(900);
-  const res = await request('/compile-bytecode', { method: 'POST', body: { source } });
-  assert.equal(res.status, 200, await (res.status === 200 ? Promise.resolve('') : res.text()));
-  assert.ok((await res.arrayBuffer()).byteLength > 16384);
 });
 
 test('malformed WebSocket upgrades cannot consume authentication capacity', async () => {

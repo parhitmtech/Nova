@@ -12,8 +12,7 @@ interface Props {
   settings: EditorSettings
   inputs: string
   onInputsChange: (value: string) => void
-  onExportBytecode: () => void
-  onRunGpu: () => void
+onRunGpu: () => void
   gpuBusy: boolean
   gpuEnabled: boolean // the deployment supports GPU runs (from /api/capabilities)
   children: ReactNode // the output panel below the editor
@@ -37,8 +36,7 @@ export default function EditorPanel({
   settings,
   inputs,
   onInputsChange,
-  onExportBytecode,
-  onRunGpu,
+onRunGpu,
   gpuBusy,
   gpuEnabled,
   children,
@@ -140,10 +138,7 @@ export default function EditorPanel({
             <Download size={13} />
             Source
           </button>
-          <button className="text-button" onClick={onExportBytecode} disabled={document.binary}>
-            .nbc
-          </button>
-          {gpuEnabled && (
+{gpuEnabled && (
             <button className="text-button gpu" onClick={onRunGpu} disabled={document.binary || gpuBusy}>
               <Zap size={13} />
               GPU

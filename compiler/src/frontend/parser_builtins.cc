@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Built-in calls: tensor_* operations, hf.* (HuggingFace) and sol.* (SOL cluster). Split out of parser.cc.
 #include <cstring>
 #include "parser_internal.h"
