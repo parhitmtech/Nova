@@ -161,7 +161,9 @@ An object is a reference: `Linear l = Linear(2, 4)` creates a new object, and `l
 works on the object it is called on, so `self.W = ...` changes `l`'s field. Objects can be passed and
 returned (`def step(Linear l, Tensor x) -> Linear`), and `m = l` makes both names refer to one object, so
 a function that changes its parameter's fields changes the caller's object. `Point(1, 2)` is an expression:
-`f(Point(1, 2))`, `return Point(x, y)`. An object parameter takes its own class only (not a subclass yet).
+`f(Point(1, 2))`, `return Point(x, y)`. A subclass goes wherever its parent is expected (`Animal a = Dog(3)`),
+and a method call runs the version the object's own class has (`a.speak()` runs Dog's): an override must
+take and return the same types as the method it overrides. A subclass without `init` runs its parent's.
 An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid).
 
 A field can hold an object (`Node next`, `Layer a`; a class can name itself), and so can a container
@@ -410,5 +412,8 @@ commit.
    - `none` (done): no object, of no class, accepted wherever an object is; an unset object field is `none`;
      `==` / `!=` compare objects by identity (`<` on objects, or an object against a number, is an error).
      `none` is a name, not a keyword, so a variable can still be called `none`.
-   - Next: passing a subclass where its parent is expected (virtual methods). See [ROADMAP.md](ROADMAP.md).
+   - Subclasses (done): a subclass goes wherever its parent is expected, and method calls are virtual: each
+     object records its class, and a call runs that class's method (its own or inherited), so an override
+     runs through the parent's type and from the parent's own methods. Overrides keep the signature; a
+     subclass without `init` runs its parent's. See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

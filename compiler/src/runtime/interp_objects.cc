@@ -26,6 +26,7 @@ struct Object
     vector<bool> ownsTensor;  // field i holds a Tensor this object has a reference to
     vector<bool> ownsObject;  // ... or an object
     vector<bool> ownsContainer;  // ... or a container
+    int cls = 0;                 // its class's id: a method call runs this class's method(virtualTable)
     int refs = 0;
     bool freed = false;
 };
@@ -164,6 +165,8 @@ static Object& object_at(int h, int line)
     return object_heap[h];
 }
 
+int objects_class_of(int h, int line) { return object_at(h, line).cls; }
+
 InstructionNode* exec_object_call(InstructionNode* pc)
 {
     auto& tc = pc->tensor_call_inst;
@@ -171,7 +174,7 @@ InstructionNode* exec_object_call(InstructionNode* pc)
     int line = pc->line_no;
     switch (tc.op)
     {
-        case OBJ_NEW:  // a[0] holds the number of fields; the new object is a temporary
+        case OBJ_NEW:  // a[0] holds the number of fields, a[1] the class's id; the new object is a temporary
         {
             if (object_heap.empty()) object_heap.push_back(Object());  // handle 0: "no object"
             Object o;
@@ -179,6 +182,7 @@ InstructionNode* exec_object_call(InstructionNode* pc)
             o.ownsTensor.assign(mem[a[0]], false);
             o.ownsObject.assign(mem[a[0]], false);  // an object field starts unset (0)
             o.ownsContainer.assign(mem[a[0]], false);
+            o.cls = mem[a[1]];  // a[1] holds the class's id
             int h;
             if (!free_handles.empty()) { h = free_handles.back(); free_handles.pop_back(); object_heap[h] = o; }
             else { h = (int)object_heap.size(); object_heap.push_back(o); }

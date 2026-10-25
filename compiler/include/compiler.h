@@ -257,6 +257,10 @@ struct InstructionNode
             VarType ret_type;
             // Type of each slot in all_ret_slots (null when it is null).
             VarType* ret_slot_types;
+            // 0: a direct call. Otherwise a method call on the object in arg_val_slots[0], and this is the method's
+            // id: the call runs the method of that name the object's own class has (virtualTable), so a subclass's
+            // override runs when the object is one.
+            int virtual_method;
         } call_inst;
 
         struct {
@@ -356,6 +360,20 @@ struct InstructionNode
 
     struct InstructionNode* next;
 };
+
+// A class's method as a virtual call runs it: its body, its parameter slots (0 is the object), its slot range.
+struct MethodTarget
+{
+    InstructionNode* head;
+    int* param_slots;
+    VarType* param_types;
+    int num_params;
+    int slot_base;
+    int slot_count;
+};
+
+// class id -> method id -> the method that class runs (its own, or the one it inherits); filled as classes compile
+extern std::map<int, std::map<int, MethodTarget>> virtualTable;
 
 void debug(const char* format, ...);
 

@@ -453,6 +453,19 @@ int methodSlotBase = next_available;  // the method's slots, from its parameters
             classMethodReturnType[className][methodName] = retType;
             classMethodTable[className][methodName] = nullptr;  // callable in its own body (its head comes after it)
 
+            // An override takes and returns what the method it overrides does, so a call through the parent's type
+            // can run it (init is not called that way)
+            string overridden = (methodName == "init") ? "" : find_method_class(def.parent, methodName);
+            if (!overridden.empty() &&
+                (classMethodParamTypes[overridden][methodName] != paramTypes || 
+                 classMethodParamClasses[overridden][methodName] != paramClasses || 
+                 classMethodReturnType[overridden][methodName] != retType || 
+                 classMethodReturnClass[overridden][methodName] != retClass))
+            {
+                report_error(token.line_no, "'" + className + "." + methodName + "' must take and return the same types as '" + 
+                                            overridden + "." + methodName + "', which it overrides");
+            }
+
             int retIdx = (retType == TYPE_FLOAT) ? alloc_float_slot() : 
                          (retType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
             functionReturnIndex[fullName] = retIdx;
@@ -660,6 +673,7 @@ int methodSlotBase = next_available;  // the method's slots, from its parameters
     }
     // token = '}'
     classTable[className] = def;
+    register_class_methods(className, def.parent);
 }
 
 void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker)
@@ -705,9 +719,10 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
     {
         // Point p: a new object, its init run if it takes no arguments
         int value = emit_object_new(className, varLine, head, tracker);
-        if (classMethodTable.count(className) && classMethodTable[className].count("init") && classMethodParams[className]["init"].empty())
+        string initClass = find_method_class(className, "init");  // its own init, or its parent's
+        if (!initClass.empty() && classMethodParams[initClass]["init"].empty())
         {
-            emit_method_call(className, "init", value, {}, {}, varLine, head, tracker);
+            emit_method_call(initClass, "init", value, {}, {}, varLine, head, tracker);
         }
         emit_object_store(symbolTable[varName], value, true, varLine, head, tracker);
     }
@@ -738,8 +753,13 @@ int parse_method_call_on(int objectSlot, const string& className, const string& 
         else
         {
             report_error(token.line_no, "class '" + className + "' has no method '" + methodName + "'");
-            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            // skip the arguments, up to and past the ')' that closes them (not to ';', which would leave an
+            // enclosing call or expression unclosed and report errors that are not there)
+            int depth = 0;
+            while (token.token_type != END_OF_FILE && token.token_type != SEMICOLON)
             {
+                if (token.token_type == LPAREN) depth++;
+                if (token.token_type == RPAREN && --depth == 0) { token = lexer.GetToken(); break; }
                 token = lexer.GetToken();
             }
             lastExprType = TYPE_UNKNOWN;

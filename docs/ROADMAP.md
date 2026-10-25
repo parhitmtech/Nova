@@ -19,8 +19,9 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
     nothing refers to them, so a `vector` made in a loop no longer keeps its elements alive.
   - `none` (done): an empty value for object fields and variables, tested with `==` / `!=` (identity), so a
     linked list ends at `none` instead of keeping its own size.
-  - Next: passing a subclass where its parent is expected, with methods chosen by the object's own class at
-    run time (virtual methods).
+  - Subclasses (done): a subclass goes wherever its parent is expected, with methods chosen by the object's
+    own class at run time (virtual methods). The `.nbc` bytecode export does not carry this yet: an exported
+    program calls the declared class's method.
   - Small gaps found on the way: freeing an object's arrays (array slots are never reclaimed); a cycle of objects (a node referring back
     to its parent) is never freed; a method can call methods defined before it, and itself, but not later ones.
 - **Batched matmul (`bmm`)**, with its tests (`tensor_bmm`, `grad_bmm`, `error_bmm_batch_mismatch`).

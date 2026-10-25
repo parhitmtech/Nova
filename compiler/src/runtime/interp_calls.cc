@@ -43,8 +43,33 @@ using namespace std;
 // JIT-compile a function after this many interpreted calls (Windows builds only).
 static const int JIT_THRESHOLD = 1;
 
+// A virtual call (a method call): the same call aimed at the method the object's own class runs, so an
+// override runs when the object belongs to a subclass. One copy per call site and class, made the first time.
+static InstructionNode* virtual_call_target(InstructionNode* pc)
+{
+    int cls = objects_class_of(mem[pc->call_inst.arg_val_slots[0]], pc->line_no);
+    static map<pair<InstructionNode*, int>, InstructionNode*> copies;
+    InstructionNode*& copy = copies[{pc, cls}];
+    if (copy) return copy;
+    auto c = virtualTable.find(cls);
+    if (c == virtualTable.end() || !c->second.count(pc->call_inst.virtual_method))
+    {
+        tensor_shape_error(pc->line_no, "the object's class has no such method");
+    }
+    const MethodTarget& t = c->second[pc->call_inst.virtual_method];
+    copy = new InstructionNode(*pc);
+    copy->call_inst.function_head = t.head;
+    copy->call_inst.param_slots = t.param_slots;
+    copy->call_inst.param_types = t.param_types;
+    copy->call_inst.func_slot_base = t.slot_base;
+    copy->call_inst.func_slot_count = t.slot_count;
+    copy->call_inst.virtual_method = 0;
+    return copy;
+}
+
 InstructionNode* exec_call(InstructionNode* pc)
 {
+    if (pc->call_inst.virtual_method) pc = virtual_call_target(pc); // its next is the call site's next
     do {
             if (pc->call_inst.function_head == NULL)
             {

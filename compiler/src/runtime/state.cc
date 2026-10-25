@@ -70,6 +70,7 @@ int import_line_offset = 0; // lines added by imports - used to skip imported co
 
 // Map Definitions for Class 
 map<string, ClassDef> classTable;
+map<int, map<int, MethodTarget>> virtualTable;
 map<string, string> varClassType;
 map<string, map<string, InstructionNode*>> classMethodTable;
 map<string, map<string, vector<string>>> classMethodParams;

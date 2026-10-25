@@ -131,7 +131,9 @@ struct CallArgs
 };
 CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionNode*& tracker);  // token ends past ')'
 bool is_reference_type(VarType t);  // an object or a container: counted references
-bool class_fits(const string& want, const string& got);  // got is want's class, or none ("")
+bool class_fits(const string& want, const string& got);  // got is want's class, a subclass of it, or none ("")
+string find_method_class(const string& cls, const string& method);  // the class cls takes method from ("" if none)
+void register_class_methods(const string& cls, const string& parent);// fills virtualTable for cls
 void emit_ref_store(int slot, int value, VarType type, bool temp, int line, struct InstructionNode*& head,
                     struct InstructionNode*& tracker);
 void release_temp(int slot, VarType type, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);

@@ -1,0 +1,14 @@
+# A subclass goes where its parent is expected, not the other way: an Animal may not be a Dog.
+class Animal:
+    int age
+
+    def init(int a):
+        self.age = a
+
+class Dog extends Animal:
+    def fetch() -> int:
+        return 7
+
+def main():
+    Animal a = Dog(3)
+    Dog d = a

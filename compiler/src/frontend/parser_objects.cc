@@ -19,6 +19,8 @@ map<string, string> functionReturnClass;
 map<string, map<string, vector<string>>> classMethodParamClasses;  // class -> method -> each parameter's class
 map<string, map<string, string>> classMethodReturnClass;
 map<string, map<string, pair<int, int>>> classMethodSlotRange;  // saved and restored around a call, as a function's
+static int class_id(const string& cls);  // (below)
+static int method_id(const string& method);
 
 // With token on a type's first token: whether it is a class (Point p) or a generic class (Box<int> b, compiled
 // here). If so, cls is its name and token is on its last token (the name, or the closing '>').
@@ -105,7 +107,8 @@ static void emit_set(int handle, int index, int value, VarType valueType, int li
 int emit_object_new(const string& cls, int line, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     const vector<ClassFieldInfo>& fields = classTable[cls].fields;
-    int handle = emit_object_op(OBJ_NEW, {int_constant((int)fields.size())}, {TYPE_INT}, TYPE_INT, line, head, tracker);
+    int handle = emit_object_op(OBJ_NEW, {int_constant((int)fields.size()), int_constant(class_id(cls))}, {TYPE_INT, TYPE_INT}, 
+                                TYPE_INT, line, head, tracker);
     for (int i = 0; i < (int)fields.size(); i++)
     {
         const ClassFieldInfo& f = fields[i];
@@ -157,8 +160,81 @@ static void emit_object_effect(TensorOp op, const vector<int>& args, const vecto
 
 bool is_reference_type(VarType t) { return t == TYPE_CLASS || t == TYPE_VECTOR || t == TYPE_MAP; }
 
-// An object of class got can go where one of class want is expected: the same class, or none (whose class is "")
-bool class_fits(const string& want, const string& got) { return got.empty() || got == want; }
+// An object of class got can go where one of class want is expected: the same class, a subclass of it (it has
+// want's fields first, and its methods override want's), or none (whose class is "")
+bool class_fits(const string& want, const string& got)
+{
+    for (string c = got; ;)
+    {
+        if (c.empty() || c == want) return true;
+        auto d = classTable.find(c);
+        if (d == classTable.end() || d->second.parent.empty()) return false;
+        c = d->second.parent;
+    }
+}
+
+// The class cls takes method from: cls itself, or the nearest parent that has it; "" when none has it
+string find_method_class(const string& cls, const string& method)
+{
+    for (string c = cls; !c.empty(); )
+    {
+        auto m = classMethodTable.find(c);
+        if (m != classMethodTable.end() && m->second.count(method)) return c;
+        auto d = classTable.find(c);
+        c = (d == classTable.end()) ? "" : d->second.parent;
+    }
+    return "";
+}
+
+// Ids for the runtime: a class's (each object records it) and a method name's (a virtual call names it)
+static int class_id(const string& cls)
+{
+    static map<string, int> ids;
+    auto it = ids.find(cls);
+    if (it != ids.end()) return it->second;
+    int id = (int)ids.size() + 1;
+    ids[cls] = id;
+    return id;
+}
+
+static int method_id(const string& method)
+{
+    static map<string, int> ids;
+    auto it = ids.find(method);
+    if (it != ids.end()) return it->second;
+    int id = (int)ids.size() + 1;
+    ids[method] = id;
+    return id;
+}
+
+// After class cls is compiled: the method it runs for each name, its own or (from parent) inherited
+void register_class_methods(const string& cls, const string& parent)
+{
+    int id = class_id(cls);
+    if (!parent.empty()) virtualTable[id] = virtualTable[class_id(parent)];
+    auto own = classMethodTable.find(cls);
+    if (own == classMethodTable.end()) return;
+    for (auto& m : own->second)
+    {
+        vector<int>& slots = classMethodParamSlots[cls][m.first];
+        vector<VarType>& types = classMethodParamTypes[cls][m.first];
+        MethodTarget t;
+        t.head = m.second;
+        t.num_params = 1 + (int)slots.size();
+        t.param_slots = new int[t.num_params];
+        t.param_types = new VarType[t.num_params];
+        t.param_slots[0] = classMethodSelfHandle[cls][m.first];  // the object
+        t.param_types[0] = TYPE_CLASS;
+        for (int i = 1; i < t.num_params; i++)
+        {
+            t.param_slots[i] = slots[i - 1];
+            t.param_types[i] = (i - 1 < (int)types.size()) ? types[i - 1] : TYPE_UNKNOWN;
+        }
+        t.slot_base = classMethodSlotRange[cls][m.first].first;
+        t.slot_count = classMethodSlotRange[cls][m.first].second;
+        virtualTable[id][method_id(m.first)] = t;
+    }
+}
 
 // slot = value, an object or a container (type): the variable now refers to it (a temporary's reference becomes
 // the variable's), and what it referred to before loses that reference.
@@ -214,8 +290,8 @@ CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionN
     return a;
 }
 
-// An object argument goes to a parameter of its class (the class itself: a subclass is not accepted yet), and an
-// object parameter takes only an object. Other arguments are left to the caller's own checks.
+// An object argument goes to a parameter of its class (or of a parent class: see class_fits), and an object
+// parameter takes only an object. Other arguments are left to the caller's own checks.
 void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line)
 {
     if (a.types[i] != TYPE_CLASS && want != TYPE_CLASS) return;
@@ -233,19 +309,20 @@ int parse_constructor_expression(const string& cls, int line, struct Instruction
     int handle = emit_object_new(cls, line, head, tracker);
     token = lexer.GetToken();  // past '('
     CallArgs a = parse_call_arguments(head, tracker);
-    if (!classMethodTable.count(cls) || !classMethodTable[cls].count("init"))
+    string initClass = find_method_class(cls, "init");  // a subclass without its own init runs its parent's
+    if (initClass.empty())
     {
         report_error(line, "class '" + cls + "' has no constructor 'init'");
     }
     else
     {
-        vector<string>& params = classMethodParams[cls]["init"];
+        vector<string>& params = classMethodParams[initClass]["init"];
         if (a.slots.size() != params.size())
             report_error(line, "'" + cls + "' constructor takes " + to_string(params.size()) + " argument(s) but got " +
                                to_string(a.slots.size()));
-        vector<VarType>& paramTypes = classMethodParamTypes[cls]["init"];
-        vector<ContainerInfo>& paramContainers = classMethodParamContainers[cls]["init"];
-        vector<string>& paramClasses = classMethodParamClasses[cls]["init"];
+        vector<VarType>& paramTypes = classMethodParamTypes[initClass]["init"];
+        vector<ContainerInfo>& paramContainers = classMethodParamContainers[initClass]["init"];
+        vector<string>& paramClasses = classMethodParamClasses[initClass]["init"];
         for (int i = 0; i < (int)a.types.size() && i < (int)paramTypes.size(); i++)
         {
             string pClass = i < (int)paramClasses.size() ? paramClasses[i] : "";
@@ -260,7 +337,7 @@ int parse_constructor_expression(const string& cls, int line, struct Instruction
             else
                 check_object_argument(a, i, paramTypes[i], pClass, "'" + cls + "' constructor", line);
         }
-        emit_method_call(cls, "init", handle, a.slots, a.types, line, head, tracker);
+        emit_method_call(initClass, "init", handle, a.slots, a.types, line, head, tracker);
     }
     release_call_temps(a, line, head, tracker);
     lastExprType = TYPE_CLASS;
@@ -478,6 +555,8 @@ int emit_method_call(const string& cls, const string& method, int objectSlot, co
     callNode->call_inst.function_head = classMethodTable[cls][method];
     callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
     callNode->call_inst.ret_type = retType;  // an object result is handed to the caller (see exec_ret)
+    // A method runs the version the object's own class has; init runs on a new object of a known class
+    callNode->call_inst.virtual_method = (method == "init") ? 0 : method_id(method);
     // The method's slots are saved and restored around the call, so a method can call itself (a recursive call
     // inside its own body gets them when the body is done: see parse_class_definition)
     pair<int, int> range = classMethodSlotRange.count(cls) && classMethodSlotRange[cls].count(method)
