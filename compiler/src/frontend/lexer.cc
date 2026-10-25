@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 #include <iostream>
 #include <istream>
 #include <vector>

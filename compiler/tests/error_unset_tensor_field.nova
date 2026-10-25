@@ -1,0 +1,13 @@
+# A Tensor field starts unset: using it before the object assigns it is a runtime error.
+class Lin:
+    Tensor W
+
+    def init():
+        pass
+
+    def total() -> double:
+        return tensor_sum(self.W)
+
+def main():
+    Lin l = Lin()
+    print(l.total())

@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Interpreter: function calls (memoization, JIT fast path) and returns. Split out of execute_program (interpreter.cc).
 #include <iostream>
 #include <cstdio>
@@ -28,7 +23,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -40,11 +34,33 @@
 
 using namespace std;
 
-// JIT-compile a function after this many interpreted calls (Windows builds only).
-static const int JIT_THRESHOLD = 1;
+// A virtual call (a method call): the same call aimed at the method the object's own class runs, so an
+// override runs when the object belongs to a subclass. One copy per call site and class, made the first time.
+static InstructionNode* virtual_call_target(InstructionNode* pc)
+{
+    int cls = objects_class_of(mem[pc->call_inst.arg_val_slots[0]], pc->line_no);
+    static map<pair<InstructionNode*, int>, InstructionNode*> copies;
+    InstructionNode*& copy = copies[{pc, cls}];
+    if (copy) return copy;
+    auto c = virtualTable.find(cls);
+    if (c == virtualTable.end() || !c->second.count(pc->call_inst.virtual_method))
+    {
+        tensor_shape_error(pc->line_no, "the object's class has no such method");
+    }
+    const MethodTarget& t = c->second[pc->call_inst.virtual_method];
+    copy = new InstructionNode(*pc);
+    copy->call_inst.function_head = t.head;
+    copy->call_inst.param_slots = t.param_slots;
+    copy->call_inst.param_types = t.param_types;
+    copy->call_inst.func_slot_base = t.slot_base;
+    copy->call_inst.func_slot_count = t.slot_count;
+    copy->call_inst.virtual_method = 0;
+    return copy;
+}
 
 InstructionNode* exec_call(InstructionNode* pc)
 {
+    if (pc->call_inst.virtual_method) pc = virtual_call_target(pc); // its next is the call site's next
     do {
             if (pc->call_inst.function_head == NULL)
             {
@@ -52,9 +68,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                 exit(1);
             }
 
-            // JIT hot path check
             InstructionNode* fhead = pc->call_inst.function_head;
-            jit_call_counts[fhead]++;
 
             // Memoization fast path: pure + recursive functions cache arg→result
             bool is_memo = pure_functions.count(fhead) && recursive_functions.count(fhead);
@@ -83,58 +97,6 @@ InstructionNode* exec_call(InstructionNode* pc)
                         break;
                     }
                 }
-            }
-
-            // Fast path: native JIT call (skip if previously deoptimized)
-            if (!jit_deoptimized.count(fhead) && jit_compiled.count(fhead) && jit_compiled[fhead] != nullptr)
-            {
-                typedef int64_t (*JitFunc)(int64_t);
-                JitFunc fn = (JitFunc)jit_compiled[fhead];
-                int argVal = mem[pc->call_inst.arg_val_slots[0]];
-                bool deopt = false;
-                int64_t result = 0;
-
-                #ifdef _MSC_VER
-                __try
-                {
-                    result = fn((int64_t)argVal);
-                }
-                __except (EXCEPTION_EXECUTE_HANDLER)
-                {
-                    deopt = true;
-                }
-                #else
-                result = fn((int64_t)argVal);
-                if (result == INT64_MIN)
-                    deopt = true;
-                #endif
-
-                if (deopt)
-                {
-                    fprintf(stderr, "JIT: deopt function, falling back to interpreter\n");
-                    jit_deoptimized.insert(fhead);
-                    jit_compiled[fhead] = nullptr;
-                    // Fall through to interpreter path below - do NOT break
-                }
-                else
-                {
-                    mem[pc->call_inst.ret_val_index] = (int)result;
-                    pc = pc->next;
-                    break;
-                }
-            }
-            else if (jit_call_counts[fhead] >= JIT_THRESHOLD && !jit_compiled.count(fhead)
-                     && !jit_deoptimized.count(fhead)
-                     && pc->call_inst.num_params <= 1)  // JIT only handles single-param functions
-            {
-    #if defined(NOVA_JIT) && (defined(__x86_64__) || defined(_M_X64))  // opt-in: -DNOVA_JIT (x86-64 only, experimental)
-                jit_compiled[fhead] = jit_compile_function(fhead);
-
-                if (!jit_compiled[fhead])
-                {
-                    jit_compiled[fhead] = nullptr;
-                }
-    #endif
             }
 
             // Interpreter fallback path
@@ -167,6 +129,7 @@ InstructionNode* exec_call(InstructionNode* pc)
             for (int i = 0; i < count; i++)
                 frame.savedSlots.push_back(mem[base + i]);
 
+            objects_enter_call();  // before the parameters: an object parameter is one of the call's references
             for (int i = 0; i < pc->call_inst.num_params; i++)
             {
                 int pSlot = pc->call_inst.param_slots[i];
@@ -187,6 +150,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                 // two sides' independent TENSOR_RELEASE insertions (see insert_tensor_releases) each
                 // own one reference instead of double-freeing a single one.
                 if (g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
+                if (pt == TYPE_CLASS || pt == TYPE_VECTOR || pt == TYPE_MAP) objects_bind_param(pSlot, mem[pSlot], pt);
             }
 
             callStack.push(frame);
@@ -271,6 +235,11 @@ InstructionNode* exec_ret(InstructionNode* pc)
                 capturedRetVals.push_back(v);
             }
 
+            // The call's object references go; an object it returns is handed to the caller first
+            VarType rt = frame.dest_type;
+            bool reference = (rt == TYPE_CLASS || rt == TYPE_VECTOR || rt == TYPE_MAP);
+            objects_exit_call(reference ? (int)capturedRetVals[0] : 0, rt);
+
             // memo cache stays int-only (safe: edit 2 keeps non-int functions out)
             if (frame.is_memoizable && frame.memo_func)
             {
@@ -300,18 +269,8 @@ InstructionNode* exec_ret(InstructionNode* pc)
             else if (frame.dest_type == TYPE_DOUBLE) dmem[frame.dest_index] = capturedRetVals[0];
             else mem[frame.dest_index] = (int)capturedRetVals[0];
 
-            // free all function-local slots EXCEPT dest_index
-            // dest_index must survive until the callers ASSIGN copies to it
-            // that ASSIGN emits no alloc_slot calls, so dest_index is dafe
-            int count = (int)frame.savedSlots.size();
-            for (int i = 0;i < count;i++)
-            {
-                int slot = frame.slot_base + i;
-                if (slot != frame.dest_index)
-                {
-                    free_slot(slot);
-                }
-            }
+            // The function's local slots stay its own: they were assigned when it was compiled, and its next call
+            // uses them again. (They used to go on freeList here, so a later ALLOC could hand them out as an array.)
             pc = frame.returnAddress;
             break;
     } while (0);

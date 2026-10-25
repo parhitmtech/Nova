@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Parser state: symbol tables, function/array/struct/class tables, tensor built-in tables. Split out of parser.cc.
 #include "parser_internal.h"
 
@@ -128,7 +123,7 @@ extern const set<TensorOp> TENSOR_INT_OPS = {
 // return a tensor handle (1x1), in both grad and non-grad mode, so their type doesn't depend on
 // a runtime flag.
 extern const set<TensorOp> TENSOR_DOUBLE_OPS = {
-    TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET, CON_GET_D, CON_POP_D, CON_MIN_D, CON_MAX_D, CON_SUM_D
+    TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET, CON_GET_D, CON_POP_D, CON_MIN_D, CON_MAX_D, CON_SUM_D, OBJ_GET_D
 };
 
 map<string, StructDef> structTable;  // struct name -> defnition
@@ -145,10 +140,6 @@ ContainerInfo currentFuncRetContainer;
 map<string, map<string, ContainerInfo>> classFieldContainers;
 map<string, map<string, vector<ContainerInfo>>> classMethodParamContainers;
 map<string, map<string, ContainerInfo>> classMethodReturnContainer;
-map<string, int> currentSelfFieldSlots;
-map<string, VarType> currentSelfFieldTypes;
-map<string, int> currentSelfFieldArraySizes;
-map<string, map<string, map<string, int>>> classMethodArraySizes;
 map<string, map<string, vector<int>>> classMethodParamSlots;
 string currentSelfClassName = "";
 

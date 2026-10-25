@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Liveness analysis (defs/uses/successors per IR node). Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>
@@ -40,7 +35,7 @@ bool tensor_call_result_is_mem_slot(TensorOp op)
 {
     switch (op) 
     {
-        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET: case CON_GET_D: case CON_POP_D: case CON_MIN_D: case CON_MAX_D: case CON_SUM_D:
+        case TEN_SUM: case TEN_MEAN: case TEN_MAX: case TEN_GET: case CON_GET_D: case CON_POP_D: case CON_MIN_D: case CON_MAX_D: case CON_SUM_D: case OBJ_GET_D:
         {
             return false;  // dmem[] result
         }

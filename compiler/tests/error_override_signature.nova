@@ -1,0 +1,17 @@
+# An override takes and returns what the method it overrides does, so a call through the parent can run it.
+class Animal:
+    int age
+
+    def init(int a):
+        self.age = a
+
+    def speak() -> int:
+        return 0
+
+class Fish extends Animal:
+    def speak() -> double:
+        return 1.5
+
+def main():
+    Fish f = Fish(1)
+    print(f.age)

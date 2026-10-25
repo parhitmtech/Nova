@@ -71,10 +71,6 @@ jobs:
         env:
           CXX: ${{ matrix.cxx }}
           CXXFLAGS: -O2 -Wall -Wextra -Werror  # keep the build warning-free
-      - name: Build bytecode VM
-        run: make novavm CXX="$CXX"
-        env:
-          CXX: ${{ matrix.cxx }}
       - name: Language tests (tests/*.nova)
         run: node tests/run.js
       - name: Language tests with --optimize

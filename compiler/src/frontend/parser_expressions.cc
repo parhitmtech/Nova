@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Expressions: function calls, factors, terms, arithmetic and type coercion. Split out of parser.cc.
 #include "parser_internal.h"
 
@@ -12,18 +7,10 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     token = lexer.GetToken();  // '('
     token = lexer.GetToken();  // first arg or ')'
 
-    vector<int>     argIndices;
-    vector<VarType> argTypes;
-    vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
-
-    while (token.token_type != RPAREN && token.token_type != END_OF_FILE) {
-        int argIdx = parse_expression(head, tracker);
-        argIndices.push_back(argIdx);
-        argTypes.push_back(lastExprType);
-        argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
-        if (token.token_type == COMMA) token = lexer.GetToken();
-    }
-    token = lexer.GetToken();  // past ')'
+    CallArgs args = parse_call_arguments(head, tracker);  // token ends past ')'
+    vector<int>& argIndices = args.slots;
+    vector<VarType>& argTypes = args.types;
+    vector<ContainerInfo>& argContainers = args.containers;
 
     // A generic function: call the copy compiled for these argument types.
     if (is_generic_function(funcName))
@@ -35,7 +22,7 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
             lastExprType = TYPE_UNKNOWN;
             return 0;
         }
-        funcName = instantiate_generic_function(funcName, argTypes, argContainers);
+        funcName = instantiate_generic_function(funcName, argTypes, argContainers, args.classes);
     }
     // A function without '-> type' calling itself before its return type is known (see parse_function_definition).
     if (funcName == currentFunctionLabel && currentFuncReturnPending) currentFuncSelfCalled = true;
@@ -46,15 +33,23 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
 
     if (functionParamTypes.count(funcName)) {
         vector<VarType>& pTypes = functionParamTypes[funcName];
+        vector<string>& pClasses = functionParamClasses[funcName];
         for (int i = 0; i < (int)argTypes.size() && i < (int)pTypes.size(); i++) {
+            string pClass = i < (int)pClasses.size() ? pClasses[i] : "";
             if (!types_compatible(argTypes[i], pTypes[i]))
-                report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + typeToString(pTypes[i]) + " but got " + typeToString(argTypes[i]));
+                report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + 
+                                            value_type_name(pTypes[i], ContainerInfo(), pClass) + " but got " + 
+                                            value_type_name(argTypes[i], argContainers[i], args.classes[i]));
             else if ((pTypes[i] == TYPE_VECTOR || pTypes[i] == TYPE_MAP) && i < (int)functionParamContainers[funcName].size() && 
                      !same_container(argTypes[i], argContainers[i], functionParamContainers[funcName][i]))
             {
                 report_error(token.line_no, "argument " + to_string(i+1) + " of '" + funcName + "' expects " + 
                                             container_type_name(functionParamContainers[funcName][i]) + " but got " + 
                                             container_type_name(argContainers[i]));
+            }
+            else
+            {
+                check_object_argument(args, i, pTypes[i], pClass, "'" + funcName + "'", token.line_no);
             }
         }
     }
@@ -145,7 +140,17 @@ int parse_function_call(struct InstructionNode*& head, struct InstructionNode*& 
     }
     append(head, tracker, copyRetNode);
     lastExprType = funcRetType;
-    if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) lastExprContainer = functionReturnContainer[funcName];
+    if (funcRetType == TYPE_VECTOR || funcRetType == TYPE_MAP) 
+    {
+        lastExprContainer = functionReturnContainer[funcName];
+        lastExprTemp = true;  // the call's result: a temporary
+    }
+    if (funcRetType == TYPE_CLASS)
+    {
+        lastExprClass = functionReturnClass[funcName];
+        lastExprTemp = true;
+    }
+    release_call_temps(args, token.line_no, head, tracker);
     return freshSlot;
 }
 
@@ -313,6 +318,37 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         }
 
         if (functionTable.find(token.lexeme) != functionTable.end() || is_generic_function(token.lexeme)) return parse_function_call(head, tracker);
+        // none: no object (the handle 0), of no class, so it goes wherever an object does
+        if (token.lexeme == "none" && !name_is_declared("none"))
+        {
+            token = lexer.GetToken();
+            lastExprType = TYPE_CLASS;
+            lastExprClass = "";
+            lastExprTemp = false;
+            return int_constant(0);
+        }
+        // Point(1, 2), Box<int>(5): a new object
+        if (classTable.count(token.lexeme) && lexer.peek(1).token_type == LPAREN)
+        {
+            string cls = token.lexeme;
+            int line = token.line_no;
+            token = lexer.GetToken();  // '('
+            return parse_constructor_expression(cls, line, head, tracker);
+        }
+        if (is_generic_class(token.lexeme) && lexer.peek(1).token_type == LESS)
+        {
+            int line = token.line_no;
+            string cls = parse_generic_class_type();  // token ends on '>'
+            token = lexer.GetToken();  // '('
+            if (cls.empty() || token.token_type != LPAREN)
+            {
+                report_error(line, "expected '(' after the class type: a new object is written " + 
+                                   (cls.empty() ? string("Box<int>") : cls) + "(...)");
+                lastExprType = TYPE_UNKNOWN;
+                return 0;
+            }
+            return parse_constructor_expression(cls, line, head, tracker);
+        }
 
         if (TENSOR_OP_MAP.count(token.lexeme))
         {
@@ -384,19 +420,9 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             }
             else
             {
-                // field read: obj.field
-                if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(memberName))
-                {
-                    report_error(token.line_no, "class instance '" + varName + "' has no field '" + memberName + "'");
-                    lastExprType = TYPE_UNKNOWN;
-                    return 0;
-                }
-                lastExprType = classFieldTypes[varName][memberName];
-                if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
-                {
-                    lastExprContainer = classFieldContainers[varClassType[varName]][memberName];
-                }
-                return classFieldSlots[varName][memberName];
+                // field read: obj.field (token is on the token after the field name)
+                return parse_field_expression(symbolTable[varName], varClassType[varName], memberName, token.line_no,
+                                              head, tracker);
             }
         }
 
@@ -429,6 +455,11 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         if (!check_declared(token.lexeme, token.line_no)) { token = lexer.GetToken(); lastExprType = TYPE_UNKNOWN; return 0; }
 
         lastExprType = typeTable.count(token.lexeme) ? typeTable[token.lexeme] : TYPE_UNKNOWN;
+        if (lastExprType == TYPE_CLASS)
+        {
+            lastExprClass = varClassType[token.lexeme];
+            lastExprTemp = false;  // the variable keeps itsreference
+        }
         int idx = symbolTable[token.lexeme];
         token = lexer.GetToken();
         return idx;
@@ -461,64 +492,25 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
             lastExprType = TYPE_UNKNOWN;
             return 0;
         }
-        token = lexer.GetToken();  // consume SELF → '.'
-        string fieldPath = "";
-        bool tensorField = false;
-        while (token.token_type == DOT && !tensorField)
+        token = lexer.GetToken();  // past 'self'
+        if (token.token_type != DOT)
         {
-            token = lexer.GetToken();  // consume '.' → field segment
-            if (!fieldPath.empty()) fieldPath += ".";
-            fieldPath += token.lexeme;
-            token = lexer.GetToken();  // consume field segment → next token
-            // a Tensor or container field ends the path: a '.' or '[' after it is a postfix (self.W.T, self.ids[0])
-            tensorField = currentSelfFieldTypes.count(fieldPath) &&
-                          (currentSelfFieldTypes[fieldPath] == TYPE_TENSOR || currentSelfFieldTypes[fieldPath] == TYPE_VECTOR ||
-                           currentSelfFieldTypes[fieldPath] == TYPE_MAP);
+            // self as a value: return self, f(self)
+            lastExprType = TYPE_CLASS;
+            lastExprClass = currentSelfClassName;
+            lastExprTemp = false;
+            return currentSelfHandle;
         }
-        // self.field[index] (array read)
-        if (token.token_type == LBRAC && !tensorField)
+        token = lexer.GetToken();  // the field's or method's name
+        string member = token.lexeme;
+        int line = token.line_no;
+        token = lexer.GetToken();
+        if (token.token_type == LPAREN)
         {
-            if (!currentSelfFieldSlots.count(fieldPath))
-            {
-                report_error(token.line_no, "'" + currentSelfClassName + "' has no array field '" + fieldPath + "'");
-                lastExprType = TYPE_UNKNOWN;
-                return 0;
-            }
-            int indexLine = token.line_no;
-            token = lexer.GetToken();  // first token of index expression
-            int indexSlot = parse_expression(head, tracker);
-            token = lexer.GetToken();  // past ']'
-
-            int arrSize = currentSelfFieldArraySizes.count(fieldPath) ? currentSelfFieldArraySizes[fieldPath] : 0;
-
-            int tempSlot = alloc_temp();
-            struct InstructionNode* node = new InstructionNode();
-            node->line_no = token.line_no;
-            node->type = ARRAY_READ;
-            node->array_inst.base_index = currentSelfFieldSlots[fieldPath];
-            node->array_inst.dynamic_base = true;
-            node->array_inst.index_slot = indexSlot;
-            node->array_inst.target_index = tempSlot;
-            node->array_inst.array_size = arrSize;
-            node->array_inst.size_slot = -1;
-            node->array_inst.line_no = indexLine;
-            append(head, tracker, node);
-
-            lastExprType = TYPE_INT;
-            return tempSlot;
+            return parse_method_call_on(currentSelfHandle, currentSelfClassName, member, head, tracker);  // self.area()
         }
-        if (!currentSelfFieldSlots.count(fieldPath))
-        {
-            report_error(token.line_no, "class '" + currentSelfClassName + "' has no field '" + fieldPath + "'");
-            lastExprType = TYPE_UNKNOWN;
-            return 0;
-        }
-        lastExprType = currentSelfFieldTypes[fieldPath];
-        if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)
-        {
-            lastExprContainer = classFieldContainers[currentSelfClassName][fieldPath];
-        }
-        return currentSelfFieldSlots[fieldPath];
+        return parse_field_expression(currentSelfHandle, currentSelfClassName, member, line, head, tracker);  // postfixes
+                                                                                    // on it (self.W.T) come from parse_factor
     }
     else if (token.token_type == FLOAT_TYPE || token.token_type == DOUBLE_TYPE || token.token_type == INT_TYPE)
     {
@@ -590,8 +582,8 @@ static int parse_tensor_postfix(int t, struct InstructionNode*& head, struct Ins
     return emit_tensor_op(op, "'." + member + "'", {t}, {TYPE_TENSOR}, {}, line, head, tracker);
 }
 
-// A primary followed by any tensor or container postfixes, so x.T.T, w[0, 1], matmul(a, b)[0, 0] and
-// make(3).size() all work.
+// A primary followed by any tensor, container or object postfixes,so x.T.T, w[0, 1], matmul(a, b)[0, 0],
+// make(3).size() and make().x all work.
 int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
     int v = parse_primary(head, tracker);
@@ -604,7 +596,16 @@ int parse_factor(struct InstructionNode*& head, struct InstructionNode*& tracker
         else if (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP)  // make(3).size(), make(3)[0]
         {
             ContainerInfo info = lastExprContainer;
-            v = parse_container_postfix(v, info, container_type_name(info), token.line_no, head, tracker);
+            VarType type = lastExprType;
+            bool temp = lastExprTemp;
+            int line = token.line_no;
+            int r = parse_container_postfix(v, info, container_type_name(info), line, head, tracker);
+            if (temp) release_temp(v, type, line, head, tracker);  // a temporary container, once used
+            v = r;
+        }
+        else if (lastExprType == TYPE_CLASS && token.token_type == DOT)  // make().x, self.head.value, v[0].move(1)
+        {
+            v = parse_object_postfix(v, head, tracker);
         }
         else
         {
@@ -923,6 +924,8 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
 {
     int left = parse_additive(head, tracker);
     VarType lt = lastExprType;
+    string lClass = lastExprClass;
+    bool lTemp = (lt == TYPE_CLASS && lastExprTemp);
     ConditionalOperatorType op;
     if (!comparison_op(token.token_type, op)) return left;
 
@@ -930,6 +933,25 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
     token = lexer.GetToken();
     int right = parse_additive(head, tracker);
     VarType rt = lastExprType;
+    string rClass = lastExprClass;
+    bool rTemp = (rt == TYPE_CLASS && lastExprTemp);
+    if (lt == TYPE_CLASS || rt == TYPE_CLASS)
+    {
+        // p == q, n.next != none: the same object or not (objects have no order)
+        if (op != CONDITION_EQUAL && op != CONDITION_NOTEQUAL)
+        {
+            report_error(line, "objects are compared with == and != only");
+        }
+        else if (lt != rt)
+        {
+            report_error(line, "cannot compare " + (lt == TYPE_CLASS ? lClass : typeToString(lt)) + " with " + 
+                               (rt == TYPE_CLASS ? rClass : typeToString(rt)));
+        }
+        else if (!class_fits(lClass, rClass) && !class_fits(rClass, lClass))
+        {
+            report_error(line, "cannot compare a " + lClass + " with a " + rClass);
+        }
+    }
 
     // result = 0; if (left op right) result = 1
     int result = alloc_temp();
@@ -940,6 +962,8 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
     append(head, tracker, done);
     g_lastComparison.done   = done;
     g_lastComparison.result = result;
+    if (lTemp) release_temp(left, TYPE_CLASS, line, head, tracker);  // make() == none: the temporary, once compared
+    if (rTemp) release_temp(right, TYPE_CLASS, line, head, tracker);
 
     if (comparison_op(token.token_type, op))
         report_error(token.line_no, "comparisons cannot be chained; use 'and', e.g. (a < b and b < c)");

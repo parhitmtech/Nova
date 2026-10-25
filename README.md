@@ -128,7 +128,7 @@ which attaches the token and logs out on `401`.
 | File | Functions | Transport |
 |------|-----------|-----------|
 | `auth.ts` | sign up, log in | Axios |
-| `compiler.ts` | run, run-stream, compare, compile bytecode, GPU submit / status / results, capabilities | Axios / `fetch` SSE |
+| `compiler.ts` | run, run-stream, compare, GPU submit / status / results, capabilities | Axios / `fetch` SSE |
 | `files.ts` | list, load, save, delete | Axios |
 | `share.ts` | share a snippet, load a shared one | Axios |
 | `agent.ts` | NovaBot chat, history, memory | `fetch` SSE |
@@ -157,7 +157,7 @@ Everything except sign-up, log-in, `/health` and reading a shared snippet requir
 | Area | Routes | Notes |
 |------|--------|-------|
 | Auth | `POST /auth/signup`, `POST /auth/login`, `GET /auth/me` | bcrypt passwords in DynamoDB; 1-hour JWTs; 10 requests/min |
-| Execution | `POST /run`, `POST /run-stream`, `POST /compare`, `POST /compile-bytecode` | Run in a worker container; `run-stream` is SSE; `503` when execution capacity is full |
+| Execution | `POST /run`, `POST /run-stream`, `POST /compare` | Run in a worker container; `run-stream` is SSE; `503` when execution capacity is full |
 | Workspace | `POST /fs/write`, `DELETE /fs/delete`, `POST /fs/mkdir`, `POST /fs/rename`, `GET /fs/read`, `GET /fs/tree` | Per-user directory on the server; byte and entry quotas; 120 requests/min per user |
 | Cloud files | `GET /files`, `POST /files/save`, `GET /files/load`, `DELETE /files/delete` | S3 content (`{userId}/…`), DynamoDB metadata |
 | GPU / SOL | `POST /gpu/submit`, `GET /gpu/status/:jobId`, `GET /gpu/results/:jobId` | Only when GPU is enabled |
@@ -196,7 +196,7 @@ execution mode (no Docker) exists for development and is refused in production.
 
 | Service | Resource | Purpose |
 |---------|----------|---------|
-| S3 | `novacomp-files` | File content (`.nova`, `.nbc`, `.tar.gz` models), shared snippets |
+| S3 | `novacomp-files` | File content (`.nova`, `.tar.gz` models), shared snippets |
 | DynamoDB | `novacomp-users` | User accounts (email key, bcrypt hash) |
 | DynamoDB | `novacomp-files-meta` | File metadata (userId + file path, updatedAt) |
 | DynamoDB | `novacomp-agent-history` | NovaBot conversation history (30-day TTL) |
@@ -292,10 +292,8 @@ Parser (frontend/parser*.cc)       one pass, type-checked, emits a linked-list I
    ▼
 Back ends
    ├── interpreter (default)                     runtime/
-   ├── bytecode (.nbc, --emit-bytecode) + the standalone VM, novavm
-   ├── x86-64 assembly (--emit-asm), with Chaitin-Briggs register allocation (regalloc/)
-   ├── CUDA source (--emit-cuda)
-   └── x86-64 JIT: experimental, off unless built with -DNOVA_JIT (it miscompiles general code)
+   └── CUDA source (--emit-cuda)
+   (native code will come from LLVM: see docs/ROADMAP.md)
 ```
 
 Also: `--check` (type-check only), `--dump-ir`, `--debug` (step debugger), automatic memoization of pure
@@ -325,8 +323,11 @@ The full reference is [docs/SYNTAX.md](docs/SYNTAX.md). In short:
 - **Integrations:** `hf.*` (HuggingFace datasets and models) and `sol.*` (training on the SOL cluster).
 
 Containers are references: they can be passed to functions, returned and assigned (sharing one container).
-They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Known limit, being worked
-on: an object cannot yet be passed or stored, so a class type cannot be a type argument (`Box<P>`).
+They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Objects are references
+too: they can be passed, returned, assigned, stored in fields and containers (`vector<Node>`), and used as
+type arguments (`Box<Layer>`). Objects and containers are reference-counted and freed when nothing refers to
+them; `none` means no object (`while (node != none)`). A subclass goes wherever its parent is expected, and
+methods are virtual (`Animal a = Dog(3); a.speak()` runs Dog's).
 
 ---
 
@@ -449,7 +450,6 @@ text and tool events streamed over SSE; history and memory saved
 ```bash
 make -C compiler          # → compiler/build/nova
 make -C compiler test     # the golden language tests in compiler/tests/
-make -C compiler novavm   # the standalone bytecode VM
 ```
 
 `NOVA_HOME` must point at `compiler/` (the directory holding `stdlib/`) when running `nova` by hand on a
@@ -499,18 +499,18 @@ server and worker images, pushes them to GHCR and rolls them out to the EC2 host
 ```
 NovaComp/
 ├── compiler/                   # the Nova language (C++17)
-│   ├── Makefile                # make / make test / make novavm → build/
+│   ├── Makefile                # make / make test → build/
 │   ├── include/                # compiler.h (IR, types, ops), lexer.h, tensor_ops.h, autograd.h, optimizer.h,
-│   │                           # regalloc.h, codegen.h, bytecode.h, integrations.h …
+│   │                           # regalloc.h, codegen.h, integrations.h …
 │   ├── src/
-│   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc, novavm_main.cc (bytecode VM)
+│   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc
 │   │   ├── frontend/           # lexer, inputbuf, imports (orbit); parser.cc (functions, generics) +
-│   │   │                       # parser_{state,util,classes,builtins,statements,expressions,containers}.cc
-│   │   ├── runtime/            # interpreter.cc (dispatch) + interp_{core,calls,tensor,containers,integrations}.cc,
+│   │   │                       # parser_{state,util,classes,builtins,statements,expressions,containers,objects}.cc
+│   │   ├── runtime/            # interpreter.cc (dispatch) + interp_{core,calls,tensor,containers,objects,integrations}.cc,
 │   │   │                       # state.cc, memory.cc, tensor.cc, autograd.cc, memoize.cc
 │   │   ├── opt/                # constant_fold, copy_propagation, dead_code, licm, inline, tensor_release
-│   │   ├── regalloc/           # liveness.cc, coloring.cc (Chaitin-Briggs)
-│   │   ├── codegen/            # x86_asm.cc, jit.cc, cuda.cc, bytecode.cc (.nbc)
+│   │   ├── regalloc/           # liveness.cc (used by the tensor-free pass)
+│   │   ├── codegen/            # cuda.cc (--emit-cuda)
 │   │   ├── ir/                 # dump.cc (--dump-ir)
 │   │   └── integrations/       # sol.cc (SOL over SSH), hf.cc (HuggingFace)
 │   ├── stdlib/                 # std.math, novatorch.{nn,optim,data}, collections, math, assert (*.nova)

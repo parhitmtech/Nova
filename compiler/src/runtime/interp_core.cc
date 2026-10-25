@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Interpreter: I/O, int/float/double arithmetic, jumps, arrays, strings, casts. Split out of execute_program (interpreter.cc).
 #include <iostream>
 #include <cstdio>
@@ -29,7 +24,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -330,11 +324,10 @@ InstructionNode* exec_alloc(InstructionNode* pc)
                 printf("Runtime error: array size must > 0, got %d\n", size);
                 exit(1);
             }
+            // size new slots in one block: an array is base..base+size-1 (alloc_slot could reuse a freed slot instead)
             int base = next_available;
-            for (int i = 0;i < size;i++)
-            {
-                alloc_slot();
-            }
+            mem.resize(mem.size() + size, 0);
+            next_available += size;
             mem[pc->alloc_inst.base_slot] = base;
             pc = pc->next;
             break;

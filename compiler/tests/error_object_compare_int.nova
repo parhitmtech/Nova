@@ -1,0 +1,10 @@
+# An object compares with an object (or none), not with a number.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    P a = P(1)
+    print(a == 1)

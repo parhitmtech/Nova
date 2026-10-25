@@ -1,0 +1,69 @@
+# Containers are freed when nothing refers to them any more (stage B4), and their elements (Tensors, objects)
+# lose the reference the container held. Covers containers made in a loop, returned from functions and passed to
+# them, a call's container used directly (make(3).size()), a container shared by two variables, and container
+# fields reassigned in a loop. tensor_live_count() must not grow with the number of iterations.
+class Layer:
+    Tensor W
+
+    def init(int n):
+        self.W = ones(n, n)
+
+class Bag:
+    vector<Tensor> ts
+
+    def init():
+        self.ts.push(ones(1, 1))
+
+def make(int n) -> vector<Tensor>:
+    vector<Tensor> v = vector<Tensor>()
+    v.push(ones(n, n))
+    return v
+
+def count(vector<Tensor> v) -> int:
+    return v.size()
+
+def main():
+    int i = 0
+    while (i < 10):
+        vector<Tensor> tmp = vector<Tensor>()
+        tmp.push(ones(2, 2))
+        map<string, Tensor> m = map<string, Tensor>()
+        m["a"] = ones(2, 2)
+        i += 1
+    print(tensor_live_count())       # 2: the last tmp's and m's
+
+    i = 0
+    while (i < 10):
+        vector<Layer> layers = vector<Layer>()
+        layers.push(Layer(2))
+        layers.push(Layer(1))
+        i += 1
+    print(tensor_live_count())       # 4: also the last layers' two
+
+    i = 0
+    int s = 0
+    while (i < 10):
+        vector<Tensor> v = make(2)
+        s = s + count(v) + count(make(1)) + make(3).size()
+        make(1)
+        i += 1
+    print(s)                         # 30
+    print(tensor_live_count())       # 5: also the last v's
+
+    vector<Tensor> a = vector<Tensor>()
+    a.push(ones(2, 2))
+    vector<Tensor> b = a
+    a = vector<Tensor>()
+    print(b.size())                  # 1: b still refers to it
+    print(tensor_live_count())       # 6
+    b = vector<Tensor>()
+    print(tensor_live_count())       # 5: nothing refers to it any more
+
+    i = 0
+    while (i < 10):
+        Bag g = Bag()
+        g.ts.push(ones(2, 2))
+        g.ts = vector<Tensor>()
+        g.ts.push(ones(3, 3))
+        i += 1
+    print(tensor_live_count())       # 6: also the last bag's

@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Global interpreter/compiler state shared across modules (formerly the top of compiler.cc).
 #include <iostream>
 #include <cstdio>
@@ -24,7 +19,6 @@
 #include <unordered_set>
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -52,11 +46,6 @@ extern map<string, int> symbolTable;
 extern map<string, int> floatSymbolTable;
 extern map<string, int> doubleSymbolTable;
 
-// JIT
-unordered_map<InstructionNode*, int> jit_call_counts;
-unordered_map<InstructionNode*, void*> jit_compiled;
-unordered_set<InstructionNode*> jit_deoptimized;
-
 // Memoization for pure recursive functions
 unordered_set<InstructionNode*> pure_functions;
 unordered_set<InstructionNode*> recursive_functions;
@@ -70,17 +59,14 @@ int import_line_offset = 0; // lines added by imports - used to skip imported co
 
 // Map Definitions for Class 
 map<string, ClassDef> classTable;
+map<int, map<int, MethodTarget>> virtualTable;
 map<string, string> varClassType;
-map<string, map<string, int>> classFieldSlots;
-map<string, map<string, VarType>> classFieldTypes;
 map<string, map<string, InstructionNode*>> classMethodTable;
 map<string, map<string, vector<string>>> classMethodParams;
 map<string, map<string, vector<VarType>>> classMethodParamTypes;
 map<string, map<string, VarType>> classMethodReturnType;
 int currentSelfBase = -1;
 string currentSelfName = "";
-map<string, map<string, map<string, int>>> classMethodSelfSlots;
-map<string, map<string, map<string, VarType>>> classMethodSelfTypes;
 
 // Global memory vectors
 

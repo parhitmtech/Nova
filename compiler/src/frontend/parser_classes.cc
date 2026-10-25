@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Structs and classes: definitions, instantiation, method calls. Split out of parser.cc.
 #include "parser_internal.h"
 
@@ -185,18 +180,25 @@ static string pendingClassCopyName;  // set by instantiate_generic_class for the
 
 bool is_generic_class(const string& name) { return genericClasses.count(name) > 0; }
 
-// A type argument's tokens as a type name ("int", "vector<int>", "map<string, int>"), or "" when they are not a
-// type a field or parameter can have: a built-in type, or a container of built-in types.
+// A type argument's tokens as a type name ("int", "Point", "vector<int>", "map<string, Point>"), or "" when they are not a
+// type a field or parameter can have: a built-in type, a class, or a container of either.
 static string type_argument_name(const vector<Token>& arg)
 {
     if (arg.size() == 1 && type_of_keyword(arg[0].token_type) != TYPE_UNKNOWN) return arg[0].lexeme;
+    if (arg.size() == 1 && arg[0].token_type == ID && classTable.count(arg[0].lexeme)) return arg[0].lexeme;  // Box<Point>
     ContainerInfo info;
     bool vec = arg.size() == 4 && arg[0].lexeme == "vector" && arg[1].token_type == LESS && arg[3].token_type == GREATER;
     bool map = arg.size() == 6 && arg[0].lexeme == "map" && arg[1].token_type == LESS && arg[3].token_type == COMMA &&
                arg[5].token_type == GREATER;
     if (!vec && !map) return "";
     info.isMap = map;
-    info.elem = type_of_keyword(arg[vec ? 2 : 4].token_type);
+    const Token& elem = arg[vec ? 2 : 4];
+    info.elem = type_of_keyword(elem.token_type);
+    if (info.elem == TYPE_UNKNOWN && elem.token_type == ID && classTable.count(elem.lexeme))
+    {
+        info.elem = TYPE_CLASS;  // Box<vector<Point>>
+        info.elemClass = elem.lexeme;
+    }
     if (info.elem == TYPE_UNKNOWN) return "";
     if (map)
     {
@@ -234,9 +236,8 @@ static string instantiate_generic_class(const string& name, const vector<vector<
         string argName = type_argument_name(args[i]);
         if (argName.empty())
         {
-            // An object cannot be a field's or parameter's value yet
             report_error(line, "'" + spelled(args[i]) + "' cannot be a type argument: use int, float, double, bool, string, "
-                               "Tensor, vector<T> or map<K, V>");
+                               "Tensor, a class, vector<T> or map<K, V>");
             return "";
         }
         copyName += (i ? ", " : "") + argName;
@@ -291,33 +292,6 @@ string parse_generic_class_type()
     return instantiate_generic_class(name, args, line);  // token is on the closing '>'
 }
 
-// The number of tokens from peek(k) on that spell the class name `name` ("Linear" is one token,
-// "Box<int, float>" is six), or 0 when they spell something else.
-static int class_name_tokens_at(int k, const string& name)
-{
-    Token t = lexer.peek(k);
-    if (t.token_type != ID) return 0;
-    string spelledName = t.lexeme;
-    int n = 1;
-    if (lexer.peek(k + 1).token_type == LESS)
-    {
-        spelledName += "<";
-        n++;
-        int depth = 0;  // Box<vector<int>>: the inner '>' closes vector<, the outer one Box<
-        while (true)
-        {
-            Token a = lexer.peek(k + n);
-            n++;
-            if (a.token_type == END_OF_FILE) return 0;
-            if (a.token_type == GREATER && depth == 0) { spelledName += ">"; break; }
-            if (a.token_type == LESS) depth++;
-            if (a.token_type == GREATER) depth--;
-            spelledName += (a.token_type == LESS) ? "<" : (a.token_type == GREATER) ? ">" : (a.token_type == COMMA) ? ", " : a.lexeme;
-        }
-    }
-    return spelledName == name ? n : 0;
-}
-
 void parse_class_definition()
 {
     int namePosition = lexer.GetPosition();
@@ -366,6 +340,7 @@ void parse_class_definition()
     ClassDef def;
     def.name = className;
     def.parent = "";
+    classTable[className] = def;  // a type in its own body already: Node next, def add(Vec o) -> Vec
 
     token = lexer.GetToken();  // EXTENDS or '{'
 
@@ -402,6 +377,8 @@ void parse_class_definition()
             string fullName = className + "::" + methodName;
             vector<string> params;
             vector<VarType> paramTypes;
+            vector<string> paramClasses;
+int methodSlotBase = next_available;  // the method's slots, from its parameters on
 
             // The parameters and everything the body declares are gone after the method (all of the name tables)
             enter_block();
@@ -412,16 +389,25 @@ void parse_class_definition()
             {
                 VarType pType = TYPE_UNKNOWN;
                 ContainerInfo pContainer;
+                string pClass;
                 if (type_of_keyword(token.token_type) != TYPE_UNKNOWN) { pType = type_of_keyword(token.token_type); token = lexer.GetToken(); }
                 else if (at_container_type() && parse_container_type(pContainer))  // vector<int> xs
                 {
                     pType = pContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
                     token = lexer.GetToken();  // past '>' to the name
                 }
+                else if (lexer.peek(1).token_type != COMMA && lexer.peek(1).token_type != RPAREN && 
+                         parse_class_type_name(pClass))  // Point p
+                {
+                    pType = TYPE_CLASS;
+                    token = lexer.GetToken();  // past the type to the name
+                }
                 if (token.token_type == ID)
                 {
                     params.push_back(token.lexeme);
                     paramTypes.push_back(pType);
+                    paramClasses.push_back(pClass);
+                    if (pType == TYPE_CLASS) varClassType[token.lexeme] = pClass;
                     classMethodParamContainers[className][methodName].push_back(pContainer);
                     if (pType == TYPE_VECTOR || pType == TYPE_MAP) containerTable[token.lexeme] = pContainer;
                     int pSlot = (pType == TYPE_FLOAT) ? alloc_float_slot() : 
@@ -437,10 +423,12 @@ void parse_class_definition()
             }
             classMethodParams[className][methodName] = params;
             classMethodParamTypes[className][methodName] = paramTypes;
+            classMethodParamClasses[className][methodName] = paramClasses;
 
             token = lexer.GetToken();  // ARROW or '{'
             VarType retType = TYPE_UNKNOWN;
             ContainerInfo retContainer;
+            string retClass;
             if (token.token_type == ARROW)
             {
                 token = lexer.GetToken();
@@ -450,36 +438,36 @@ void parse_class_definition()
                     retType = retContainer.isMap ? TYPE_MAP : TYPE_VECTOR;
                     classMethodReturnContainer[className][methodName] = retContainer;
                 }
-                else if (token.token_type == ID && classTable.count(token.lexeme)) retType = TYPE_CLASS;
+                else if (parse_class_type_name(retClass))  // -> Point
+                {
+                    retType = TYPE_CLASS;
+                    classMethodReturnClass[className][methodName] = retClass;
+                }
                 token = lexer.GetToken();  // '{'
             }
             classMethodReturnType[className][methodName] = retType;
+            classMethodTable[className][methodName] = nullptr;  // callable in its own body (its head comes after it)
+
+            // An override takes and returns what the method it overrides does, so a call through the parent's type
+            // can run it (init is not called that way)
+            string overridden = (methodName == "init") ? "" : find_method_class(def.parent, methodName);
+            if (!overridden.empty() &&
+                (classMethodParamTypes[overridden][methodName] != paramTypes || 
+                 classMethodParamClasses[overridden][methodName] != paramClasses || 
+                 classMethodReturnType[overridden][methodName] != retType || 
+                 classMethodReturnClass[overridden][methodName] != retClass))
+            {
+                report_error(token.line_no, "'" + className + "." + methodName + "' must take and return the same types as '" + 
+                                            overridden + "." + methodName + "', which it overrides");
+            }
 
             int retIdx = (retType == TYPE_FLOAT) ? alloc_float_slot() : 
                          (retType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_slot();
             functionReturnIndex[fullName] = retIdx;
 
-            // allocate self field slots for this method
-            map<string, int> selfSlots;
-            map<string, VarType> selfTypes;
-            map<string, int> arraySizes;
-            for (auto& f : def.fields)
-            {
-                int s = 0;
-                if (f.array_size > 0)
-                {
-                    s = alloc_slot();  // ONE pointer slot, not N slots
-                    arraySizes[f.name] = f.array_size;
-                }
-                else if (f.type == TYPE_FLOAT) s = alloc_float_slot();
-                else if (f.type == TYPE_DOUBLE) s = alloc_double_slot();
-                else { s = alloc_slot(); g_selfSlots.insert(s); }
-                selfSlots[f.name] = s;
-                selfTypes[f.name] = f.type; 
-            }
-            classMethodSelfSlots[className][methodName] = selfSlots;
-            classMethodSelfTypes[className][methodName] = selfTypes;
-            classMethodArraySizes[className][methodName] = arraySizes;
+            // The object's handle arrives as a hidden first parameter: self.x is a field of that object.
+            int selfHandle = alloc_slot();
+            classMethodSelfHandle[className][methodName] = selfHandle;
 
             // save + set parser context
             bool savedInsideFunc = insideFunction;
@@ -490,23 +478,22 @@ void parse_class_definition()
             vector<VarType> savedRetTypes = currentFuncRetTypes;
             string savedFunctionLabel = currentFunctionLabel;
             string savedSelfClass = currentSelfClassName;
-            map<string, int> savedSelfSlots = currentSelfFieldSlots;
-            map<string, VarType> savedSelfTypes = currentSelfFieldTypes;
-            map<string, int> savedSelfArraySizes = currentSelfFieldArraySizes;
+            int savedSelfHandle = currentSelfHandle;
+            string savedRetClass = currentFuncRetClass;
 
             insideFunction = true;
             currentFuncRetIdx = retIdx;
             currentFuncRetType = retType;
             currentFuncRetContainer = retContainer;
+            currentFuncRetClass = retClass;
+
             // A return nested in an if / loop goes through parse_statement, which writes these: without them
             // it wrote into whatever function was being compiled around this class (a generic copy's caller).
             currentFuncRetSlots = {retIdx};
             currentFuncRetTypes = {retType};
             currentFunctionLabel = className + "." + methodName;
             currentSelfClassName = className;
-            currentSelfFieldSlots = selfSlots;
-            currentSelfFieldTypes = selfTypes;
-            currentSelfFieldArraySizes = arraySizes;
+            currentSelfHandle = selfHandle;
             classTable[className] = def;
 
             token = lexer.GetToken();  // first token in body
@@ -525,6 +512,10 @@ void parse_class_definition()
                     {
                         report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(retContainer) + 
                                                     ", not " + container_type_name(lastExprContainer));
+                    }
+                    if (retType == TYPE_CLASS && lastExprType == TYPE_CLASS && !class_fits(retClass, lastExprClass))
+                    {
+                        report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + retClass + ", not " + lastExprClass);
                     }
 
                     struct InstructionNode* an = new InstructionNode();
@@ -576,9 +567,8 @@ void parse_class_definition()
             currentFuncRetTypes = savedRetTypes;
             currentFunctionLabel = savedFunctionLabel;
             currentSelfClassName = savedSelfClass;
-            currentSelfFieldSlots = savedSelfSlots;
-            currentSelfFieldTypes = savedSelfTypes;
-            currentSelfFieldArraySizes = savedSelfArraySizes;
+            currentSelfHandle = savedSelfHandle;
+            currentFuncRetClass = savedRetClass;
 
             exit_block();  // remove the parameters and locals
 
@@ -590,6 +580,17 @@ void parse_class_definition()
             append(mhead, mtracker, fb);
 
             classMethodTable[className][methodName] = mhead;
+            int methodSlotCount = next_available - methodSlotBase;
+            classMethodSlotRange[className][methodName] = {methodSlotBase, methodSlotCount};
+            for (struct InstructionNode* n = mhead; n != nullptr; n = n->next)
+            {
+                if (n->type == CALL && n->call_inst.function_head == nullptr)  // a call to itself
+                {
+                    n->call_inst.function_head = mhead;
+                    n->call_inst.func_slot_base = methodSlotBase;
+                    n->call_inst.func_slot_count = methodSlotCount;
+                }
+            }
             token = lexer.GetToken();  // advance past method body '}'
         }
         else if (type_of_keyword(token.token_type) != TYPE_UNKNOWN)
@@ -636,24 +637,24 @@ void parse_class_definition()
             token = lexer.GetToken();  // ';'
             token = lexer.GetToken();  // next member or '}'
         }
-        else if (token.token_type == ID && classTable.count(token.lexeme))
+        else if (token.token_type == ID && (classTable.count(token.lexeme) || 
+                                            (is_generic_class(token.lexeme) && lexer.peek(1).token_type == LESS)))
         {
-            // nested class type field: ClassName fieldName ;
-            string nestedClass = token.lexeme;
-            token = lexer.GetToken();  // field name
-            string fieldName = token.lexeme;
-            for (auto& nf : classTable[nestedClass].fields)
+            // Point origin, Node next, Box<int> b: a field that refers to an object (unset until assigned)
+            string fieldClass;
+            if (!parse_class_type_name(fieldClass))
             {
-                ClassFieldInfo fi;
-                fi.name = fieldName + "." + nf.name;
-                fi.type = nf.type;
-                fi.struct_type = nf.struct_type;
-                def.fields.push_back(fi);
-                if (classFieldContainers[nestedClass].count(nf.name))
-                {
-                    classFieldContainers[className][fi.name] = classFieldContainers[nestedClass][nf.name];
-                }
+                while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+                token = lexer.GetToken();
+                continue;
             }
+            token = lexer.GetToken();  // field name
+            ClassFieldInfo fi;
+            fi.name = token.lexeme;
+            fi.type = TYPE_CLASS;
+            fi.struct_type = fieldClass;
+            fi.array_size = 0;
+            def.fields.push_back(fi);
             token = lexer.GetToken();  // ';'
             token = lexer.GetToken();  // next member or '}'
         }
@@ -667,6 +668,7 @@ void parse_class_definition()
     }
     // token = '}'
     classTable[className] = def;
+    register_class_methods(className, def.parent);
 }
 
 void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker)
@@ -692,345 +694,44 @@ void parse_class_instantiation(const string& className, struct InstructionNode*&
         return;
     }
 
-    ClassDef& def = classTable[className];
     varClassType[varName] = className;
     typeTable[varName] = TYPE_CLASS;
     symbolTable[varName] = alloc_slot();
 
-    map<string, int> fieldSlots;
-    map<string, VarType> fieldTypes;
-    for (auto& field : def.fields)
+    token = lexer.GetToken();  // '=', '(' or ';'
+    if (token.token_type == EQUAL)
     {
-        int slot = 0;
-        if (field.array_size > 0)
-        {
-            slot = next_available;
-            for (int i = 0;i < field.array_size; i++) alloc_slot();
-        }
-        else if (field.type == TYPE_FLOAT) slot = alloc_float_slot();
-        else if (field.type == TYPE_DOUBLE) slot = alloc_double_slot();
-        else { slot = alloc_slot(); g_fieldSlots.insert(slot); }
-        fieldSlots[field.name] = slot;
-        fieldTypes[field.name] = field.type;
+        // Point p = Point(1, 2), Point p = q, Point p = make(): p refers to the value's object
+        parse_object_value_into(symbolTable[varName], className, varName, varLine, head, tracker);
     }
-    classFieldSlots[varName] = fieldSlots;
-    classFieldTypes[varName] = fieldTypes;
-
-    // Each container field starts as a new, empty container of its type (before init runs).
-    for (auto& field : def.fields)
+    else if (token.token_type == LPAREN)
     {
-        if (field.type != TYPE_VECTOR && field.type != TYPE_MAP) continue;
-        int handle = emit_container_new(classFieldContainers[className][field.name], varLine, head, tracker);
-        struct InstructionNode* store = new InstructionNode();
-        store->line_no = varLine;
-        store->type = ASSIGN;
-        store->assign_inst.left_hand_side_index = fieldSlots[field.name];
-        store->assign_inst.operand1_index = handle;
-        store->assign_inst.op = OPERATOR_NONE;
-        append(head, tracker, store);
-    }
-
-    token = lexer.GetToken();  // '=' or ';'
-    // Linear l = Linear(2, 4): the constructor form. Skip "= Linear" so the '(' below runs init.
-    int nameTokens = (token.token_type == EQUAL) ? class_name_tokens_at(1, className) : 0;  // Box<int> is 4 tokens
-    if (nameTokens > 0 && lexer.peek(nameTokens + 1).token_type == LPAREN)
-    {
-        for (int i = 0; i < nameTokens; i++) token = lexer.GetToken();  // the class name
-        token = lexer.GetToken();  // '('
-    } 
-
-    if (token.token_type == LPAREN)
-    {
-        // constructor call: MyClass obj(arg1, arg2) ; 
-        token = lexer.GetToken();  // past '('
-        vector<int> argIndices;
-        vector<VarType> argTypes;
-        vector<ContainerInfo> argContainers;  // an argument's container type, when it is one
-        while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
-        {
-            int argIdx = parse_expression(head, tracker);
-            argIndices.push_back(argIdx);
-            argTypes.push_back(lastExprType);
-            argContainers.push_back((lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? lastExprContainer : ContainerInfo());
-            if (token.token_type == COMMA)
-            {
-                token = lexer.GetToken();
-            }
-        }
-        token = lexer.GetToken();  // past ')'
-
-        if (!classMethodTable.count(className) || !classMethodTable[className].count("init"))
-        {
-            report_error(varLine, "class '" + className + "' has no constructor 'init'");
-        }
-        else
-        {
-            string fullName = className + "::init";
-            map<string, int>& selfSlots = classMethodSelfSlots[className]["init"];
-            map<string, VarType>& selfTypes = classMethodSelfTypes[className]["init"];
-            map<string, int>& initArrSizes = classMethodArraySizes[className]["init"];
-            vector<string>& params = classMethodParams[className]["init"];
-
-            // copy caller field slots into self slots
-            for (auto& kv : selfSlots)
-            {
-                const string& fieldName = kv.first;
-                int selfSlot = kv.second;
-                if (!classFieldSlots[varName].count(fieldName)) continue;
-                int callerSlot = classFieldSlots[varName][fieldName];
-                // Array field: store caller's base index as literal pointer
-                if (initArrSizes.count(fieldName))
-                {
-                    int ptrSlot = alloc_slot();
-                    mem[ptrSlot] = callerSlot;
-                    struct InstructionNode* copyIn = new InstructionNode();
-                    copyIn->line_no = token.line_no;
-                    copyIn->type = ASSIGN;
-                    copyIn->assign_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_inst.operand1_index       = ptrSlot;
-                    copyIn->assign_inst.op                   = OPERATOR_NONE;
-                    append(head, tracker, copyIn);
-                    continue;
-                }
-                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-                struct InstructionNode* copyIn = new InstructionNode();
-                copyIn->line_no = token.line_no;
-                if (fType == TYPE_FLOAT)
-                {
-                    copyIn->type = ASSIGN_F;
-                    copyIn->assign_f_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_f_inst.operand1_index = callerSlot;
-                    copyIn->assign_f_inst.op = OPERATOR_NONE;
-                }
-                else if (fType == TYPE_DOUBLE)
-                {
-                    copyIn->type = ASSIGN_D;
-                    copyIn->assign_d_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_d_inst.operand1_index = callerSlot;
-                    copyIn->assign_d_inst.op = OPERATOR_NONE;
-                }
-                else
-                {
-                    copyIn->type = ASSIGN;
-                    copyIn->assign_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_inst.operand1_index = callerSlot;
-                    copyIn->assign_inst.op = OPERATOR_NONE;
-                }
-                append(head, tracker, copyIn);
-            }
-
-            // emit CALL
-            struct InstructionNode* callNode = new InstructionNode();
-            callNode->line_no = token.line_no;
-            callNode->type = CALL;
-            callNode->call_inst.function_head = classMethodTable[className]["init"];
-            callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
-            callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
-            callNode->call_inst.func_slot_base = 0;
-            callNode->call_inst.func_slot_count = 0;
-            callNode->call_inst.num_params = (int)params.size();
-            callNode->call_inst.param_types = nullptr;
-            callNode->call_inst.arg_types = nullptr;
-            callNode->call_inst.all_ret_slots = nullptr;
-            callNode->call_inst.num_ret_slots = 0;
-            if (!params.empty())
-            {
-                int* pSlots = new int[params.size()];
-                int* aSlots = new int[params.size()];
-                vector<int>& storedParamSlots = classMethodParamSlots[className]["init"];
-                for (int i = 0;i < (int)params.size();i++)
-                {
-                    pSlots[i] = (i < (int)storedParamSlots.size()) ? storedParamSlots[i] : 0;
-                    aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
-                }
-                callNode->call_inst.param_slots = pSlots;
-                callNode->call_inst.arg_val_slots = aSlots;
-
-                // Parameter and argument types tell the interpreter which slot space (mem / fmem / dmem)
-                // each side lives in. Without them every argument was copied as an int, so a double
-                // argument such as SGD(0.05) arrived as 0.
-                if (argIndices.size() != params.size())
-                    report_error(varLine, "'" + className + "' constructor takes " + to_string(params.size()) +
-                                          " argument(s) but got " + to_string(argIndices.size()));
-                vector<VarType>& storedParamTypes = classMethodParamTypes[className]["init"];
-                VarType* ptypes = new VarType[params.size()];
-                VarType* atypes = new VarType[params.size()];
-                for (int i = 0; i < (int)params.size(); i++)
-                {
-                    ptypes[i] = (i < (int)storedParamTypes.size()) ? storedParamTypes[i] : TYPE_UNKNOWN;
-                    atypes[i] = (i < (int)argTypes.size()) ? argTypes[i] : TYPE_UNKNOWN;
-                    if (i < (int)argTypes.size() && !types_compatible(atypes[i], ptypes[i]))
-                        report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " +
-                                              typeToString(ptypes[i]) + " but got " + typeToString(atypes[i]));
-                    else if ((ptypes[i] == TYPE_VECTOR || ptypes[i] == TYPE_MAP) && i < (int)argContainers.size() &&
-                             i < (int)classMethodParamContainers[className]["init"].size() &&
-                             !same_container(atypes[i], argContainers[i], classMethodParamContainers[className]["init"][i]))
-                        report_error(varLine, "argument " + to_string(i + 1) + " of '" + className + "' constructor expects " +
-                                              container_type_name(classMethodParamContainers[className]["init"][i]) +
-                                              " but got " + container_type_name(argContainers[i]));
-                }
-                callNode->call_inst.param_types = ptypes;
-                callNode->call_inst.arg_types = atypes;
-            }
-            else
-            {
-                callNode->call_inst.param_slots = nullptr;
-                callNode->call_inst.arg_val_slots = nullptr;
-            }
-            append(head, tracker, callNode);
-
-            // copy self slots back to caller field slots
-            for (auto& kv : selfSlots)
-            {
-                const string& fieldName = kv.first;
-                int selfSlot = kv.second;
-                if (!classFieldSlots[varName].count(fieldName))
-                {
-                    continue;
-                }
-                // Array fields write directly to caller via dynamic_base — no copy-back needed
-                if (initArrSizes.count(fieldName)) continue;
-                int callerSlot = classFieldSlots[varName][fieldName];
-                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-                struct InstructionNode* copyBack = new InstructionNode();
-                copyBack->line_no = token.line_no;
-                if (fType == TYPE_FLOAT)
-                {
-                    copyBack->type = ASSIGN_F;
-                    copyBack->assign_f_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_f_inst.operand1_index = selfSlot;
-                    copyBack->assign_f_inst.op = OPERATOR_NONE;
-                }
-                else if (fType == TYPE_DOUBLE)
-                {
-                    copyBack->type = ASSIGN_D;
-                    copyBack->assign_d_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_d_inst.operand1_index = selfSlot;
-                    copyBack->assign_d_inst.op = OPERATOR_NONE;
-                }
-                else
-                {
-                    copyBack->type = ASSIGN;
-                    copyBack->assign_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_inst.operand1_index = selfSlot;
-                    copyBack->assign_inst.op = OPERATOR_NONE;
-                }
-                append(head, tracker, copyBack);
-            }
-        }
-        // token = ';'
-    }
-    else if (token.token_type == EQUAL)
-    {
-        report_error(varLine, "a " + className + " is created with " + className + "(...), which runs its init");
-        while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE) token = lexer.GetToken();
+        // Point p(1, 2): the same as Point p = Point(1, 2)
+        int value = parse_constructor_expression(className, varLine, head, tracker);
+        emit_object_store(symbolTable[varName], value, true, varLine, head, tracker);
     }
     else if (token.token_type == SEMICOLON)
     {
-        // auto-call no-arg init() if it exists
-        if (classMethodTable.count(className) && classMethodTable[className].count("init") && classMethodParams[className]["init"].empty())
+        // Point p: a new object, its init run if it takes no arguments
+        int value = emit_object_new(className, varLine, head, tracker);
+        string initClass = find_method_class(className, "init");  // its own init, or its parent's
+        if (!initClass.empty() && classMethodParams[initClass]["init"].empty())
         {
-            string fullName = className + "::init";
-            map<string, int>& selfSlots = classMethodSelfSlots[className]["init"];
-            map<string, VarType>& selfTypes = classMethodSelfTypes[className]["init"];
-
-            for (auto& kv : selfSlots)
-            {
-                const string& fieldName = kv.first;
-                int selfSlot = kv.second;
-                if (!classFieldSlots[varName].count(fieldName))
-                {
-                    continue;
-                }
-                int callerSlot = classFieldSlots[varName][fieldName];
-                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-                struct InstructionNode* copyIn = new InstructionNode();
-                copyIn->line_no = token.line_no;
-                if (fType == TYPE_FLOAT)
-                {
-                    copyIn->type = ASSIGN_F;
-                    copyIn->assign_f_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_f_inst.operand1_index = callerSlot;
-                    copyIn->assign_f_inst.op = OPERATOR_NONE;
-                }
-                else if (fType == TYPE_DOUBLE)
-                {
-                    copyIn->type = ASSIGN_D;
-                    copyIn->assign_d_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_d_inst.operand1_index = callerSlot;
-                    copyIn->assign_d_inst.op = OPERATOR_NONE;
-                }
-                else
-                {
-                    copyIn->type = ASSIGN;
-                    copyIn->assign_inst.left_hand_side_index = selfSlot;
-                    copyIn->assign_inst.operand1_index = callerSlot;
-                    copyIn->assign_inst.op = OPERATOR_NONE;
-                }
-                append(head, tracker, copyIn);
-            }
-
-            struct InstructionNode* callNode = new InstructionNode();
-            callNode->line_no = token.line_no;
-            callNode->type = CALL;
-            callNode->call_inst.function_head = classMethodTable[className]["init"];
-            callNode->call_inst.ret_val_index = functionReturnIndex[fullName];
-            callNode->call_inst.ret_type = functionReturnType.count(fullName) ? functionReturnType[fullName] : TYPE_UNKNOWN;
-            callNode->call_inst.func_slot_base = 0;
-            callNode->call_inst.func_slot_count = 0;
-            callNode->call_inst.num_params = 0;
-            callNode->call_inst.param_slots = nullptr;
-            callNode->call_inst.arg_val_slots = nullptr;
-            callNode->call_inst.param_types = nullptr;
-            callNode->call_inst.arg_types = nullptr;
-            callNode->call_inst.all_ret_slots = nullptr;
-            callNode->call_inst.num_ret_slots = 0;
-            append(head, tracker, callNode);
-
-            for (auto& kv : selfSlots)
-            {
-                const string& fieldName = kv.first;
-                int selfSlot = kv.second;
-                if (!classFieldSlots[varName].count(fieldName))
-                {
-                    continue;
-                }
-                int callerSlot = classFieldSlots[varName][fieldName];
-                VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-                struct InstructionNode* copyBack = new InstructionNode();
-                copyBack->line_no = token.line_no;
-                if (fType == TYPE_FLOAT)
-                {
-                    copyBack->type = ASSIGN_F;
-                    copyBack->assign_f_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_f_inst.operand1_index = selfSlot;
-                    copyBack->assign_f_inst.op = OPERATOR_NONE;
-                }
-                else if (fType == TYPE_DOUBLE)
-                {
-                    copyBack->type = ASSIGN_D;
-                    copyBack->assign_d_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_d_inst.operand1_index = selfSlot;
-                    copyBack->assign_d_inst.op = OPERATOR_NONE;
-                }
-                else
-                {
-                    copyBack->type = ASSIGN;
-                    copyBack->assign_inst.left_hand_side_index = callerSlot;
-                    copyBack->assign_inst.operand1_index = selfSlot;
-                    copyBack->assign_inst.op = OPERATOR_NONE;
-                }
-                append(head, tracker, copyBack);
-            }
+            emit_method_call(initClass, "init", value, {}, {}, varLine, head, tracker);
         }
+        emit_object_store(symbolTable[varName], value, true, varLine, head, tracker);
     }
-    // else token = ';'
+    // token = ';'
 }
 
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
 {
+    return parse_method_call_on(symbolTable[varName], varClassType[varName], methodName, head, tracker);
+}
+
+int parse_method_call_on(int objectSlot, const string& className, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker)
+{
     // ON ENTRY: token = '('
-    string className = varClassType[varName];
 
     // walk inheritance chain to find the method (supports inherited + overridden methods)
     string lookupClass = className;
@@ -1047,8 +748,13 @@ int parse_method_call(const string& varName, const string& methodName, struct In
         else
         {
             report_error(token.line_no, "class '" + className + "' has no method '" + methodName + "'");
-            while (token.token_type != SEMICOLON && token.token_type != END_OF_FILE)
+            // skip the arguments, up to and past the ')' that closes them (not to ';', which would leave an
+            // enclosing call or expression unclosed and report errors that are not there)
+            int depth = 0;
+            while (token.token_type != END_OF_FILE && token.token_type != SEMICOLON)
             {
+                if (token.token_type == LPAREN) depth++;
+                if (token.token_type == RPAREN && --depth == 0) { token = lexer.GetToken(); break; }
                 token = lexer.GetToken();
             }
             lastExprType = TYPE_UNKNOWN;
@@ -1057,200 +763,34 @@ int parse_method_call(const string& varName, const string& methodName, struct In
     }
 
     token = lexer.GetToken();  // past '('
-    // parse arguments
-    vector<int>     argIndices;
-    vector<VarType> argTypes;
     int argLine = token.line_no;
+    CallArgs args = parse_call_arguments(head, tracker);
     vector<ContainerInfo>& wantContainers = classMethodParamContainers[lookupClass][methodName];
-    while (token.token_type != RPAREN && token.token_type != END_OF_FILE)
+    vector<VarType>& wantTypes = classMethodParamTypes[lookupClass][methodName];
+    vector<string>& wantClasses = classMethodParamClasses[lookupClass][methodName];
+    string callee = "'" + className + "." + methodName + "'";
+    for (int i = 0; i < (int)args.slots.size(); i++)
     {
-        int argIdx = parse_expression(head, tracker);
-        int i = (int)argIndices.size();
         if (i < (int)wantContainers.size() && wantContainers[i].elem != TYPE_UNKNOWN && 
-            !same_container(lastExprType, lastExprContainer, wantContainers[i]))
+            !same_container(args.types[i], args.containers[i], wantContainers[i]))
         {
-            string got = (lastExprType == TYPE_VECTOR || lastExprType == TYPE_MAP) ? container_type_name(lastExprContainer)
-                                                                                   : typeToString(lastExprType);
-            report_error(argLine, "argument " + to_string(i + 1) + " of '" + className + "." + methodName + "' expects " + 
-                                  container_type_name(wantContainers[i]) + " but got " + got);
+            report_error(argLine, "argument " + to_string(i + 1) + " of " + callee + " expects " + 
+                                  container_type_name(wantContainers[i]) + " but got " + 
+                                  value_type_name(args.types[i], args.containers[i], args.classes[i]));
         }
-        argIndices.push_back(argIdx);
-        argTypes.push_back(lastExprType);
-        if (token.token_type == COMMA) token = lexer.GetToken();
-    }
-    token = lexer.GetToken();  // past ')'
-
-    // Copy caller's field values into the method's self slots (pass self by copy)
-    map<string, int>& selfSlots = classMethodSelfSlots[lookupClass][methodName];
-    map<string, VarType>& selfTypes = classMethodSelfTypes[lookupClass][methodName];
-    map<string, int>& arrSizes = classMethodArraySizes[lookupClass][methodName];
-    for (auto& kv : selfSlots)
-    {
-        const string& fieldName = kv.first;
-        int selfSlot = kv.second;
-        if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
-        int callerSlot = classFieldSlots[varName][fieldName];
-        // Array field: store the caller's base index as a literal pointer
-        if (arrSizes.count(fieldName))
+        else if (i < (int)wantTypes.size())
         {
-            int ptrSlot = alloc_slot();
-            mem[ptrSlot] = callerSlot;
-            struct InstructionNode* copyIn = new InstructionNode();
-            copyIn->line_no = token.line_no;
-            copyIn->type = ASSIGN;
-            copyIn->assign_inst.left_hand_side_index = selfSlot;
-            copyIn->assign_inst.operand1_index       = ptrSlot;
-            copyIn->assign_inst.op                   = OPERATOR_NONE;
-            append(head, tracker, copyIn);
-            continue;
+            check_object_argument(args, i, wantTypes[i], i < (int)wantClasses.size() ? wantClasses[i] : "", callee, argLine);
         }
-        VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-        struct InstructionNode* copyIn = new InstructionNode();
-        copyIn->line_no = token.line_no;
-        if (fType == TYPE_FLOAT)
-        {
-            copyIn->type = ASSIGN_F;
-            copyIn->assign_f_inst.left_hand_side_index = selfSlot;
-            copyIn->assign_f_inst.operand1_index = callerSlot;
-            copyIn->assign_f_inst.op = OPERATOR_NONE;
-        }
-        else if (fType == TYPE_DOUBLE)
-        {
-            copyIn->type = ASSIGN_D;
-            copyIn->assign_d_inst.left_hand_side_index = selfSlot;
-            copyIn->assign_d_inst.operand1_index = callerSlot;
-            copyIn->assign_d_inst.op = OPERATOR_NONE;
-        }
-        else
-        {
-            copyIn->type = ASSIGN;
-            copyIn->assign_inst.left_hand_side_index = selfSlot;
-            copyIn->assign_inst.operand1_index = callerSlot;
-            copyIn->assign_inst.op = OPERATOR_NONE;
-        }
-        append(head, tracker, copyIn);
     }
 
-    // Emit CALL node
-    string fullName = lookupClass + "::" + methodName;
-    vector<string>& params = classMethodParams[lookupClass][methodName];
-
-    struct InstructionNode* callNode = new InstructionNode();
-    callNode->line_no = token.line_no;
-    callNode->type = CALL;
-    callNode->call_inst.function_head   = classMethodTable[lookupClass][methodName];
-    callNode->call_inst.ret_val_index   = functionReturnIndex[fullName];
-    callNode->call_inst.ret_type = (classMethodReturnType.count(lookupClass) && classMethodReturnType[lookupClass].count(methodName))
-                                    ? classMethodReturnType[lookupClass][methodName] : TYPE_UNKNOWN;
-    callNode->call_inst.func_slot_base  = 0;
-    callNode->call_inst.func_slot_count = 0;
-    callNode->call_inst.num_params      = (int)params.size();
-    callNode->call_inst.all_ret_slots = nullptr;
-    callNode->call_inst.num_ret_slots = 0;
-    callNode->call_inst.ret_slot_types = nullptr;
-    if (!params.empty())
+    if (args.slots.size() != classMethodParams[lookupClass][methodName].size())
     {
-        int* pSlots = new int[params.size()];
-        int* aSlots = new int[params.size()];
-        vector<int>& storedParamSlots = classMethodParamSlots[lookupClass][methodName];
-        for (int i = 0; i < (int)params.size(); i++)
-        {
-            pSlots[i] = (i < (int)storedParamSlots.size()) ? storedParamSlots[i] : 0;
-            aSlots[i] = (i < (int)argIndices.size()) ? argIndices[i] : 0;
-        }
-        VarType* ptypes = new VarType[params.size()];
-        vector<VarType>& storedParamTypes = classMethodParamTypes[lookupClass][methodName];
-        for (int i = 0; i < (int)params.size(); i++)
-            ptypes[i] = (i < (int)storedParamTypes.size()) ? storedParamTypes[i] : TYPE_UNKNOWN;
-        for (int i = 0; i < (int)argTypes.size() && i < (int)storedParamTypes.size(); i++)
-        {
-            if (!types_compatible(argTypes[i], storedParamTypes[i]))
-                report_error(token.line_no, "argument " + to_string(i + 1) + " of '" + lookupClass + "." + methodName +
-                             "' expects " + typeToString(storedParamTypes[i]) + " but got " + typeToString(argTypes[i]));
-        }
-
-        VarType* atypes = new VarType[params.size()];
-        for (int i = 0; i < (int)params.size(); i++)  // params.size(): the array's length
-            atypes[i] = (i < (int)argTypes.size()) ? argTypes[i] : TYPE_UNKNOWN;
-
-        callNode->call_inst.param_types   = ptypes;
-        callNode->call_inst.arg_types     = atypes;
-        callNode->call_inst.param_slots   = pSlots;
-        callNode->call_inst.arg_val_slots = aSlots;
+        report_error(argLine, callee + " takes "+ to_string(classMethodParams[lookupClass][methodName].size()) + 
+                              " argument(s) but got " + to_string(args.slots.size()));
     }
-    else
-    {
-        callNode->call_inst.param_slots   = nullptr;
-        callNode->call_inst.arg_val_slots = nullptr;
-    }
-    append(head, tracker, callNode);
-
-    // Copy self slots back to caller's field slots (method may mutate self)
-    for (auto& kv : selfSlots)
-    {
-        const string& fieldName = kv.first;
-        int selfSlot = kv.second;
-        if (!classFieldSlots.count(varName) || !classFieldSlots[varName].count(fieldName)) continue;
-        // Array fields write directly to caller via dynamic_base — no copy-back needed
-        if (arrSizes.count(fieldName)) continue;
-        int callerSlot = classFieldSlots[varName][fieldName];
-        VarType fType = selfTypes.count(fieldName) ? selfTypes[fieldName] : TYPE_INT;
-        struct InstructionNode* copyBack = new InstructionNode();
-        copyBack->line_no = token.line_no;
-        if (fType == TYPE_FLOAT)
-        {
-            copyBack->type = ASSIGN_F;
-            copyBack->assign_f_inst.left_hand_side_index = callerSlot;
-            copyBack->assign_f_inst.operand1_index = selfSlot;
-            copyBack->assign_f_inst.op = OPERATOR_NONE;
-        }
-        else if (fType == TYPE_DOUBLE)
-        {
-            copyBack->type = ASSIGN_D;
-            copyBack->assign_d_inst.left_hand_side_index = callerSlot;
-            copyBack->assign_d_inst.operand1_index = selfSlot;
-            copyBack->assign_d_inst.op = OPERATOR_NONE;
-        }
-        else
-        {
-            copyBack->type = ASSIGN;
-            copyBack->assign_inst.left_hand_side_index = callerSlot;
-            copyBack->assign_inst.operand1_index = selfSlot;
-            copyBack->assign_inst.op = OPERATOR_NONE;
-        }
-        append(head, tracker, copyBack);
-    }
-
-    // Copy return value to a fresh slot
-    VarType mRetType = (classMethodReturnType.count(lookupClass) && classMethodReturnType[lookupClass].count(methodName))
-                       ? classMethodReturnType[lookupClass][methodName] : TYPE_UNKNOWN;
-    int freshSlot = (mRetType == TYPE_FLOAT) ? alloc_float_slot() : 
-                    (mRetType == TYPE_DOUBLE) ? alloc_double_slot() : alloc_temp();
-    struct InstructionNode* copyRet = new InstructionNode();
-    copyRet->line_no = token.line_no;
-    if (mRetType == TYPE_FLOAT)
-    {
-        copyRet->type = ASSIGN_F;
-        copyRet->assign_f_inst.left_hand_side_index = freshSlot;
-        copyRet->assign_f_inst.operand1_index = functionReturnIndex[fullName];
-        copyRet->assign_f_inst.op = OPERATOR_NONE;
-    }
-    else if (mRetType == TYPE_DOUBLE)
-    {
-        copyRet->type = ASSIGN_D;
-        copyRet->assign_d_inst.left_hand_side_index = freshSlot;
-        copyRet->assign_d_inst.operand1_index = functionReturnIndex[fullName];
-        copyRet->assign_d_inst.op = OPERATOR_NONE;
-    }
-    else
-    {
-        copyRet->type = ASSIGN;
-        copyRet->assign_inst.left_hand_side_index = freshSlot;
-        copyRet->assign_inst.operand1_index = functionReturnIndex[fullName];
-        copyRet->assign_inst.op = OPERATOR_NONE;
-    }
-    append(head, tracker, copyRet);
-    lastExprType = mRetType;  // the call's value has the method's declared return type
-    if (mRetType == TYPE_VECTOR || mRetType == TYPE_MAP) lastExprContainer = classMethodReturnContainer[lookupClass][methodName];
-    return freshSlot;
+    int result = emit_method_call(lookupClass, methodName, objectSlot, args.slots, args.types, argLine,
+                                  head, tracker);
+    release_call_temps(args, argLine, head, tracker);
+    return result;
 }

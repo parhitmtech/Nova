@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Optimizer: dead code elimination. Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>

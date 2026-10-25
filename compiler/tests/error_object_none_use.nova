@@ -1,0 +1,11 @@
+# Using none as an object (its fields or methods) is a runtime error.
+class Node:
+    int value
+    Node next
+
+    def init(int v):
+        self.value = v
+
+def main():
+    Node n = Node(1)
+    print(n.next.value)

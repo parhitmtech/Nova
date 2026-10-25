@@ -12,7 +12,7 @@ for (const file of files) {
   const generated = /(^|\/)(node_modules|__pycache__)(\/|$)/.test(file)
     || /^(server\/(workspace|_tmp|dist)|frontend\/dist|compiler\/build)(\/|$)/.test(file)
     || /\.(exe|o|a|so|dylib|dll|nbc|pyc|pyo|cubin|ptx)$/i.test(file)
-    || /^(nova|novavm|nova\.exe)$/.test(basename) || basename === '.DS_Store';
+    || /^(nova|nova\.exe)$/.test(basename) || basename === '.DS_Store';
   const privateConfig = (basename === '.env' || basename.startsWith('.env.')) && basename !== '.env.example';
   const privateKey = /\.(pem|key|p12|pfx)$/i.test(file);
   let executableBinary = false;

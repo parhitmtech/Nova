@@ -49,17 +49,13 @@ function createExecutor(config = {}) {
     const cwd = path.resolve(options.cwd || '');
     if (!options.cwd || !fs.statSync(cwd).isDirectory()) throw new Error('An isolated job directory is required.');
     const root = fs.realpathSync(cwd);
-    const flags = new Set(['--repl', '--optimize', '--benchmark', '--dump-ir', '--emit-bytecode', '--emit-cuda', '--debug']);
+    const flags = new Set(['--repl', '--optimize', '--benchmark', '--dump-ir', '--emit-cuda', '--debug']);
     for (let i = 0; i < args.length; i++) {
       const arg = args[i];
       if (typeof arg !== 'string' || arg.includes('\0')) throw new Error('Invalid compiler argument.');
       if (flags.has(arg)) continue;
       if (arg === '--iters') {
         if (!/^\d+$/.test(args[++i] || '') || Number(args[i]) > 10000) throw new Error('Invalid benchmark iteration count.');
-        continue;
-      }
-      if (arg === '-o') {
-        if (!args[i + 1]) throw new Error('Missing output file.');
         continue;
       }
       if (arg.startsWith('-')) throw new Error('Unsupported compiler option.');

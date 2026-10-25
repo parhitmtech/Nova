@@ -1,5 +1,5 @@
 'use strict';
-// Program execution: /run, /compile-bytecode, /run-stream (SSE), /compare.
+// Program execution: /run, /run-stream (SSE), /compare.
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
@@ -59,48 +59,6 @@ router.post("/run", async (req, res) => {
     return res.json({ error: "Unknown runtime error." });
   } finally {
     executions.active--;
-    cleanupTempFile(tmpFile, tmpDir);
-  }
-});
-
-// POST /compile-bytecode  { source: string } → binary .nbc download
-router.post("/compile-bytecode", async (req, res) => {
-  const validationError = validateSource(req.body?.source);
-  if (validationError)
-    return res.status(400).json({ error: validationError });
-
-  const source = sanitizeSource(req.body.source);
-  let tmpFile, tmpDir;
-  try {
-    ({ tmpFile, tmpDir } = writeTempFile(source));
-  } catch (err) {
-    return res.status(500).json({ error: "Internal server error." });
-  }
-
-  const nbcFile = tmpFile.replace(/\.csl$/, '.nbc');
-
-  try {
-    const { stderr, exitCode } = await runCompiler(
-      tmpFile,
-      ["--emit-bytecode", "-o", nbcFile],
-      "",
-      30000, req.user.userId
-    );
-    if (exitCode !== 0 || !fs.existsSync(nbcFile)) {
-      const msg = filterStderr(stderr) || "Compilation failed.";
-      return res.status(400).json({ error: msg });
-    }
-    const nbcData = fs.readFileSync(nbcFile);
-    res.setHeader("Content-Type", "application/octet-stream");
-    res.setHeader("Content-Disposition", 'attachment; filename="program.nbc"');
-    res.send(nbcData);
-  } catch (e) {
-    if (e.type === "busy") return res.status(503).json({ error: e.message });
-    if (e.type === "timeout")
-      return res.status(408).json({ error: "Compilation timed out." });
-    return res.status(500).json({ error: "Unknown error during bytecode compilation." });
-  } finally {
-    try { if (fs.existsSync(nbcFile)) fs.unlinkSync(nbcFile); } catch (_) {}
     cleanupTempFile(tmpFile, tmpDir);
   }
 });

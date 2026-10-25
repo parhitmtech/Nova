@@ -12,7 +12,6 @@ interface Props {
   settings: EditorSettings
   inputs: string
   onInputsChange: (value: string) => void
-  onExportBytecode: () => void
   onRunGpu: () => void
   gpuBusy: boolean
   gpuEnabled: boolean // the deployment supports GPU runs (from /api/capabilities)
@@ -37,7 +36,6 @@ export default function EditorPanel({
   settings,
   inputs,
   onInputsChange,
-  onExportBytecode,
   onRunGpu,
   gpuBusy,
   gpuEnabled,
@@ -139,9 +137,6 @@ export default function EditorPanel({
           >
             <Download size={13} />
             Source
-          </button>
-          <button className="text-button" onClick={onExportBytecode} disabled={document.binary}>
-            .nbc
           </button>
           {gpuEnabled && (
             <button className="text-button gpu" onClick={onRunGpu} disabled={document.binary || gpuBusy}>

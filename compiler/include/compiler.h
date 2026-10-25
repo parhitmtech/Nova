@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 #ifndef _COMPILER_H_
 #define _COMPILER_H_
 
@@ -144,6 +139,14 @@ enum TensorOp {
     CON_MAX_D,    // (dmem[])
     CON_SUM,      // v.sum() of an int vector (mem[])
     CON_SUM_D,    // of a float / double vector (dmem[])
+    // Class instances (src/runtime/interp_objects.cc). Argument 0 is the object's handle (except for OBJ_NEW).
+    OBJ_NEW,      // a new object: args field count -> handle
+    OBJ_GET,      // a field: args handle, field index -> its value (mem[])
+    OBJ_GET_D,    // the same for a float / double field (dmem[])
+    OBJ_SET,      // args handle, field index, value
+    OBJ_STORE,    // args slot, value: the variable in slot refers to the value's object (one more reference)
+    OBJ_MOVE,     // the same for a temporary value: its reference becomes the variable's
+    OBJ_RELEASE,  // args value: drops a temporary nothing took (an argument after its call, a discarded result)
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────
@@ -249,6 +252,10 @@ struct InstructionNode
             VarType ret_type;
             // Type of each slot in all_ret_slots (null when it is null).
             VarType* ret_slot_types;
+            // 0: a direct call. Otherwise a method call on the object in arg_val_slots[0], and this is the method's
+            // id: the call runs the method of that name the object's own class has (virtualTable), so a subclass's
+            // override runs when the object is one.
+            int virtual_method;
         } call_inst;
 
         struct {
@@ -349,6 +356,20 @@ struct InstructionNode
     struct InstructionNode* next;
 };
 
+// A class's method as a virtual call runs it: its body, its parameter slots (0 is the object), its slot range.
+struct MethodTarget
+{
+    InstructionNode* head;
+    int* param_slots;
+    VarType* param_types;
+    int num_params;
+    int slot_base;
+    int slot_count;
+};
+
+// class id -> method id -> the method that class runs (its own, or the one it inherits); filled as classes compile
+extern std::map<int, std::map<int, MethodTarget>> virtualTable;
+
 void debug(const char* format, ...);
 
 struct ClassFieldInfo {
@@ -385,16 +406,12 @@ void tensor_set_shape(Tensor& t, const std::vector<int>& shape);
 
 extern std::map<std::string, ClassDef> classTable;
 extern std::map<std::string, std::string> varClassType;
-extern std::map<std::string, std::map<std::string, int>> classFieldSlots;
-extern std::map<std::string, std::map<std::string, VarType>> classFieldTypes;
 extern std::map<std::string, std::map<std::string, InstructionNode*>> classMethodTable;
 extern std::map<std::string, std::map<std::string, std::vector<std::string>>> classMethodParams;
 extern std::map<std::string, std::map<std::string, std::vector<VarType>>> classMethodParamTypes;
 extern std::map<std::string, std::map<std::string, VarType>> classMethodReturnType;
 extern int currentSelfBase;
 extern std::string currentSelfName;
-extern std::map<std::string, std::map<std::string, std::map<std::string, int>>> classMethodSelfSlots;
-extern std::map<std::string, std::map<std::string, std::map<std::string, VarType>>> classMethodSelfTypes;
 
 extern std::vector<Tensor> tensor_heap;
 extern std::set<int> g_fieldSlots;  //  instance int fields (parser.cc) 

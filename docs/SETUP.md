@@ -81,7 +81,7 @@ npm run test:e2e
 
 Browser tests exercise the real React/Monaco UI against controlled API responses. They verify keyboard settings, file-switch saves, save-error recovery, stdin, hidden disabled GPU actions and tab-scoped tokens, binary safeguards, and mobile navigation. They do not contact AWS or SOL. GitHub Actions runs builds, all these tests, and both container builds.
 
-Keyboard shortcuts: Ctrl/Cmd+S saves, Ctrl/Cmd+Enter runs, Ctrl/Cmd+K opens commands. Dialogs support Tab/Shift+Tab and Escape. Files are saved before switching, failed saves keep the draft open, and binary model/bytecode artifacts cannot enter autosave. Binary downloads need a dedicated authorized backend endpoint and are not represented as a working feature.
+Keyboard shortcuts: Ctrl/Cmd+S saves, Ctrl/Cmd+Enter runs, Ctrl/Cmd+K opens commands. Dialogs support Tab/Shift+Tab and Escape. Files are saved before switching, failed saves keep the draft open, and binary artifacts (models, archives) cannot enter autosave. Binary downloads need a dedicated authorized backend endpoint and are not represented as a working feature.
 
 ## Required CI checks
 

@@ -1,0 +1,19 @@
+# An array created inside a function gets its own slots on every call. Returning from a function used to put
+# its local slots on the free list, so the next call's array(n) was handed those slots and overlapped the
+# function's own locals (the second call printed 7 for data[2], not 14).
+def f(int a) -> int:
+    int n = 3
+    data = array(n)
+    data[0] = a
+    data[1] = a + 1
+    data[2] = a * 2
+    print(data[0])
+    print(data[1])
+    print(data[2])
+    return data[0] + data[2]
+
+def main():
+    int r = f(4)
+    r = r + f(7)
+    r = r + f(10)
+    print(r)

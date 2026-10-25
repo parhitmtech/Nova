@@ -68,6 +68,7 @@ struct ContainerInfo
     bool isMap = false;
     VarType key = TYPE_UNKNOWN;  // map: TYPE_INT or TYPE_STRING
     VarType elem = TYPE_UNKNOWN;
+    string elemClass;            // TYPE_CLASS elements: their class
 };
 extern map<string, ContainerInfo> containerTable;
 // The container type of the last expression parsed, valid when lastExprType is TYPE_VECTOR or TYPE_MAP
@@ -97,10 +98,66 @@ void parse_container_statement(struct InstructionNode*& head, struct Instruction
 extern map<string, string> varStructType;
 extern map<string, map<string, int>> structFieldSlots;
 extern map<string, map<string, VarType>> structFieldTypes;
-extern map<string, int> currentSelfFieldSlots;
-extern map<string, VarType> currentSelfFieldTypes;
-extern map<string, int> currentSelfFieldArraySizes;
-extern map<string, map<string, map<string, int>>> classMethodArraySizes;
+// t[i, j] = value with token on '[': stores one element of the Tensor in slot t (parser_statements.cc)
+void parse_tensor_element_store(int t, const string& name, int line,
+                                struct InstructionNode*& head, struct InstructionNode*& tracker);
+// Class instances as references (parser_objects.cc)
+extern int currentSelfHandle;                                    // the slot holding self's handle in a method, else -1
+extern map<string, map<string, int>> classMethodSelfHandle;      // class -> method -> its hidden self parameter slot
+const ClassFieldInfo* class_field(const string& cls, const string& field, int* index);  // nullptr if none
+int emit_object_new(const string& cls, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+extern string lastExprClass;  // the class of the last expression, when it is an object
+extern bool lastExprTemp;     // ... and whether it is a temporary (a new object, a call's result)
+extern string currentFuncRetClass;    // the class the function being compiled returns, when it returns an object
+extern map<string, vector<string>> functionParamClasses;                  // function -> each parameter's class
+extern map<string, string> functionReturnClass;
+extern map<string, map<string, vector<string>>> classMethodParamClasses;  // class -> method -> each parameter's class
+extern map<string, map<string, string>> classMethodReturnClass;
+bool parse_class_type_name(string& cls);  // Point / Box<int> as a type; token ends on its last token
+string value_type_name(VarType t, const ContainerInfo& container, const string& cls);
+void emit_object_store(int slot, int value, bool temp, int line, struct InstructionNode*& head,
+                       struct InstructionNode*& tracker);
+void release_object_temps(const vector<int>& temps, int line, struct InstructionNode*& head,
+                          struct InstructionNode*& tracker);
+// A call's arguments; temps are the ones that are temporary objects, released after the call.
+struct CallArgs
+{
+    vector<int> slots;
+    vector<VarType> types;
+    vector<ContainerInfo> containers;  // an argument's container type, when it is one
+    vector<string> classes;  // an argument's class, when it is an object
+    vector<int> temps;       // the temporary objectsand containers among them ...
+    vector<VarType> tempTypes;      // ... and their types
+};
+CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionNode*& tracker);  // token ends past ')'
+bool is_reference_type(VarType t);  // an object or a container: counted references
+bool class_fits(const string& want, const string& got);  // got is want's class, a subclass of it, or none ("")
+string find_method_class(const string& cls, const string& method);  // the class cls takes method from ("" if none)
+void register_class_methods(const string& cls, const string& parent);// fills virtualTable for cls
+void emit_ref_store(int slot, int value, VarType type, bool temp, int line, struct InstructionNode*& head,
+                    struct InstructionNode*& tracker);
+void release_temp(int slot, VarType type, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+void release_call_temps(const CallArgs& a, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line);
+int parse_constructor_expression(const string& cls, int line, struct InstructionNode*& head,
+                                 struct InstructionNode*& tracker);  // token on '('
+void parse_object_value_into(int slot, const string& cls, const string& shown, int line,
+                             struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '='
+int object_field_read(int handle, const string& cls, const string& field, int line,
+                      struct InstructionNode*& head, struct InstructionNode*& tracker);
+void object_field_write(int handle, const string& cls, const string& field, int value, VarType valueType,
+                        const ContainerInfo& valueContainer, const string& valueClass, bool valueTemp,
+                        const string& shown, int line,
+                        struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.f / self.f in an expression, with token on the token after the field name (an array field's [i] included)
+int parse_field_expression(int handle, const string& cls, const string& field, int line,
+                           struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.f = x, self.f[i] = x, self.ids.push(x), ... with token on the token after the field name; ends on ';'
+void parse_field_statement(int handle, const string& cls, const string& field, const string& shown, int line,
+                           struct InstructionNode*& head, struct InstructionNode*& tracker);
+int emit_method_call(const string& cls, const string& method, int objectSlot, const vector<int>& args,
+                     const vector<VarType>& argTypes, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+
 extern map<string, map<string, vector<int>>> classMethodParamSlots;
 extern string currentSelfClassName;
 extern map<string, vector<int>> functionReturnSlots;
@@ -126,11 +183,12 @@ void set_loops_aside();  // likewise for the loops 'break' and 'continue' jump o
 void restore_loops();
 bool is_generic_function(const string& name);
 int generic_parameter_count(const string& name);
-string instantiate_generic_function(const string& name, const vector<VarType>& argTypes, const vector<ContainerInfo>& argContainers);
+string instantiate_generic_function(const string& name, const vector<VarType>& argTypes, const vector<ContainerInfo>& argContainers,
+                                    const vector<string>& argClasses);
 void compile_with_caller_aside(int position, void (*compile)());  // compile a definition from the token at position
 bool is_generic_class(const string& name);
 string parse_generic_class_type();  // Box<int> with token on Box: compiles the copy, returns "Box<int>"; token ends on '>'
-void infer_return_type(const vector<VarType>& types, const ContainerInfo& container, int line);
+void infer_return_type(const vector<VarType>& types, const ContainerInfo& container, const string& cls, int line);
 extern bool currentFuncReturnPending;  // compiling a function without '-> type' that has not returned a value yet
 extern bool currentFuncSelfCalled;  // ... and it has called itself meanwhile
 bool name_is_declared(const string& name);  // a variable, array, struct or object with this name is visible
@@ -147,6 +205,14 @@ void parse_struct_instantiation(const string& structTypeName, struct Instruction
 void parse_class_definition();
 void parse_class_instantiation(const string& className, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int parse_method_call(const string& varName, const string& methodName, struct InstructionNode*& head, struct InstructionNode*& tracker);
+// obj.m(...) on the object in objectSlot, of class cls, with token on '(': the call's result
+int parse_method_call_on(int objectSlot, const string& cls, const string& methodName, struct InstructionNode*& head, 
+                         struct InstructionNode*& tracker);
+int parse_object_postfix(int obj, struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '.'
+void finish_call_statement(int result, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);
+extern map<string, map<string, pair<int, int>>> classMethodSlotRange;  // class -> method -> its slots (base, count)
+void parse_object_member_statement(int obj, const string& cls, const string& shown, int line,
+                                    struct InstructionNode*& head, struct InstructionNode*& tracker);  // token on '.'
 int parse_tensor_call(const string& name, struct InstructionNode*& head, struct InstructionNode*& tracker);
 int emit_tensor_op(TensorOp, const string& name, const vector<int>& args, const vector<VarType>& type,
                    const vector<string>& argNames, int line, struct InstructionNode*& head, struct InstructionNode*& tracker);

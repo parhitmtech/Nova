@@ -157,6 +157,24 @@ class Box<T>:                                 # generic class: one compiled copy
 `Point(1, 2)` builds a struct from its fields in order. `self` is always the first parameter of a
 method and has no type written.
 
+An object is a reference: `Linear l = Linear(2, 4)` creates a new object, and `l` refers to it. A method
+works on the object it is called on, so `self.W = ...` changes `l`'s field. Objects can be passed and
+returned (`def step(Linear l, Tensor x) -> Linear`), and `m = l` makes both names refer to one object, so
+a function that changes its parameter's fields changes the caller's object. `Point(1, 2)` is an expression:
+`f(Point(1, 2))`, `return Point(x, y)`. A subclass goes wherever its parent is expected (`Animal a = Dog(3)`),
+and a method call runs the version the object's own class has (`a.speak()` runs Dog's): an override must
+take and return the same types as the method it overrides. A subclass without `init` runs its parent's.
+An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid).
+
+A field can hold an object (`Node next`, `Layer a`; a class can name itself), and so can a container
+(`vector<Tree> kids`, `map<string, Layer>`) and a generic class (`Box<Layer>`). An object field starts as
+`none` (no object) until it is assigned; `none` goes wherever an object of any class does (`self.head = none`,
+`return none`), and `==` / `!=` compare objects by identity (`while (cur != none)`). Using `none` as an
+object is a runtime error. `.x` and `.m()` work on any object value, so `l.head.next.value`, `make().x`,
+`t.kids[0].value = 10`, `self.total()`, `return self` and `t.add(a).add(b)` all work, and a method can call
+itself. Objects have no order: a `vector<P>` has `contains` and `index_of` (by identity) but not `sort`,
+`min`, `max`, `sum` or `binary_search`.
+
 ## 7. Statements
 
 All of today's control structures stay, with indentation instead of braces:
@@ -375,5 +393,27 @@ commit.
    - A3 (done): container type arguments (`Box<vector<int>>`). A copy is compiled from the class's tokens with
      each type parameter replaced by its argument's tokens, appended after the program's tokens and removed once
      compiled, so an argument can be several tokens. The constructor checks container arguments' full types.
-   - Next: B objects as references (`Box<P>`, `vector<P>`). See [ROADMAP.md](ROADMAP.md).
+   - B1 (done): objects as references. An object lives in a runtime object heap and a variable holds its
+     handle; a method gets the handle as a hidden first parameter, so `self.x` reads and writes that object's
+     field (it used to copy every field in and out on each call). Each object has its own arrays; float and
+     double fields (also inherited ones) now keep their values. An object is freed when its declaration runs
+     again (a loop body) or when the function that created it returns. Also: returning from a function put
+     its local slots on the free list, so a later `array(n)` could overlap that function's locals.
+   - B2 (done): objects as parameters, return values and in assignment (`q = p` shares the object), with
+     class types in signatures (`def f(Point p) -> Point`, `Box<int> b`) and generic copies per class
+     (`getx<Point>`). `Point(1, 2)` is an expression. Objects are reference-counted: each call owns the
+     references its variables, parameters and temporaries hold, and drops them when it returns.
+   - B3 (done): objects in fields (references, not flattened copies; a class can name itself), in
+     containers (`vector<P>`, `map<K, P>`) and as type arguments (`Box<P>`, `Box<vector<P>>`); `.x` / `.m()`
+     on any object value, `self.m()` and `return self`; recursive methods (a method call now saves and
+     restores the method's slots, as a function call does). Fields and elements count references too.
+   - B4 (done): containers are reference-counted like objects and freed, with their elements' references,
+     when nothing refers to them (a container made in a loop used to keep its elements alive for good).
+   - `none` (done): no object, of no class, accepted wherever an object is; an unset object field is `none`;
+     `==` / `!=` compare objects by identity (`<` on objects, or an object against a number, is an error).
+     `none` is a name, not a keyword, so a variable can still be called `none`.
+   - Subclasses (done): a subclass goes wherever its parent is expected, and method calls are virtual: each
+     object records its class, and a call runs that class's method (its own or inherited), so an override
+     runs through the parent's type and from the parent's own methods. Overrides keep the signature; a
+     subclass without `init` runs its parent's. See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.
