@@ -165,8 +165,10 @@ a function that changes its parameter's fields changes the caller's object. `Poi
 An object is freed when nothing refers to it any more (a Tensor taken from its fields stays valid).
 
 A field can hold an object (`Node next`, `Layer a`; a class can name itself), and so can a container
-(`vector<Tree> kids`, `map<string, Layer>`) and a generic class (`Box<Layer>`). An object field starts unset
-until it is assigned. `.x` and `.m()` work on any object value, so `l.head.next.value`, `make().x`,
+(`vector<Tree> kids`, `map<string, Layer>`) and a generic class (`Box<Layer>`). An object field starts as
+`none` (no object) until it is assigned; `none` goes wherever an object of any class does (`self.head = none`,
+`return none`), and `==` / `!=` compare objects by identity (`while (cur != none)`). Using `none` as an
+object is a runtime error. `.x` and `.m()` work on any object value, so `l.head.next.value`, `make().x`,
 `t.kids[0].value = 10`, `self.total()`, `return self` and `t.add(a).add(b)` all work, and a method can call
 itself. Objects have no order: a `vector<P>` has `contains` and `index_of` (by identity) but not `sort`,
 `min`, `max`, `sum` or `binary_search`.
@@ -405,6 +407,8 @@ commit.
      restores the method's slots, as a function call does). Fields and elements count references too.
    - B4 (done): containers are reference-counted like objects and freed, with their elements' references,
      when nothing refers to them (a container made in a loop used to keep its elements alive for good).
-   - Next: an empty value for object fields (`none`), then passing a subclass where its parent is expected.
-     See [ROADMAP.md](ROADMAP.md).
+   - `none` (done): no object, of no class, accepted wherever an object is; an unset object field is `none`;
+     `==` / `!=` compare objects by identity (`<` on objects, or an object against a number, is an error).
+     `none` is a name, not a keyword, so a variable can still be called `none`.
+   - Next: passing a subclass where its parent is expected (virtual methods). See [ROADMAP.md](ROADMAP.md).
 10. Later, with the Tensor IR: shape types `Tensor<float, [B, T, C]>`.

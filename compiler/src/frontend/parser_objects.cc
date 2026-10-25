@@ -157,6 +157,9 @@ static void emit_object_effect(TensorOp op, const vector<int>& args, const vecto
 
 bool is_reference_type(VarType t) { return t == TYPE_CLASS || t == TYPE_VECTOR || t == TYPE_MAP; }
 
+// An object of class got can go where one of class want is expected: the same class, or none (whose class is "")
+bool class_fits(const string& want, const string& got) { return got.empty() || got == want; }
+
 // slot = value, an object or a container (type): the variable now refers to it (a temporary's reference becomes
 // the variable's), and what it referred to before loses that reference.
 void emit_ref_store(int slot, int value, VarType type, bool temp, int line, struct InstructionNode*& head,
@@ -216,7 +219,7 @@ CallArgs parse_call_arguments(struct InstructionNode*& head, struct InstructionN
 void check_object_argument(const CallArgs& a, int i, VarType want, const string& wantClass, const string& callee, int line)
 {
     if (a.types[i] != TYPE_CLASS && want != TYPE_CLASS) return;
-    if (a.types[i] == TYPE_CLASS && want == TYPE_CLASS && a.classes[i] == wantClass) return;
+    if (a.types[i] == TYPE_CLASS && want == TYPE_CLASS && class_fits(wantClass, a.classes[i])) return;
     report_error(line, "argument " + to_string(i + 1) + " of " + callee + " expects " +
                        (want == TYPE_CLASS ? wantClass : typeToString(want)) + " but got " +
                        value_type_name(a.types[i], a.containers[i], a.classes[i]));
@@ -278,7 +281,7 @@ void parse_object_value_into(int slot, const string& cls, const string& shown, i
         report_error(line, "a " + cls + " is created with " + cls + "(...), which runs its init");
         return;
     }
-    if (lastExprClass != cls)
+    if (!class_fits(cls, lastExprClass))
     {
         report_error(line, "'" + shown + "' is a " + cls + ", not a " + lastExprClass);
         return;
@@ -333,7 +336,7 @@ void object_field_write(int handle, const string& cls, const string& field, int 
     if (f->type == TYPE_CLASS || valueType == TYPE_CLASS)
     {
         // self.next = node: the field refers to an object of its own class
-        if (f->type != TYPE_CLASS || valueType != TYPE_CLASS || valueClass != f->struct_type)
+        if (f->type != TYPE_CLASS || valueType != TYPE_CLASS || !class_fits(f->struct_type, valueClass))
         {
             report_error(line, "'" + shown + "' is " + (f->type == TYPE_CLASS ? "a " + f->struct_type : typeToString(f->type)) + 
                                ", not " + (valueType == TYPE_CLASS ? "a " + valueClass

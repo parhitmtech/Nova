@@ -505,7 +505,7 @@ int methodSlotBase = next_available;  // the method's slots, from its parameters
                         report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + container_type_name(retContainer) + 
                                                     ", not " + container_type_name(lastExprContainer));
                     }
-                    if (retType == TYPE_CLASS && lastExprType == TYPE_CLASS && lastExprClass != retClass)
+                    if (retType == TYPE_CLASS && lastExprType == TYPE_CLASS && !class_fits(retClass, lastExprClass))
                     {
                         report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + retClass + ", not " + lastExprClass);
                     }

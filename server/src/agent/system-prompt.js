@@ -350,7 +350,7 @@ ignite:
 - Class fields accessed as \`self.field\` inside methods, \`obj.field\` outside
 - An object is a reference: each \`Dog d = Dog(3)\` is its own object, and a method changes the fields of the object it is called on
 - Objects can be passed and returned with class types: \`def older(Dog d) -> Dog\`; \`e = d\` makes both names refer to one object; \`Dog(3)\` is an expression (\`f(Dog(3))\`, \`return Dog(n)\`). A parameter takes its own class only, not a subclass
-- Fields and containers can hold objects (\`Dog friend\` as a field, \`vector<Dog>\`, \`map<string, Dog>\`, \`Box<Dog>\`); an object field is unset until assigned. Chains work: \`d.friend.age\`, \`make().age\`, \`dogs[0].age = 2\`, \`self.speak()\`, \`return self\`
+- Fields and containers can hold objects (\`Dog friend\` as a field, \`vector<Dog>\`, \`map<string, Dog>\`, \`Box<Dog>\`); an object field is \`none\` until assigned. \`none\` means no object: \`self.friend = none\`, \`return none\`, \`while (cur != none)\`; objects compare with \`==\` / \`!=\` (identity) only. Chains work: \`d.friend.age\`, \`make().age\`, \`dogs[0].age = 2\`, \`self.speak()\`, \`return self\`
 - A vector of objects has \`contains\` and \`index_of\` (by identity) but cannot be sorted. Objects and containers are freed automatically when nothing refers to them
 
 ### Generic classes

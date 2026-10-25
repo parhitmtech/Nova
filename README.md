@@ -328,7 +328,8 @@ Containers are references: they can be passed to functions, returned and assigne
 They can also be class fields and generic-class type arguments (`Box<vector<int>>`). Objects are references
 too: they can be passed, returned, assigned, stored in fields and containers (`vector<Node>`), and used as
 type arguments (`Box<Layer>`). Objects and containers are reference-counted and freed when nothing refers to
-them. Known limit, being worked on: an object field cannot be tested for being unset yet (no `none`).
+them; `none` means no object (`while (node != none)`). Known limit, being worked on: a subclass cannot yet be
+passed where its parent class is expected.
 
 ---
 

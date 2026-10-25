@@ -496,7 +496,7 @@ void parse_statement(struct InstructionNode*& head, struct InstructionNode*& tra
             }
             if (currentFuncReturnPending) infer_return_type(retExprTypes, retContainer, retClass, token.line_no);
             if (currentFuncRetType == TYPE_CLASS && retExprTypes.size() == 1 && retExprTypes[0] == TYPE_CLASS && 
-                retClass != currentFuncRetClass)
+                !class_fits(currentFuncRetClass, retClass))
             {
                 report_error(token.line_no, "'" + currentFunctionLabel + "' returns " + currentFuncRetClass + ", not " + retClass);
             }

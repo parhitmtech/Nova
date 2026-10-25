@@ -157,7 +157,8 @@ static double read_value(int slot, VarType t)
 
 static Object& object_at(int h, int line)
 {
-    if (h <= 0 || h >= (int)object_heap.size())
+    if (h == 0) tensor_shape_error(line, "object is none (never set, or set to none)");
+    if (h < 0 || h >= (int)object_heap.size())
         tensor_shape_error(line, "object used before it was created");
     if (object_heap[h].freed) tensor_shape_error(line, "object used after it was freed");
     return object_heap[h];

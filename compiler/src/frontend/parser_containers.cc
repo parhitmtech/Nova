@@ -193,7 +193,7 @@ static int parse_element_value(const ContainerInfo& info, const string& name, in
     type = lastExprType;
     temp = (type == TYPE_CLASS && lastExprTemp) ? slot : -1;
     bool fits = (info.elem == TYPE_CLASS || type == TYPE_CLASS)
-? (info.elem == type && lastExprClass == info.elemClass)
+                ? (info.elem == type && class_fits(info.elemClass, lastExprClass))
                 : types_compatible(type, info.elem);
     if (!fits)
     {

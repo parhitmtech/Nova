@@ -17,10 +17,11 @@ Where NovaComp is heading after the syntax redesign (steps 1â€“9 and stages A1â€
   - B4 (done): containers are reference-counted as objects are (a call's variables, parameters and
     temporaries, and object fields each hold a reference), and freed with their elements' references when
     nothing refers to them, so a `vector` made in a loop no longer keeps its elements alive.
-  - Then: an empty value for object fields (a `none`, and a way to test for it), so a linked list can end
-    without keeping its own size.
-  - Small gaps found on the way: passing a subclass where its parent is expected (needs virtual methods);
-    freeing an object's arrays (array slots are never reclaimed); a cycle of objects (a node referring back
+  - `none` (done): an empty value for object fields and variables, tested with `==` / `!=` (identity), so a
+    linked list ends at `none` instead of keeping its own size.
+  - Next: passing a subclass where its parent is expected, with methods chosen by the object's own class at
+    run time (virtual methods).
+  - Small gaps found on the way: freeing an object's arrays (array slots are never reclaimed); a cycle of objects (a node referring back
     to its parent) is never freed; a method can call methods defined before it, and itself, but not later ones.
 - **Batched matmul (`bmm`)**, with its tests (`tensor_bmm`, `grad_bmm`, `error_bmm_batch_mismatch`).
 

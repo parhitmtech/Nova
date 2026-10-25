@@ -323,6 +323,15 @@ static int parse_primary(struct InstructionNode*& head, struct InstructionNode*&
         }
 
         if (functionTable.find(token.lexeme) != functionTable.end() || is_generic_function(token.lexeme)) return parse_function_call(head, tracker);
+        // none: no object (the handle 0), of no class, so it goes wherever an object does
+        if (token.lexeme == "none" && !name_is_declared("none"))
+        {
+            token = lexer.GetToken();
+            lastExprType = TYPE_CLASS;
+            lastExprClass = "";
+            lastExprTemp = false;
+            return int_constant(0);
+        }
         // Point(1, 2), Box<int>(5): a new object
         if (classTable.count(token.lexeme) && lexer.peek(1).token_type == LPAREN)
         {
@@ -920,6 +929,8 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
 {
     int left = parse_additive(head, tracker);
     VarType lt = lastExprType;
+    string lClass = lastExprClass;
+    bool lTemp = (lt == TYPE_CLASS && lastExprTemp);
     ConditionalOperatorType op;
     if (!comparison_op(token.token_type, op)) return left;
 
@@ -927,6 +938,25 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
     token = lexer.GetToken();
     int right = parse_additive(head, tracker);
     VarType rt = lastExprType;
+    string rClass = lastExprClass;
+    bool rTemp = (rt == TYPE_CLASS && lastExprTemp);
+    if (lt == TYPE_CLASS || rt == TYPE_CLASS)
+    {
+        // p == q, n.next != none: the same object or not (objects have no order)
+        if (op != CONDITION_EQUAL && op != CONDITION_NOTEQUAL)
+        {
+            report_error(line, "objects are compared with == and != only");
+        }
+        else if (lt != rt)
+        {
+            report_error(line, "cannot compare " + (lt == TYPE_CLASS ? lClass : typeToString(lt)) + " with " + 
+                               (rt == TYPE_CLASS ? rClass : typeToString(rt)));
+        }
+        else if (!class_fits(lClass, rClass) && !class_fits(rClass, lClass))
+        {
+            report_error(line, "cannot compare a " + lClass + " with a " + rClass);
+        }
+    }
 
     // result = 0; if (left op right) result = 1
     int result = alloc_temp();
@@ -937,6 +967,8 @@ static int parse_comparison(struct InstructionNode*& head, struct InstructionNod
     append(head, tracker, done);
     g_lastComparison.done   = done;
     g_lastComparison.result = result;
+    if (lTemp) release_temp(left, TYPE_CLASS, line, head, tracker);  // make() == none: the temporary, once compared
+    if (rTemp) release_temp(right, TYPE_CLASS, line, head, tracker);
 
     if (comparison_op(token.token_type, op))
         report_error(token.line_no, "comparisons cannot be chained; use 'and', e.g. (a < b and b < c)");
