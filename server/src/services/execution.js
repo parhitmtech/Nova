@@ -58,7 +58,7 @@ function createExecutor(config = {}) {
         if (!/^\d+$/.test(args[++i] || '') || Number(args[i]) > 10000) throw new Error('Invalid benchmark iteration count.');
         continue;
       }
-if (arg.startsWith('-')) throw new Error('Unsupported compiler option.');
+      if (arg.startsWith('-')) throw new Error('Unsupported compiler option.');
       const target = path.resolve(cwd, arg);
       if (!target.startsWith(cwd + path.sep)) throw new Error('Compiler files must stay in the job directory.');
       let ancestor = target;

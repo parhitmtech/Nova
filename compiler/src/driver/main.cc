@@ -57,10 +57,10 @@ int main(int argc, char* argv[])
         if (arg == "--check")          { flag_check          = true; continue; }
         if (arg == "--optimize")       { flag_optimize       = true; continue; }
         if (arg == "--benchmark")      { flag_benchmark      = true; continue; }
-if (arg == "--repl")           { flag_repl           = true; continue; }
+        if (arg == "--repl")           { flag_repl           = true; continue; }
         if (arg == "--debug")          { debug_mode = true; debug_step = true; continue; }
         if (arg == "--emit-cuda")      { flag_emit_cuda      = true; continue; }
-if (arg[0] != '-')             { inputFile = arg; continue; }
+        if (arg[0] != '-')             { inputFile = arg; continue; }
 
         if (arg == "--iters" && i + 1 < argc)
         {

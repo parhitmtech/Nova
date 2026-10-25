@@ -73,7 +73,7 @@ static bool element_type_allows(const ContainerInfo& info, const string& name, c
     bool ok = (method == "sum") ? (info.elem == TYPE_INT || info.elem == TYPE_FLOAT || info.elem == TYPE_DOUBLE) 
                                 : (info.elem == TYPE_CLASS) ? (method == "contains" || method == "index_of")
                                                             : (info.elem != TYPE_TENSOR);
-if (!ok)
+    if (!ok)
     {
         report_error(line, "'" + name + "." + method + "()' needs " + (method == "sum" ? "numbers" : "comparable elements") + 
                            ", but '" + name + "' holds " + element_name(info));

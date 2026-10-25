@@ -61,7 +61,7 @@ export default function IDEPage() {
     }
   }
 
-const signOut = () =>
+  const signOut = () =>
     void workspace.beforeSwitch(() => {
       logout()
       navigate('/login')
@@ -115,7 +115,7 @@ const signOut = () =>
         downloadBlob(new Blob([document.code], { type: 'text/plain' }), document.name || 'program.nova'),
       disabled: document.binary,
     },
-{ id: 'settings', label: 'Editor settings', action: () => setSettingsOpen(true) },
+    { id: 'settings', label: 'Editor settings', action: () => setSettingsOpen(true) },
     { id: 'files', label: 'Toggle file explorer', action: () => setFilesOpen((v) => !v) },
     { id: 'assistant', label: 'Toggle NovaBot', action: () => setAssistantOpen((v) => !v) },
     ...EXAMPLES.map((e) => ({
@@ -164,7 +164,7 @@ const signOut = () =>
           settings={settings}
           inputs={inputs}
           onInputsChange={setInputs}
-onRunGpu={() => void gpu.submit(document.code)}
+          onRunGpu={() => void gpu.submit(document.code)}
           gpuBusy={gpu.busy}
           gpuEnabled={gpu.enabled}
         >

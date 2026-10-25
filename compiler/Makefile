@@ -23,10 +23,10 @@ SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
         src/runtime/interp_integrations.cc src/runtime/interp_containers.cc src/runtime/interp_objects.cc \
         src/runtime/memoize.cc \
         src/codegen/cuda.cc \
-src/opt/constant_fold.cc src/opt/copy_propagation.cc src/opt/dead_code.cc \
+        src/opt/constant_fold.cc src/opt/copy_propagation.cc src/opt/dead_code.cc \
         src/opt/licm.cc src/opt/inline.cc src/opt/tensor_release.cc \
         src/regalloc/liveness.cc \
-src/ir/dump.cc \
+        src/ir/dump.cc \
         src/integrations/sol.cc src/integrations/hf.cc \
         src/runtime/autograd.cc
 HDRS := $(wildcard include/*.h src/*/*.h)
