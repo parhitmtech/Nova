@@ -1,0 +1,8 @@
+# An error at the end of the file points at the last line with code on it, however many blank or comment lines
+# follow (the old lexer reported a different line depending on how the last token ended).
+def helper() -> int:
+    return 1
+
+
+# nothing runs: there is no ignite block and no main
+

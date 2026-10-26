@@ -24,6 +24,8 @@ Where NovaComp is heading after the syntax redesign (steps 1–9, stages A and B
   - Small gaps found on the way: a cycle of objects (a node referring back to its parent) is never freed; a
     method can call methods defined before it, and itself, but not later ones. Both are covered by the phases
     below (weak fields in phase 5; the check pass in phase 2).
+  - `--dump-ir` prints `strMem[mem[slot]]` for strings that only exist at run time, so on some programs it
+    prints garbage or stops partway (the dump only: the programs run correctly).
 
 ## 2. A production compiler (phases 1–7)
 
@@ -34,16 +36,18 @@ first: they could not keep up with the language, and native code will come from 
 
 **The front end**
 
-1. **Lexer.** Tokens are a kind plus a span into the one source buffer (no copied strings); one 32-bit
-   location space over all files, with line and column worked out only when an error is printed (no line
-   offsets for imports); names interned in one table that also recognises keywords; INDENT / DEDENT made while
-   scanning; `+=` and friends as real operators (today `v[f()] += 1` evaluates `f()` twice).
+1. **Lexer** (done). A pointer-based scanner over one source buffer writes compact tokens (a kind, a 32-bit
+   location in one space over all buffers, a length, an interned symbol); names and keywords share one
+   interned table (a keyword is recognised by the same lookup); NEWLINE / INDENT / DEDENT are made while
+   scanning. `#@line` markers from imports become line directives in the SourceManager, which works out lines
+   and columns only when asked. The current parser reads these tokens through a small compatibility pass that
+   rebuilds the braces-and-semicolons form; phase 2's parser reads them directly.
 2. **Parse tree and check pass.** The parser builds a flat tree (Carbon / Zig style) and a separate pass
    resolves names and types and lowers to IR, replacing the one-pass parser's global state (`lastExprType`
    etc.) and the token re-reading for generics. One interned symbol table with scopes as a stack replaces the
-   ten name-keyed maps.
+   ten name-keyed maps. `+=` and friends become real operators (today `v[f()] += 1` evaluates `f()` twice).
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
-   one error.
+   one error; messages give the column as well as the line (from the token locations phase 1 records).
 
 **Memory and the middle-end**
 

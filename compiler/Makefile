@@ -14,7 +14,7 @@ EXE := .exe
 endif
 
 SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
-        src/frontend/lexer.cc src/frontend/inputbuf.cc src/frontend/imports.cc \
+        src/frontend/source.cc src/frontend/interner.cc src/frontend/lexer.cc src/frontend/imports.cc \
         src/frontend/parser.cc src/frontend/parser_state.cc src/frontend/parser_util.cc \
         src/frontend/parser_classes.cc src/frontend/parser_builtins.cc \
         src/frontend/parser_statements.cc src/frontend/parser_expressions.cc  src/frontend/parser_containers.cc src/frontend/parser_objects.cc \
