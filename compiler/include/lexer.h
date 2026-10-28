@@ -125,9 +125,11 @@ class LexicalAnalyzer {
       return at;
     }
     void TruncateTokens(int size) { tokenList.resize(size); }
+    const std::vector<LexToken>& Scanned() const { return scanned; }  // the scanner's tokens, for the parse tree
 
   private:
     std::vector<Token> tokenList;
+    std::vector<LexToken> scanned;
     int index = 0;
     Token eof;    // what GetToken() / peek() give past the end
     void ToBracesForm(const std::vector<LexToken>& lexed);  // NEWLINE / INDENT / DEDENT -> ; { }

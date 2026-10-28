@@ -1,0 +1,4 @@
+# The parse tree (--dump-tree) reports the first syntax error with its line: here two call arguments with no
+# comma between them.
+ignite:
+    print(a b)

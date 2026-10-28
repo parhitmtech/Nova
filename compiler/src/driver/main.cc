@@ -22,6 +22,7 @@
 #include <unistd.h>
 #endif
 #include "lexer.h"
+#include "parse_tree.h"
 #include "compiler.h"
 #include "autograd.h"
 #include "optimizer.h"
@@ -43,6 +44,7 @@ int main(int argc, char* argv[])
     string inputFile       = "";
     bool flag_dump_ir      = false;
     bool flag_check        = false;  // --check: parse and type-check only, do not run
+    bool flag_dump_tree    = false;  // --dump-tree: print the new parser's tree (and stop)
     bool flag_optimize     = false;
     bool flag_benchmark    = false;
     bool flag_repl         = false;
@@ -55,6 +57,7 @@ int main(int argc, char* argv[])
         string arg = argv[i];
         if (arg == "--dump-ir")        { flag_dump_ir        = true; continue; }
         if (arg == "--check")          { flag_check          = true; continue; }
+        if (arg == "--dump-tree")      { flag_dump_tree      = true; continue; }
         if (arg == "--optimize")       { flag_optimize       = true; continue; }
         if (arg == "--benchmark")      { flag_benchmark      = true; continue; }
         if (arg == "--repl")           { flag_repl           = true; continue; }
@@ -69,7 +72,7 @@ int main(int argc, char* argv[])
         }
 
         fprintf(stderr, "Unknown flag: %s\n", arg.c_str());
-        fprintf(stderr, "Usage: %s [file.csl] [--check] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--repl] [--debug]\n",
+        fprintf(stderr, "Usage: %s [file.csl] [--check] [--dump-tree] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--repl] [--debug]\n",
                 argv[0]);
         return 1;
     }
@@ -120,6 +123,16 @@ int main(int argc, char* argv[])
         set<string> already_imported;
         processed = preprocess_import(raw_source, ".", already_imported);
         lexer.ReinitializeFromString(processed);
+    }
+
+    // The new parser's tree. Nothing is compiled from it yet.
+    if (flag_dump_tree)
+    {
+        ParseTree tree = build_parse_tree(lexer.Scanned());
+        for (const string& err : tree.errors) fprintf(stderr, "%s\n", err.c_str());
+        if (!tree.errors.empty()) return 1;
+        tree.print(cout);
+        return 0;
     }
 
     //Calculate how many lines were added by imports

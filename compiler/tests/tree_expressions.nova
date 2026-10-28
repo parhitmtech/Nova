@@ -1,0 +1,17 @@
+# The parse tree (--dump-tree): how expressions group. Loosest first: or, and, not, comparisons, + -, * / % @,
+# unary -, then calls, indexes and members. After a name, '<' starts type arguments only when '>' and '(' follow
+# (Box<int>(5)); otherwise it is less-than.
+ignite:
+    x = a or b and not c == d
+    x = not a and b
+    x = a + b * c - d / e % f
+    x = -a @ b + -2
+    x = (a + b) * c
+    x = i < n
+    x = Box<int>(5) == v
+    y = l.ws[1][0, 0].T
+    y = make().x
+    t.add(a).add(b)
+    z = float(n) + int(m)
+    w = map<string, vector<int>>()
+    hf.load("gpt2")

@@ -46,6 +46,12 @@ first: they could not keep up with the language, and native code will come from 
    resolves names and types and lowers to IR, replacing the one-pass parser's global state (`lastExprType`
    etc.) and the token re-reading for generics. One interned symbol table with scopes as a stack replaces the
    ten name-keyed maps. `+=` and friends become real operators (today `v[f()] += 1` evaluates `f()` twice).
+   - 2a (done): the parser reads the scanner's tokens and builds the tree (a postorder array of 12-byte nodes),
+     deciding every construct from the tokens alone: `Point p` is a declaration because a name follows a type, and
+     `Box<int>(5)` a call because `(` follows the type arguments. `--dump-tree` prints it; nothing is compiled from
+     it yet. It parses 100,000 lines in about 5 ms.
+   - 2b: the check pass (names, scopes, types) over the tree.
+   - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 

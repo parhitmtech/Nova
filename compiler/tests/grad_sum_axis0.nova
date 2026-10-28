@@ -30,7 +30,7 @@ ignite:
     double f2 = tensor_get(saY, 0, 2)
     double fd = dabs(f0 - 1.3) + dabs(f1 - (0.0 - 0.8)) + dabs(f2 - (0.0 - 0.3))
     if (fd < tol): print("PASS sum_axis0 forward")
-    else: print("FAIL" sum axis0 forward)
+    else: print("FAIL sum_axis0 forward")
     Tensor saL = mse_loss(saY, saT)
     backward(saL)
     Tensor saG = tensor_grad(saA)

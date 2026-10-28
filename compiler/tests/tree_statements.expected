@@ -1,0 +1,61 @@
+(File
+  (StructDecl Point
+    (FieldDecl x (TypeName int))
+    (FieldDecl y (TypeName int)))
+  (ClassDecl Animal
+    (FieldDecl legs (TypeName int) (IntLiteral 4))
+    (FunctionDecl speak (ParamList (Param self)) (ReturnTypes (TypeName int))
+      (Block
+        (Return (IntLiteral 0)))))
+  (ClassDecl Dog (Extends (TypeName Animal))
+    (Pass))
+  (ClassDecl Box (TypeParams (TypeParam T))
+    (FieldDecl value (TypeName T)))
+  (FunctionDecl halves (ParamList (Param t (TypeName Tensor))) (ReturnTypes (TypeName Tensor) (TypeName Tensor))
+    (Block
+      (Return (Name t) (Name t))))
+  (FunctionDecl scale (ParamList (Param x) (Param k))
+    (Block
+      (Return (Binary * (Name x) (Name k)))))
+  (Ignite
+    (Block
+      (VarDecl n (TypeName int))
+      (VarDecl p (TypeName Point) (Call (Name Point) (IntLiteral 1) (IntLiteral 2)))
+      (VarDecl b (GenericType Box (GenericType vector (TypeName int))) (Call (GenericType Box (GenericType vector (TypeName int))) (Call (GenericType vector (TypeName int)))))
+      (MultiDecl
+        (VarDecl a (TypeName Tensor))
+        (VarDecl c (TypeName Tensor)) (Call (Name halves) (Call (Name zeros) (IntLiteral 2) (IntLiteral 2))))
+      (Assign (Name n) (Call (Name input)))
+      (CompoundAssign += (Member x (Name p)) (IntLiteral 3))
+      (If (Binary > (Name n) (IntLiteral 0))
+        (Block
+          (ExprStatement (Call (Name print) (Name n))))
+        (Elif (Binary == (Name n) (IntLiteral 0))
+          (Block
+            (Pass)))
+        (Else
+          (Block
+            (ExprStatement (Call (Name print) (StringLiteral "negative"))))))
+      (While (Binary < (Name n) (IntLiteral 3))
+        (Block
+          (CompoundAssign += (Name n) (IntLiteral 1))))
+      (DoWhile
+        (Block
+          (CompoundAssign -= (Name n) (IntLiteral 1))) (Binary > (Name n) (IntLiteral 0)))
+      (For
+        (Assign (Name i) (IntLiteral 0)) (Binary < (Name i) (IntLiteral 3))
+        (CompoundAssign += (Name i) (IntLiteral 1))
+        (Block
+          (If (Binary == (Name i) (IntLiteral 1))
+            (Block
+              (Continue)))
+          (If (Binary == (Name i) (IntLiteral 2))
+            (Block
+              (Break)))))
+      (Switch (Name n)
+        (Case (IntLiteral 5)
+          (Block
+            (ExprStatement (Call (Name print) (IntLiteral 5)))))
+        (Default
+          (Block
+            (ExprStatement (Call (Name print) (IntLiteral 0)))))))))

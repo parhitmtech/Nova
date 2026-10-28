@@ -360,21 +360,21 @@ void LexicalAnalyzer::ReinitializeFromString(const string& s)
     tokenList.clear();
     index = 0;
     SourceLoc start = sourceManager.add_buffer("<input>", s);
-    vector<LexToken> lexed;
-    lexed.reserve(s.size() / 3 + 16);
-    Scanner(start, sourceManager.text_at(start)).scan(lexed);
+    scanned.clear();
+    scanned.reserve(s.size() / 3 + 16);
+    Scanner(start, sourceManager.text_at(start)).scan(scanned);
     // An error at the end of the file points at the last line with code on it
     eof.line_no = 1;
-    for (size_t i = lexed.size(); i-- > 0;)
+    for (size_t i = scanned.size(); i-- > 0;)
     {
-        if (lexed[i].kind != NEWLINE && lexed[i].kind != INDENT && lexed[i].kind != DEDENT && lexed[i].kind != END_OF_FILE)
+        if (scanned[i].kind != NEWLINE && scanned[i].kind != INDENT && scanned[i].kind != DEDENT && scanned[i].kind != END_OF_FILE)
         {
-            eof.line_no = lexed[i].line;
+            eof.line_no = scanned[i].line;
             break;
         }
     }
-    eof.loc = lexed.back().loc;
-    ToBracesForm(lexed);
+    eof.loc = scanned.back().loc;
+    ToBracesForm(scanned);
     DesugarCompoundAssignments();
     AddMainEntry();
 }
