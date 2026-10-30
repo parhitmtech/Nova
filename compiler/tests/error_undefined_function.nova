@@ -1,0 +1,4 @@
+# Calling a function that is not defined anywhere, inside an expression.
+ignite:
+    int x = 2
+    print(dobule(x) + 1)

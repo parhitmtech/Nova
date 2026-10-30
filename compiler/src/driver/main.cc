@@ -23,6 +23,7 @@
 #endif
 #include "lexer.h"
 #include "parse_tree.h"
+#include "check.h"
 #include "compiler.h"
 #include "autograd.h"
 #include "optimizer.h"
@@ -125,14 +126,19 @@ int main(int argc, char* argv[])
         lexer.ReinitializeFromString(processed);
     }
 
-    // The new parser's tree. Nothing is compiled from it yet.
-    if (flag_dump_tree)
+    // The new front end: the parse tree and the check pass. Until they compile the program (roadmap phase 2), they 
+    // only find its errors before the old parser runs; -- dump-tree prints the tree without checking it.
     {
         ParseTree tree = build_parse_tree(lexer.Scanned());
-        for (const string& err : tree.errors) fprintf(stderr, "%s\n", err.c_str());
-        if (!tree.errors.empty()) return 1;
-        tree.print(cout);
-        return 0;
+        vector<string> errors = tree.errors;
+        if (errors.empty() && !flag_dump_tree) errors = check_tree(tree).errors;
+        for (const string& err : errors) fprintf(stderr, "%s\n", err.c_str());
+        if (!errors.empty()) return 1;
+        if (flag_dump_tree)
+        {
+            tree.print(cout);
+            return 0;
+        }
     }
 
     //Calculate how many lines were added by imports

@@ -1,0 +1,15 @@
+# Each block has its own names: the same name can be a variable in one block and a variable of another type in
+# a later one, and a block's variables are gone after it.
+ignite:
+    int count = 3
+    print(count)
+    if (count > 0):
+        double total = 1.5
+        print(total)
+    if (count > 1):
+        int total = 7
+        print(total)
+    while (count > 0):
+        string word = "go"
+        count -= 1
+    print(count)

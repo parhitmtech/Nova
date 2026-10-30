@@ -24,6 +24,9 @@ Where NovaComp is heading after the syntax redesign (steps 1–9, stages A and B
   - Small gaps found on the way: a cycle of objects (a node referring back to its parent) is never freed; a
     method can call methods defined before it, and itself, but not later ones. Both are covered by the phases
     below (weak fields in phase 5; the check pass in phase 2).
+  - `--optimize` hangs (or crashes) while compiling a loop nested in another whose body uses the outer loop's
+    variable times a constant (`s = s + i * 7` inside `while (j < 2)` inside `while (i < 2)`); the hang is in the
+    optimizer, before `--dump-ir` prints, most likely loop-invariant code motion.
   - `--dump-ir` prints `strMem[mem[slot]]` for strings that only exist at run time, so on some programs it
     prints garbage or stops partway (the dump only: the programs run correctly).
 
@@ -50,7 +53,12 @@ first: they could not keep up with the language, and native code will come from 
      deciding every construct from the tokens alone: `Point p` is a declaration because a name follows a type, and
      `Box<int>(5)` a call because `(` follows the type arguments. `--dump-tree` prints it; nothing is compiled from
      it yet. It parses 100,000 lines in about 5 ms.
-   - 2b: the check pass (names, scopes, types) over the tree.
+   - 2b: the check pass over the tree, in three steps. 2b-1 (done): names and scopes. One symbol table indexed by
+     interned name, with each binding hiding the one before it, so leaving a scope pops its bindings; the result is
+     an entity for every definition and variable and, for each node, the entity it names. Every definition is
+     known before any body is checked. The check pass runs before the old parser and reports name errors
+     (undeclared, redeclared, unknown types, break / return / self out of place, the entry point). 2b-2: types of
+     expressions, calls, containers and objects. 2b-3: generic functions and classes.
    - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).

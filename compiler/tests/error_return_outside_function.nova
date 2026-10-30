@@ -1,0 +1,4 @@
+# The ignite block is not a function: it has nothing to return from.
+ignite:
+    int x = 1
+    return x

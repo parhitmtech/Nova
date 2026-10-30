@@ -1,0 +1,9 @@
+# A class can only extend a class.
+struct Shape:
+    int sides
+
+class Square extends Shape:
+    int w
+
+ignite:
+    print(1)
