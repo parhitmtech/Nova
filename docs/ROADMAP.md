@@ -57,8 +57,14 @@ first: they could not keep up with the language, and native code will come from 
      interned name, with each binding hiding the one before it, so leaving a scope pops its bindings; the result is
      an entity for every definition and variable and, for each node, the entity it names. Every definition is
      known before any body is checked. The check pass runs before the old parser and reports name errors
-     (undeclared, redeclared, unknown types, break / return / self out of place, the entry point). 2b-2: types of
-     expressions, calls, containers and objects. 2b-3: generic functions and classes.
+     (undeclared, redeclared, unknown types, break / return / self out of place, the entry point). 2b-2: types, in
+     two steps. 2b-2a (done): one interned table of types, the type of every expression, and the rules for numbers,
+     strings, tensors (against each built-in's signature), arrays, structs and function calls, including multiple
+     returns and return types inferred from the first `return`. A function's body is checked when a caller first
+     needs its return type, so it can be defined after the caller (once 2c removes the old parser). A value not
+     typed yet (a field, a method's result, a container element, an untyped parameter) is Unknown and fits
+     everywhere. 2b-2b: objects and containers (fields, methods, constructors, subclasses, `none`, vector / map
+     methods). 2b-3: generic functions and classes.
    - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).

@@ -511,5 +511,6 @@ CheckResult check_tree(const ParseTree& tree)
 {
     CheckResult out;
     Checker(tree, out).check_file();
+    check_types(tree, out);
     return out;
 }

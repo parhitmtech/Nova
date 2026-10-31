@@ -1,0 +1,5 @@
+# int and float / double do not mix in arithmetic: write 2.0, or convert with double(n).
+ignite:
+    double rate = 1.5
+    int n = 2
+    double d = rate * n
