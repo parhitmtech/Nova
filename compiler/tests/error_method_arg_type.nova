@@ -1,0 +1,13 @@
+# A method's arguments are checked against its parameter types, as a function's are.
+class Counter:
+    int n
+
+    def init():
+        self.n = 0
+
+    def add(int k):
+        self.n = self.n + k
+
+def main():
+    Counter c = Counter()
+    c.add("two")

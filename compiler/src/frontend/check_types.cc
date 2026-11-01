@@ -1,9 +1,10 @@
 // The check pass, second step (check.h): the type of every expression, with the rules for numbers, strings,
-// tensors, arrays, structs and function calls. Names are already resolved (check.cc), so this step reads entities
-// through refs and needs no scopes: it can check a function's body whenever a caller first needs its return type.
+// tensors, arrays, structs, objects, containers and calls. Names are already resolved (check.cc), so this step reads
+// entities through refs and needs no scopes: it can check a function's body whenever a caller first needs its return
+// type.
 //
-// A value this step does not type yet (a field, a method's result, a container's element, an untyped parameter) is
-// Unknown, and Unknown fits everywhere, so it never causes an error. Objects, containers and generics come next.
+// A value this step does not type (an untyped parameter, a method without '-> type', a generic class's object) is
+// Unknown, and Unknown fits everywhere, so it never causes an error. Generics come next.
 #include <cstring>
 #include <map>
 #include <set>
@@ -86,6 +87,7 @@ namespace {
                 uint32_t function = NoNode;
                 string label;
                 bool selfCalled = false;  // it called itself before its first return, so its return type was not known yet
+                bool method = false;
             };
             Context context;
             enum class State : uint8_t { NotChecked, Checking, Done };
@@ -117,8 +119,17 @@ namespace {
             {
                 return is_generic_class(classEntity) ? Unknown : out.types.intern({TypeKind::Class, classEntity});
             }
+            bool is_object(TypeId t) const { return kind(t) == TypeKind::Class || t == None; }
+            bool is_container(TypeId t) const { return kind(t) == TypeKind::Vector || kind(t) == TypeKind::Map; }
+            string a_name(TypeId t) const { return (kind(t) == TypeKind::Class ? "a " : "") + name(t); }  // a P, int
 
             bool fits(TypeId value, TypeId declared) const;
+            uint32_t parent(uint32_t classEntity) const;
+            uint32_t find_field(uint32_t entity, const string& field) const;
+            uint32_t find_method(uint32_t classEntity, const string& method, uint32_t* owner) const;
+            TypeId field_type(uint32_t fieldDecl);
+            string path(uint32_t n) const;
+            void check_overrides(uint32_t classDecl);
             TypeId written(uint32_t n, bool report);
             string spell(uint32_t n) const;
             Signature& signature(uint32_t fn, bool method);
@@ -132,6 +143,7 @@ namespace {
             void check_assign(uint32_t n, TypeId value, TypeId declared);
             void condition(uint32_t n);
             void store(uint32_t target, TypeId value);
+            void store_field(uint32_t target, TypeId value);
 
             TypeId expr(uint32_t n);
             TypeId unary(uint32_t n);
@@ -139,23 +151,99 @@ namespace {
             TypeId tensor_binary(uint32_t n, TokenType op, TypeId lt, TypeId rt);
             void tensor_args(uint32_t n, const string& what, const char* signature, const vector<TypeId>& types,
                              const vector<string>& argNames);
-            TypeId call(uint32_t n);
+            TypeId call(uint32_t n, bool statement);
             TypeId call_name(uint32_t n, uint32_t callee, const vector<uint32_t>& args);
             TypeId call_function(uint32_t n, uint32_t fn, const string& f, const vector<TypeId>& args);
             TypeId call_builtin(uint32_t n, const string& f, const vector<uint32_t>& args, const vector<TypeId>& types);
-            TypeId call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args);
+            void construct(uint32_t n, uint32_t classEntity, const vector<TypeId>& args);
+            TypeId call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args, bool statement);
+            TypeId call_method(uint32_t n, uint32_t callee, TypeId object, const vector<TypeId>& args);
+            TypeId call_container(uint32_t n, uint32_t callee, TypeId container, const vector<TypeId>& args, bool statement);
+            void check_key(uint32_t n, uint32_t container, TypeId type, TypeId key);
+            void check_element(uint32_t n, uint32_t container, TypeId type, TypeId value);
             TypeId index(uint32_t n);
             TypeId member(uint32_t n);
     };
     
-    // May a value of type 'value' go where 'declared' is expected (a variable, a parameter, a return value)? The same
-    // type, a float widening to a double, or either one Unknown. Objects and containers get their own rules with
-    // objects; until then any two of them fit.
+    // May a value of type 'value' go where 'declared' is expected (a variable, a field, a parameter, a return value)?
+    // The same type, a float widening to a double, or either one Unknown. An object goes where its own class or a
+    // parent of it is expected (it has the parent's fields first, and its methods override the parent's), and none
+    // goes wherever an object does.
     bool Typer::fits(TypeId value, TypeId declared) const
     {
         if (value == declared || value == Unknown || declared == Unknown) return true;
         if (value == Float && declared == Double) return true;
-        return is_reference(value) && is_reference(declared);
+        if (kind(declared) != TypeKind::Class || !is_object(value)) return false;
+        if (value == None) return true;
+        uint32_t c = out.types[value].a;
+        for (size_t steps = 0; c != NoEntity && steps < out.entities.size(); steps++)  // steps: in case of a cycle
+        {
+            if (c == out.types[declared].a) return true;
+            c = parent(c);
+        }
+        return false;
+    }
+
+    // A class's parent class, or NoEntity
+    uint32_t Typer::parent(uint32_t classEntity) const
+    {
+        for (uint32_t m : tree.children(out.entities[classEntity].decl))
+        {
+            if (tree.kind(m) == NodeKind::Extends) return out.refs[tree.children(m)[0]];
+        }
+        return NoEntity;
+    }
+
+    // The FieldDecl of a struct's field, or of a class's (its own, or the nearest parent's); NoNode if it has none
+    uint32_t Typer::find_field(uint32_t entity, const string& field) const
+    {
+        for (size_t steps = 0; entity != NoEntity && steps < out.entities.size(); steps++)
+        {
+            for (uint32_t m : tree.children(out.entities[entity].decl))
+            {
+                if (tree.kind(m) == NodeKind::FieldDecl && text(m) == field) return m;
+            }
+            entity = out.entities[entity].kind == EntityKind::Class ? parent(entity) : NoEntity;
+        }
+        return NoNode;
+    }
+
+    // The FunctionDecl a class runs for a method (its own, or the nearest parent's), and in owner the class it is
+    // in; NoNode if it has none
+    uint32_t Typer::find_method(uint32_t classEntity, const string& method, uint32_t* owner) const
+    {
+        for (size_t steps = 0; classEntity != NoEntity && steps < out.entities.size(); steps++)
+        {
+            for (uint32_t m : tree.children(out.entities[classEntity].decl))
+            {
+                if (tree.kind(m) != NodeKind::FunctionDecl || text(m) != method) continue;
+                *owner = classEntity;
+                return m;
+            }
+            classEntity = parent(classEntity);
+        }
+        return NoNode;
+    }
+
+    // A field's type; an array field (int data[256]) is an array
+    TypeId Typer::field_type(uint32_t fieldDecl)
+    {
+        vector<uint32_t> kids = tree.children(fieldDecl);
+        return kids.size() > 1 ? Array : written(kids[0], false);
+    }
+
+    // An expression as messages name it: v, self.items, h.p, v[...]
+    string Typer::path(uint32_t n) const
+    {
+        switch (tree.kind(n))
+        {
+            case NodeKind::Self:   return "self";
+            case NodeKind::Member: return path(tree.children(n)[0]) + "." + text(n);
+            case NodeKind::Index:  return path(tree.children(n)[0]) + "[...]";
+            case NodeKind::Call:   return path(tree.children(n)[0]) + "(...)";
+            case NodeKind::Paren:  return path(tree.children(n)[0]);
+            default:               return text(n);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -186,6 +274,7 @@ namespace {
                 {
                     vector<uint32_t> members = tree.children(n);
                     if (tree.kind(members[0]) == NodeKind::TypeParams) break;  // each copy is checked with generics
+                    check_overrides(n);
                     for (uint32_t m : members)
                     {
                         if (tree.kind(m) == NodeKind::FieldDecl) check_field(m);
@@ -299,7 +388,8 @@ namespace {
     }
 
     // A function's parameter and return types, as written. Only a function (not a method) with an untyped parameter
-    // is generic: a method's untyped parameter is Unknown.
+    // is generic: a method's untyped parameter is Unknown. A method without '-> types' returns Unknown: only a
+    // function's return type is taken from its first return.
     Signature& Typer::signature(uint32_t fn, bool method)
     {
         auto it = out.signatures.find(fn);
@@ -336,6 +426,7 @@ namespace {
         context = Context();
         context.function = fn;
         context.label = label;
+        context.method = method;
         vector<uint32_t> kids = tree.children(fn);
         for (uint32_t p : tree.children(kids[0]))
         {
@@ -349,6 +440,27 @@ namespace {
         check_block(kids.back());
         context = outer;
         states[fn] = State::Done;
+    }
+
+    // An override takes and returns what the method it overrides does, so a call through the parent's type can run
+    // it (init is not called that way)
+    void Typer::check_overrides(uint32_t classDecl)
+    {
+        uint32_t up = parent(out.refs[classDecl]);
+        if (up == NoEntity || is_generic_class(up)) return;
+        for (uint32_t m : tree.children(classDecl))
+        {
+            if (tree.kind(m) != NodeKind::FunctionDecl || text(m) == "init") continue;
+            uint32_t owner = NoEntity;
+            uint32_t over = find_method(up, text(m), &owner);
+            if (over == NoNode) continue;
+            Signature mine = signature(m, true), theirs = signature(over, true);  // copies: the table may grow
+            if (mine.params != theirs.params || mine.returns != theirs.returns)
+            {
+                error(m, "'" + text(classDecl) + "." + text(m) + "' must take and return the same types as '" +
+                         string(names.text(out.entities[owner].name)) + "." + text(m) + "', which it overrides");
+            }
+        }
     }
 
     // A field's type, and an array field's size
@@ -444,9 +556,10 @@ namespace {
                 if (tree.kind(kids[0]) == NodeKind::Name) store(kids[0], result);
                 return;
             }
-            case NodeKind::ExprStatement:
+            case NodeKind::ExprStatement:  // a call as a statement: v.push(x) is a statement, v.size() a value
             {
-                expr(kids[0]);
+                if (tree.kind(kids[0]) == NodeKind::Call) typed(kids[0], call(kids[0], true));
+                else expr(kids[0]);
                 return;
             }
             case NodeKind::If:
@@ -512,6 +625,7 @@ namespace {
         if (context.function == NoNode || values.empty()) return;  // outside a function (reported with the names)
         Signature& sig = out.signatures[context.function];
         const string& f = context.label;
+        if (context.method && sig.inferred) return;  // a method without '-> types' returns Unknown
         if (sig.inferred && sig.returns.empty())
         {
             if (types.size() > 1)
@@ -533,22 +647,34 @@ namespace {
         }
         for (size_t i = 0; i < types.size(); i++)
         {
-            if (!fits(types[i], sig.returns[i]))
+            TypeId want = sig.returns[i], got = types[i];
+            if (fits(got, want)) continue;
+            if ((kind(want) == TypeKind::Class && kind(got) == TypeKind::Class) || (is_container(want) && kind(got) == kind(want)))
             {
-                error(n, "'" + f + "' returns " + name(types[i]) + " but is declared '-> " + name(sig.returns[i]) + "'");
+                error(n, "'" + f + "' returns " + name(want) + ", not " + name(got));  // another class, or element type
+            }
+            else
+            {
+                error(n, "'" + f + "' returns " + name(got) + " but is declared '-> " + name(want) + "'");
             }
         }
     }
 
-    // A value stored in the variable named by node n's token, of type 'declared'. An object variable takes only an 
-    // object: Box b = 5 does not make a Box.
+    // A value stored in the variable named by node n's token, of type 'declared'. An object variable takes only an
+    // object (Box b = 5 does not make a Box), of its class or a subclass; a container variable only a container of
+    // its own type.
     void Typer::check_assign(uint32_t n, TypeId value, TypeId declared)
     {
-        if (kind(declared) == TypeKind::Class && value != Unknown && value != None && kind(value) != TypeKind::Class)
+        if (fits(value, declared)) return;
+        if (kind(declared) == TypeKind::Class && !is_object(value))
         {
             error(n, "a " + name(declared) + " is created with " + name(declared) + "(...), which runs its init");
         }
-        else if (!fits(value, declared))
+        else if (kind(declared) == TypeKind::Class || is_container(declared))
+        {
+            error(n, "'" + text(n) + "' is a " + name(declared) + ", not " + a_name(value));
+        }
+        else
         {
             error(n, "cannot assign " + name(value) + " to " + name(declared) + " variable '" + text(n) + "'");
         }
@@ -560,8 +686,8 @@ namespace {
         if (expr(n) == String) error(n, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
     }
 
-    // A value stored into a variable (the first known value fixes an implicitly declared variable's type), a tensor
-    // element or an array element. Fields and container elements are checked with objects and containers.
+    // A value stored into a variable (the first known value fixes an implicitly declared variable's type, and an
+    // object fixes one that was none), a field, a container element, a tensor element or an array element.
     void Typer::store(uint32_t target, TypeId value)
     {
         if (tree.kind(target) == NodeKind::Name)
@@ -569,7 +695,7 @@ namespace {
             uint32_t e = out.refs[target];
             if (e == NoEntity || out.entities[e].kind != EntityKind::Variable) return;
             Entity& var = out.entities[e];
-            if (var.type == Unknown)
+            if (var.type == Unknown || (var.type == None && is_object(value)))
             {
                 var.type = value;  // x = 5 declares x as an int
             }
@@ -578,6 +704,11 @@ namespace {
                 check_assign(target, value, var.type);
             }
             typed(target, var.type);
+            return;
+        }
+        if (tree.kind(target) == NodeKind::Member)
+        {
+            store_field(target, value);
             return;
         }
         if (tree.kind(target) == NodeKind::Index)
@@ -590,9 +721,48 @@ namespace {
                 types.push_back(value);
                 tensor_args(target, "element assignment", tensor_op_signature(TEN_SET), types, {});
             }
+            else if (is_container(types[0]) && types.size() == 2)
+            {
+                check_key(target, kids[0], types[0], types[1]);
+                check_element(target, kids[0], types[0], value);
+            }
             return;
         }
         expr(target);
+    }
+
+    // obj.x = value: the field takes values as a variable of its type does, and an array field only element by
+    // element. A struct's fields are checked the same way.
+    void Typer::store_field(uint32_t target, TypeId value)
+    {
+        TypeId object = expr(tree.children(target)[0]);
+        bool isClass = kind(object) == TypeKind::Class;
+        if (!isClass && kind(object) != TypeKind::Struct) return;
+        string field = text(target), owner = string(isClass ? "class '" : "struct '") + name(object) + "'";
+        uint32_t f = find_field(out.types[object].a, field);
+        if (f == NoNode)
+        {
+            error(target, owner + " has no field '" + field + "'");
+            return;
+        }
+        TypeId want = typed(target, field_type(f));
+        if (want == Array)
+        {
+            error(target, "'" + field + "' is an array field: assign its elements, " + field + "[i] = x");
+        }
+        else if (fits(value, want))
+        {
+            return;
+        }
+        else if (is_object(want) || is_object(value) || (is_container(want) && is_container(value)))
+        {
+            error(target, "'" + path(target) + "' is " + (is_container(want) ? "a " : "") + a_name(want) + ", not " +
+                          a_name(value));
+        }
+        else
+        {
+            error(target, "cannot assign " + name(value) + " to " + name(want) + " field '" + field + "' of " + owner);
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -623,7 +793,7 @@ namespace {
                 TypeId lt = expr(kids[0]);
                 return typed(n, binary(n, tree.token(n).kind, lt, expr(kids[1])));
             }
-            case NodeKind::Call:        return typed(n, call(n));
+            case NodeKind::Call:        return typed(n, call(n, false));
             case NodeKind::Index:       return typed(n, index(n));
             case NodeKind::Member:      return typed(n, member(n));
             default:                    return Unknown;
@@ -639,7 +809,7 @@ namespace {
             return Bool;
         }
         if (t == Unknown || t == Int || t == Float || t == Double || t == Tensor) return t;  // -x
-        error(n, "arithmetic requires int operands, got " + name(t));
+        error(n, "unary '-' needs a number, got " + name(t));
         return Unknown;
     }
 
@@ -658,7 +828,22 @@ namespace {
             }
             case EQEQ: case NOTEQUAL: case LESS: case GREATER: case LESSEQ: case GREATEREQ:
             {
-                // objects compare by their own rules, checked with objects
+                if (is_object(lt) || is_object(rt))  // p == q, n.next != none: the same object or not (no order)
+                {
+                    if (op != EQEQ && op != NOTEQUAL)
+                    {
+                        error(n, "objects are compared with == and != only");
+                    }
+                    else if (lt != Unknown && rt != Unknown && is_object(lt) != is_object(rt))
+                    {
+                        error(n, "cannot compare " + name(lt) + " with " + name(rt));
+                    }
+                    else if (!fits(lt, rt) && !fits(rt, lt))
+                    {
+                        error(n, "cannot compare a " + name(lt) + " with a " + name(rt));
+                    }
+                    return Bool;
+                }
                 if ((lt == String) != (rt == String) && lt != Unknown && rt != Unknown && !is_reference(lt) && !is_reference(rt))
                 {
                     error(n, "cannot compare " + name(lt) + " with " + name(rt));
@@ -744,7 +929,8 @@ namespace {
         }
     }
 
-    TypeId Typer::call(uint32_t n)
+    // statement: the call is a statement on its own (v.push(x)), not a value
+    TypeId Typer::call(uint32_t n, bool statement)
     {
         vector<uint32_t> kids = tree.children(n);
         uint32_t callee = kids[0];
@@ -752,7 +938,7 @@ namespace {
         switch (tree.kind(callee))
         {
             case NodeKind::Name:        return call_name(n, callee, args);
-            case NodeKind::Member:      return call_member(n, callee, args);
+            case NodeKind::Member:      return call_member(n, callee, args, statement);
             case NodeKind::TypeName:        // float(x), int(x), double(x): a conversion
             case NodeKind::GenericType:     // vector<int>(), map<string, int>(), Box<int>(5)
             {
@@ -796,8 +982,40 @@ namespace {
                 }
                 return out.types.intern({TypeKind::Struct, e});
             }
-            case EntityKind::Class:         return class_type(e);  // its init's arguments are checked with objects
+            case EntityKind::Class:
+            {
+                if (is_generic_class(e)) return Unknown;  // reported with the names: Box needs its type arguments
+                construct(n, e, types);
+                return class_type(e);
+            }
             default:                        return Unknown;
+        }
+    }
+
+    // P(args): a new object, its init (its own, or the nearest parent's) run with the arguments
+    void Typer::construct(uint32_t n, uint32_t classEntity, const vector<TypeId>& args)
+    {
+        string cls = string(names.text(out.entities[classEntity].name));
+        uint32_t owner = NoEntity;
+        uint32_t init = find_method(classEntity, "init", &owner);
+        if (init == NoNode)
+        {
+            error(n, "class '" + cls + "' has no constructor 'init'");
+            return;
+        }
+        Signature sig = signature(init, true);
+        if (args.size() != sig.params.size())
+        {
+            error(n, "'" + cls + "' constructor takes " + to_string(sig.params.size()) + " argument(s) but got " +
+                     to_string(args.size()));
+        }
+        for (size_t i = 0; i < args.size() && i < sig.params.size(); i++)
+        {
+            if (!fits(args[i], sig.params[i]))
+            {
+                error(n, "argument " + to_string(i + 1) + " of '" + cls + "' constructor expects " + name(sig.params[i]) +
+                         " but got " + name(args[i]));
+            }
         }
     }
 
@@ -874,8 +1092,8 @@ namespace {
         return Tensor;
     }
 
-    // hf.infer(...) and sol.finetune(...); a method of an object or a container is checked with those 
-    TypeId Typer::call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args)
+    // obj.m(...), v.push(x), m.has(k), hf.infer(...), sol.finetune(...)
+    TypeId Typer::call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args, bool statement)
     {
         uint32_t base = tree.children(callee)[0];
         uint32_t e = tree.kind(base) == NodeKind::Name ? out.refs[base] : NoEntity;
@@ -902,12 +1120,127 @@ namespace {
             return (method == "finetune" || method == "predict") ? String : Unknown;
         }
         TypeId b = expr(base);
-        for (uint32_t a : args) expr(a);
+        vector<TypeId> types;
+        for (uint32_t a : args) types.push_back(expr(a));
+        if (kind(b) == TypeKind::Class) return call_method(n, callee, b, types);
+        if (is_container(b)) return call_container(n, callee, b, types, statement);
         if (b == Tensor) error(callee, "a Tensor has no member '" + text(callee) + "' (it has .T, .rows, .cols, and .rank)");
         return Unknown;
     }
 
-    // t[i, j] reads one element of a Tensor (a double); a[i] one of an array (an int)
+    // obj.m(args): the method its class runs (its own, or the nearest parent's), its arguments checked as a
+    // function's are
+    TypeId Typer::call_method(uint32_t n, uint32_t callee, TypeId object, const vector<TypeId>& args)
+    {
+        string cls = name(object), method = text(callee), label = "'" + cls + "." + method + "'";
+        uint32_t owner = NoEntity;
+        uint32_t m = find_method(out.types[object].a, method, &owner);
+        if (m == NoNode)
+        {
+            error(n, "class '" + cls + "' has no method '" + method + "'");
+            return Unknown;
+        }
+        Signature sig = signature(m, true);
+        for (size_t i = 0; i < args.size() && i < sig.params.size(); i++)
+        {
+            if (!fits(args[i], sig.params[i]))
+            {
+                error(n, "argument " + to_string(i + 1) + " of " + label + " expects " + name(sig.params[i]) + " but got " +
+                         name(args[i]));
+            }
+        }
+        if (args.size() != sig.params.size())
+        {
+            error(n, label + " takes " + to_string(sig.params.size()) + " argument(s) but got " + to_string(args.size()));
+        }
+        return sig.returns.size() == 1 ? sig.returns[0] : Unknown;
+    }
+
+    // A vector's or a map's method. As a value: size(); for a vector pop(), contains(x), index_of(x),
+    // binary_search(x), min(), max(), sum(); for a map has(k). As a statement: clear(); for a vector push(x), pop(),
+    // sort(), reverse(); for a map remove(k). The algorithm methods need elements they can compare (sum(): numbers);
+    // objects compare by identity only, so they allow contains() and index_of() alone.
+    TypeId Typer::call_container(uint32_t n, uint32_t callee, TypeId container, const vector<TypeId>& args, bool statement)
+    {
+        uint32_t base = tree.children(callee)[0];
+        bool isMap = kind(container) == TypeKind::Map, noArgs = args.empty();
+        TypeId elem = isMap ? out.types[container].b : out.types[container].a;
+        string v = path(base), m = text(callee);
+        auto allows = [&]()
+        {
+            bool ok = elem == Unknown ? true :
+                      m == "sum" ? (elem == Int || elem == Float || elem == Double) :
+                      kind(elem) == TypeKind::Class ? (m == "contains" || m == "index_of") : elem != Tensor;
+            if (!ok)
+            {
+                error(n, "'" + v + "." + m + "()' needs " + (m == "sum" ? "numbers" : "comparable elements") + ", but '" + v +
+                         "' holds " + name(elem));
+            }
+            return ok;
+        };
+        if (!statement)
+        {
+            if (m == "size" && noArgs) return Int;
+            if (isMap && m == "has" && !noArgs)
+            {
+                check_key(n, base, container, args[0]);
+                return Bool;
+            }
+            if (!isMap && m == "pop" && noArgs) return elem;
+            if (!isMap && (m == "contains" || m == "index_of" || m == "binary_search") && !noArgs)
+            {
+                check_element(n, base, container, args[0]);
+                if (!allows()) return Unknown;
+                return m == "contains" ? Bool : Int;
+            }
+            if (!isMap && (m == "min" || m == "max" || m == "sum") && noArgs) return allows() ? elem : Unknown;
+            error(n, "'" + v + "." + m + "(...)' does not give a value here; a " +
+                     (isMap ? "map has m[k], has(k), size()"
+                            : "vector has v[i], size(), pop(), contains(x), index_of(x), binary_search(x), min(), max(), sum()"));
+            return Unknown;
+        }
+        if (m == "clear" && noArgs) return Unknown;
+        if (isMap && m == "remove" && !noArgs)
+        {
+            check_key(n, base, container, args[0]);
+            return Unknown;
+        }
+        if (!isMap && m == "push" && !noArgs)
+        {
+            check_element(n, base, container, args[0]);
+            return Unknown;
+        }
+        if (!isMap && (m == "pop" || m == "reverse") && noArgs) return Unknown;
+        if (!isMap && m == "sort" && noArgs)
+        {
+            allows();
+            return Unknown;
+        }
+        error(n, "'" + v + "." + m + "(...)' is not a " + (isMap ? "map" : "vector") + " method: a " +
+                 (isMap ? "map has m[k] = x, remove(k), clear()" : "vector has v[i] = x, push(x), pop(), sort(), reverse(), clear()"));
+        return Unknown;
+    }
+
+    // A vector's index must be an int, and a map's key of its key type
+    void Typer::check_key(uint32_t n, uint32_t container, TypeId type, TypeId key)
+    {
+        bool isMap = kind(type) == TypeKind::Map;
+        TypeId want = isMap ? out.types[type].a : Int;
+        if (!fits(key, want))
+        {
+            error(n, string(isMap ? "key" : "index") + " of '" + path(container) + "' must be " + name(want) + ", got " +
+                     name(key));
+        }
+    }
+
+    // A value stored in a container, or looked for in one, must be of its element type
+    void Typer::check_element(uint32_t n, uint32_t container, TypeId type, TypeId value)
+    {
+        TypeId elem = kind(type) == TypeKind::Map ? out.types[type].b : out.types[type].a;
+        if (!fits(value, elem)) error(n, "'" + path(container) + "' holds " + name(elem) + ", not " + name(value));
+    }
+
+    // t[i, j] reads one element of a Tensor (a double); a[i] one of an array (an int); v[i] and m[k] one of a container
     TypeId Typer::index(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -918,14 +1251,27 @@ namespace {
             tensor_args(n, "indexing", tensor_op_signature(TEN_GET), types, {});
             return Double;
         }
+        if (is_container(types[0]) && types.size() == 2)
+        {
+            check_key(n, kids[0], types[0], types[1]);
+            return kind(types[0]) == TypeKind::Map ? out.types[types[0]].b : out.types[types[0]].a;
+        }
         return types[0] == Array ? Int : Unknown;
     }
 
-    // t.T, t.rows, t.cols, t.rank on a Tensor; fields are typed with objects
+    // A field of an object or a struct; t.T, t.rows, t.cols, t.rank on a Tensor
     TypeId Typer::member(uint32_t n)
     {
-        if (expr(tree.children(n)[0]) != Tensor) return Unknown;
+        TypeId b = expr(tree.children(n)[0]);
         string m = text(n);
+        if (kind(b) == TypeKind::Class || kind(b) == TypeKind::Struct)
+        {
+            uint32_t f = find_field(out.types[b].a, m);
+            if (f != NoNode) return field_type(f);
+            error(n, string(kind(b) == TypeKind::Class ? "class '" : "struct '") + name(b) + "' has no field '" + m + "'");
+            return Unknown;
+        }
+        if (b != Tensor) return Unknown;
         if (m == "T") return Tensor;
         if (m == "rows" || m == "cols" || m == "rank") return Int;
         error(n, "a Tensor has no member '" + m + "' (it has .T, .rows, .cols, and .rank)");

@@ -63,8 +63,12 @@ first: they could not keep up with the language, and native code will come from 
      returns and return types inferred from the first `return`. A function's body is checked when a caller first
      needs its return type, so it can be defined after the caller (once 2c removes the old parser). A value not
      typed yet (a field, a method's result, a container element, an untyped parameter) is Unknown and fits
-     everywhere. 2b-2b: objects and containers (fields, methods, constructors, subclasses, `none`, vector / map
-     methods). 2b-3: generic functions and classes.
+     everywhere. 2b-2b (done): objects and containers. Fields are typed through the parent chain; constructors are
+     checked against `init`, method calls by name, argument types and count (plain-type arguments too, which the
+     old parser let through), and an override must keep its parent's signature. A subclass fits where its parent
+     does and `none` wherever an object does; objects compare with `==` / `!=` only. Vector and map keys, elements
+     and methods are checked, with value methods (`v.size()`) told apart from statement methods (`v.push(x)`). A
+     method without `-> types` still returns Unknown. 2b-3: generic functions and classes.
    - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).

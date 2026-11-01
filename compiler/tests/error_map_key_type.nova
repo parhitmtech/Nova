@@ -1,0 +1,5 @@
+# A map's key has the key type it was declared with.
+def main():
+    map<string, int> ages = map<string, int>()
+    ages["ann"] = 31
+    print(ages[3])

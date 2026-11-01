@@ -1,0 +1,10 @@
+# A field takes values of its own type.
+class Box:
+    int size
+
+    def init():
+        self.size = 0
+
+def main():
+    Box b = Box()
+    b.size = "big"
