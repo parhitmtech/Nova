@@ -1,0 +1,9 @@
+# Two copies of a class are different types: a Box<double> is not a Box<int>.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    Box<int> b = Box<double>(1.0)

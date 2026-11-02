@@ -3,8 +3,10 @@
 // entities through refs and needs no scopes: it can check a function's body whenever a caller first needs its return
 // type.
 //
-// A value this step does not type (an untyped parameter, a method without '-> type', a generic class's object) is
-// Unknown, and Unknown fits everywhere, so it never causes an error. Generics come next.
+// A generic function or class is checked once per copy: scale(2, 3) checks scale's body with x and k ints, and
+// Box<int> checks Box's fields and methods with T an int. A value this step does not type (a method's untyped
+// parameter, the result of a method without '-> type') is Unknown, and Unknown fits everywhere, so it never causes
+// an error.
 #include <cstring>
 #include <map>
 #include <set>
@@ -57,8 +59,15 @@ string type_name(const CheckResult& checked, TypeId id)
         case TypeKind::None:        return "none";
         case TypeKind::Vector:      return "vector<" + type_name(checked, t.a) + ">";
         case TypeKind::Map:         return "map<" + type_name(checked, t.a) + ", " + type_name(checked, t.b) + ">";
-        case TypeKind::Struct:
-        case TypeKind::Class:       return string(names.text(checked.entities[t.a].name));
+        case TypeKind::Struct:      return string(names.text(checked.entities[t.a].name));
+        case TypeKind::Class:
+        {
+            string s = string(names.text(checked.entities[t.a].name));
+            if (t.b == 0) return s;
+            const vector<TypeId>& args = checked.instances[t.b - 1].args;  // a copy: Box<int>
+            for (size_t i = 0; i < args.size(); i++) s += (i == 0 ? "<" : ", ") + type_name(checked, args[i]);
+            return s + ">";
+        }
         default:                    return "unknown";
     }
 }
@@ -81,17 +90,19 @@ namespace {
             CheckResult& out;
 
             // The function whose body is being checked: its FunctionDecl (NoNode in the ignite block) and its name in
-            // messages (f, or Linear.forward).
+            // messages (f, Linear.forward, scale<int, int>, Box<int>.get), and the copy it belongs to.
             struct Context
             {
                 uint32_t function = NoNode;
                 string label;
                 bool selfCalled = false;  // it called itself before its first return, so its return type was not known yet
                 bool method = false;
+                uint32_t instance = NoInstance;  // a class copy's type parameters stand for its type arguments
             };
             Context context;
             enum class State : uint8_t { NotChecked, Checking, Done };
-            unordered_map<uint32_t, State> states;  // by FunctionDecl
+            unordered_map<uint64_t, State> states;  // by copy and FunctionDecl (state_key)
+            map<pair<uint32_t, vector<TypeId>>, uint32_t> copies;  // by decl and types: the copy's index in instances
 
             string text(uint32_t n) const { return string(tree.spelling(n)); }
             string name(TypeId t) const { return type_name(out, t); }
@@ -115,10 +126,14 @@ namespace {
             {
                 return tree.kind(tree.children(out.entities[classEntity].decl)[0]) == NodeKind::TypeParams;
             }
-            TypeId class_type(uint32_t classEntity)  // a generic class's copies are typed with generics
+            TypeId class_type(uint32_t classEntity)  // self in a generic class is the copy being checked
             {
-                return is_generic_class(classEntity) ? Unknown : out.types.intern({TypeKind::Class, classEntity});
+                if (!is_generic_class(classEntity)) return out.types.intern({TypeKind::Class, classEntity});
+                bool inCopy = context.instance != NoInstance && out.instances[context.instance].decl == out.entities[classEntity].decl;
+                return inCopy ? out.types.intern({TypeKind::Class, classEntity, context.instance + 1}) : Unknown;
             }
+            uint32_t copy_of(TypeId t) const { return kind(t) == TypeKind::Class && out.types[t].b ? out.types[t].b - 1 : NoInstance; }
+            static uint64_t state_key(uint32_t instance, uint32_t fn) { return (uint64_t)instance << 32 | fn; }
             bool is_object(TypeId t) const { return kind(t) == TypeKind::Class || t == None; }
             bool is_container(TypeId t) const { return kind(t) == TypeKind::Vector || kind(t) == TypeKind::Map; }
             string a_name(TypeId t) const { return (kind(t) == TypeKind::Class ? "a " : "") + name(t); }  // a P, int
@@ -127,13 +142,18 @@ namespace {
             uint32_t parent(uint32_t classEntity) const;
             uint32_t find_field(uint32_t entity, const string& field) const;
             uint32_t find_method(uint32_t classEntity, const string& method, uint32_t* owner) const;
-            TypeId field_type(uint32_t fieldDecl);
+            TypeId field_type(uint32_t fieldDecl, uint32_t instance);
+            uint32_t binding(TypeId object, uint32_t member) const;
             string path(uint32_t n) const;
             void check_overrides(uint32_t classDecl);
             TypeId written(uint32_t n, bool report);
+            TypeId type_argument(uint32_t typeParam) const;
             string spell(uint32_t n) const;
-            Signature& signature(uint32_t fn, bool method);
-            void check_function(uint32_t fn, const string& label, bool method);
+            Signature& signature(uint32_t fn, bool method, uint32_t instance = NoInstance);
+            void check_function(uint32_t fn, const string& label, bool method, uint32_t instance = NoInstance);
+            uint32_t make_copy(uint32_t decl, const vector<TypeId>& args);
+            TypeId class_copy(uint32_t classEntity, const vector<TypeId>& args);
+            string copy_name(const string& name, const vector<TypeId>& args) const;
             void check_field(uint32_t n);
             void set_variable(uint32_t declNode, TypeId t);
 
@@ -155,7 +175,7 @@ namespace {
             TypeId call_name(uint32_t n, uint32_t callee, const vector<uint32_t>& args);
             TypeId call_function(uint32_t n, uint32_t fn, const string& f, const vector<TypeId>& args);
             TypeId call_builtin(uint32_t n, const string& f, const vector<uint32_t>& args, const vector<TypeId>& types);
-            void construct(uint32_t n, uint32_t classEntity, const vector<TypeId>& args);
+            void construct(uint32_t n, TypeId type, const vector<TypeId>& args);
             TypeId call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args, bool statement);
             TypeId call_method(uint32_t n, uint32_t callee, TypeId object, const vector<TypeId>& args);
             TypeId call_container(uint32_t n, uint32_t callee, TypeId container, const vector<TypeId>& args, bool statement);
@@ -175,6 +195,7 @@ namespace {
         if (value == Float && declared == Double) return true;
         if (kind(declared) != TypeKind::Class || !is_object(value)) return false;
         if (value == None) return true;
+        if (out.types[declared].b != 0) return false;  // a copy: Box<int> takes only a Box<int>
         uint32_t c = out.types[value].a;
         for (size_t steps = 0; c != NoEntity && steps < out.entities.size(); steps++)  // steps: in case of a cycle
         {
@@ -225,11 +246,25 @@ namespace {
         return NoNode;
     }
 
-    // A field's type; an array field (int data[256]) is an array
-    TypeId Typer::field_type(uint32_t fieldDecl)
+    // A field's type, in a class copy with its type parameters replaced; an array field (int data[256]) is an array
+    TypeId Typer::field_type(uint32_t fieldDecl, uint32_t instance)
     {
         vector<uint32_t> kids = tree.children(fieldDecl);
-        return kids.size() > 1 ? Array : written(kids[0], false);
+        if (kids.size() > 1) return Array;
+        uint32_t outer = context.instance;
+        context.instance = instance;
+        TypeId t = written(kids[0], false);
+        context.instance = outer;
+        return t;
+    }
+
+    // The copy whose type arguments a field's or method's written types take: the object's own class copy, when
+    // the member is in that class (not in a parent)
+    uint32_t Typer::binding(TypeId object, uint32_t member) const
+    {
+        uint32_t decl = out.entities[out.types[object].a].decl;
+        bool own = member < decl && member + tree.nodes[decl].size > decl;
+        return own ? copy_of(object) : NoInstance;
     }
 
     // An expression as messages name it: v, self.items, h.p, v[...]
@@ -273,7 +308,7 @@ namespace {
                 case NodeKind::ClassDecl:
                 {
                     vector<uint32_t> members = tree.children(n);
-                    if (tree.kind(members[0]) == NodeKind::TypeParams) break;  // each copy is checked with generics
+                    if (tree.kind(members[0]) == NodeKind::TypeParams) break;  // each copy is checked when it is made
                     check_overrides(n);
                     for (uint32_t m : members)
                     {
@@ -297,7 +332,7 @@ namespace {
 
     // The type a written type names: int, Tensor<float>, vector<int>, map<string, int>, Point. With report, also the 
     // rules for writing one: how many type arguments, what an element or a map key can be, what a type argument can
-    // be. A generic class's copy and a type parameter are Unknown until generics are checked.
+    // be. Box<int> is Box's copy for int (made the first time it is written), and T in a class copy its type argument.
     TypeId Typer::written(uint32_t n, bool report)
     {
         switch (tree.token(n).kind)
@@ -319,31 +354,37 @@ namespace {
         if (ent.kind == EntityKind::Class)  // Box<int>: one type argument per type parameter, each a simple type
         {
             size_t want = tree.children(tree.children(ent.decl)[0]).size();
-            if (report && !args.empty() && args.size() != want)
+            if (args.empty()) return Unknown;  // reported with the names: Box needs its type arguments
+            if (args.size() != want)
             {
-                error(n, "class '" + text(n) + "' takes " + to_string(want) + " type argument(s) but got " + 
-                         to_string(args.size()));
-            }
-            else if (report)
-            {
-                for (uint32_t a : args)
+                if (report)
                 {
-                    bool nested = false;  // a container of containers, or of a generic class's copy
-                    for (uint32_t inner : tree.children(a)) nested |= tree.kind(inner) == NodeKind::GenericType;
-                    uint32_t ae = out.refs[a];
-                    bool isStruct = ae != NoEntity && out.entities[ae].kind == EntityKind::Struct;
-                    bool isGenericClass = ae != NoEntity && out.entities[ae].kind == EntityKind::Class && is_generic_class(ae);
-                    if (nested || isStruct || isGenericClass)
-                    {
-                        error(n, "'" + spell(a) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, "
-                                 "a class, vector<T> or map<K, V>");
-                    }
-                    written(a, report);
+                    error(n, "class '" + text(n) + "' takes " + to_string(want) + " type argument(s) but got " +
+                             to_string(args.size()));
                 }
+                return Unknown;
             }
-            return Unknown;
-        }        
-        if (ent.kind != EntityKind::BuiltinType) return Unknown;  // a type parameter
+            vector<TypeId> types;
+            bool ok = true;
+            for (uint32_t a : args)
+            {
+                bool nested = false;  // a container of containers, or of a generic class's copy
+                for (uint32_t inner : tree.children(a)) nested |= tree.kind(inner) == NodeKind::GenericType;
+                uint32_t ae = out.refs[a];
+                bool isStruct = ae != NoEntity && out.entities[ae].kind == EntityKind::Struct;
+                bool isGenericClass = ae != NoEntity && out.entities[ae].kind == EntityKind::Class && is_generic_class(ae);
+                if ((nested || isStruct || isGenericClass) && report)
+                {
+                    error(n, "'" + spell(a) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, "
+                             "a class, vector<T> or map<K, V>");
+                }
+                types.push_back(written(a, report));
+                ok &= !nested && !isStruct && !isGenericClass && types.back() != Unknown;  // Unknown: reported already
+            }
+            return ok ? class_copy(e, types) : Unknown;
+        }
+        if (ent.kind == EntityKind::TypeParam) return type_argument(e);
+        if (ent.kind != EntityKind::BuiltinType) return Unknown;
 
         // vector<T>, map<K, V>
         bool isMap = text(n) == "map";
@@ -378,6 +419,20 @@ namespace {
         return out.types.intern({TypeKind::Map, key, elem});
     }
 
+    // What a type parameter stands for in the class copy being checked: T in Box<int> is int
+    TypeId Typer::type_argument(uint32_t typeParam) const
+    {
+        if (context.instance == NoInstance) return Unknown;
+        const Instance& copy = out.instances[context.instance];
+        if (tree.kind(copy.decl) != NodeKind::ClassDecl) return Unknown;
+        vector<uint32_t> params = tree.children(tree.children(copy.decl)[0]);
+        for (size_t i = 0; i < params.size(); i++)
+        {
+            if (params[i] == out.entities[typeParam].decl) return copy.args[i];
+        }
+        return Unknown;
+    }
+
     // A written type as the source spells it, for messages: vector<vector<int>>
     string Typer::spell(uint32_t n) const 
     {
@@ -387,59 +442,131 @@ namespace {
         return args.empty() ? s : s + ">";
     }
 
-    // A function's parameter and return types, as written. Only a function (not a method) with an untyped parameter
-    // is generic: a method's untyped parameter is Unknown. A method without '-> types' returns Unknown: only a
-    // function's return type is taken from its first return.
-    Signature& Typer::signature(uint32_t fn, bool method)
+    // A function's parameter and return types, as written, in a copy with its own types. Only a function (not a
+    // method) with an untyped parameter is generic, and each copy gives that parameter its argument's type; a method's
+    // untyped parameter is Unknown. A method without '-> types' returns Unknown: only a function's return type is
+    // taken from its first return.
+    Signature& Typer::signature(uint32_t fn, bool method, uint32_t instance)
     {
-        auto it = out.signatures.find(fn);
-        if (it != out.signatures.end()) return it->second;
+        unordered_map<uint32_t, Signature>& table = instance == NoInstance ? out.signatures : out.instances[instance].signatures;
+        auto it = table.find(fn);
+        if (it != table.end()) return it->second;
+        bool functionCopy = instance != NoInstance && out.instances[instance].decl == fn;
+        uint32_t outer = context.instance;
+        context.instance = instance;
         Signature s;
         vector<uint32_t> kids = tree.children(fn);  // ParamList, ReturnTypes if written, Block
         for (uint32_t p : tree.children(kids[0]))
         {
             if (tree.token(p).kind == SELF) continue;
             vector<uint32_t> type = tree.children(p);
-            if (type.empty() && !method) s.generic = true;
-            s.params.push_back(type.empty() ? Unknown : written(type[0], false));
+            size_t i = s.params.size();
+            if (!type.empty()) s.params.push_back(written(type[0], false));
+            else if (functionCopy) s.params.push_back(out.instances[instance].args[i]);
+            else
+            {
+                s.generic |= !method;
+                s.params.push_back(Unknown);
+            }
         }
         s.inferred = kids.size() == 2;
         if (!s.inferred)
         {
             for (uint32_t t : tree.children(kids[1])) s.returns.push_back(written(t, false));
         }
-        return out.signatures[fn] = s;
+        context.instance = outer;
+        return table[fn] = s;
     }
 
     // A function's body, once: in file order, or earlier when a caller first needs its return type. A generic
-    // function's body is checked for each copy, with generics.
-    void Typer::check_function(uint32_t fn, const string& label, bool method)
+    // function's body is checked once per copy, when a call first needs it, and a generic class's methods once per
+    // class copy. A copy's locals start untyped, and the types another copy of the same function gave them (it may
+    // still be being checked: a copy can call another) come back after.
+    void Typer::check_function(uint32_t fn, const string& label, bool method, uint32_t instance)
     {
-        if (states[fn] != State::NotChecked) return;
-        states[fn] = State::Checking;
-        if (signature(fn, method).generic)
+        uint64_t key = state_key(instance, fn);
+        if (states[key] != State::NotChecked) return;
+        states[key] = State::Checking;
+        Signature sig = signature(fn, method, instance);  // a copy: the table may grow
+        if (sig.generic)
         {
-            states[fn] = State::Done;
+            states[key] = State::Done;
             return;
+        }
+        vector<pair<uint32_t, TypeId>> saved;
+        if (instance != NoInstance)
+        {
+            uint32_t first = fn + 1 - tree.nodes[fn].size;
+            for (uint32_t e = 0; e < out.entities.size(); e++)
+            {
+                Entity& var = out.entities[e];
+                if (var.kind != EntityKind::Variable || var.decl < first || var.decl >= fn) continue;
+                saved.push_back({e, var.type});
+                var.type = Unknown;
+            }
         }
         Context outer = context;
         context = Context();
         context.function = fn;
         context.label = label;
         context.method = method;
+        context.instance = instance;
         vector<uint32_t> kids = tree.children(fn);
+        size_t i = 0;
         for (uint32_t p : tree.children(kids[0]))
         {
+            if (tree.token(p).kind == SELF) continue;
             vector<uint32_t> type = tree.children(p);
-            if (!type.empty()) set_variable(p, written(type[0], true));
+            if (!type.empty()) written(type[0], true);
+            set_variable(p, sig.params[i++]);
         }
         if (kids.size() == 3)
         {
             for (uint32_t t : tree.children(kids[1])) written(t, true);
         }
         check_block(kids.back());
+        for (const auto& [e, t] : saved) out.entities[e].type = t;
         context = outer;
-        states[fn] = State::Done;
+        states[key] = State::Done;
+    }
+
+    // The copy of a generic function or class for these types, made the first time they are used; its index in
+    // instances
+    uint32_t Typer::make_copy(uint32_t decl, const vector<TypeId>& args)
+    {
+        auto it = copies.find({decl, args});
+        if (it != copies.end()) return it->second;
+        out.instances.push_back({decl, args, {}});
+        return copies[{decl, args}] = (uint32_t)out.instances.size() - 1;
+    }
+
+    // Box<int>: the class's copy for these type arguments. A new copy's fields and methods are checked with its types
+    // right away, as the old parser compiles each copy the first time it is written.
+    TypeId Typer::class_copy(uint32_t classEntity, const vector<TypeId>& args)
+    {
+        uint32_t decl = out.entities[classEntity].decl;
+        bool isNew = !copies.count({decl, args});
+        uint32_t instance = make_copy(decl, args);
+        TypeId t = out.types.intern({TypeKind::Class, classEntity, instance + 1});
+        if (!isNew) return t;
+        Context outer = context;
+        context = Context();
+        context.instance = instance;
+        for (uint32_t m : tree.children(decl))
+        {
+            if (tree.kind(m) == NodeKind::FieldDecl) check_field(m);
+            else if (tree.kind(m) == NodeKind::FunctionDecl) check_function(m, name(t) + "." + text(m), true, instance);
+        }
+        context = outer;
+        return t;
+    }
+
+    // A copy's name in messages: scale<int, double>
+    string Typer::copy_name(const string& f, const vector<TypeId>& args) const
+    {
+        string s = f;
+        for (size_t i = 0; i < args.size(); i++) s += (i == 0 ? "<" : ", ") + name(args[i]);
+        return s + ">";
     }
 
     // An override takes and returns what the method it overrides does, so a call through the parent's type can run
@@ -623,7 +750,7 @@ namespace {
         vector<TypeId> types;
         for (uint32_t v : values) types.push_back(expr(v));
         if (context.function == NoNode || values.empty()) return;  // outside a function (reported with the names)
-        Signature& sig = out.signatures[context.function];
+        Signature& sig = signature(context.function, context.method, context.instance);
         const string& f = context.label;
         if (context.method && sig.inferred) return;  // a method without '-> types' returns Unknown
         if (sig.inferred && sig.returns.empty())
@@ -745,7 +872,7 @@ namespace {
             error(target, owner + " has no field '" + field + "'");
             return;
         }
-        TypeId want = typed(target, field_type(f));
+        TypeId want = typed(target, field_type(f, binding(object, f)));
         if (want == Array)
         {
             error(target, "'" + field + "' is an array field: assign its elements, " + field + "[i] = x");
@@ -943,13 +1070,18 @@ namespace {
             case NodeKind::GenericType:     // vector<int>(), map<string, int>(), Box<int>(5)
             {
                 TypeId t = written(callee, true);
-                for (uint32_t a : args) expr(a);
+                vector<TypeId> types;
+                for (uint32_t a : args) types.push_back(expr(a));
                 switch (tree.token(callee).kind)
                 {
                     case INT_TYPE:          return Int;
                     case FLOAT_TYPE:        return Float;
                     case DOUBLE_TYPE:       return Double;
-                    default:                return kind(t) == TypeKind::Vector || kind(t) == TypeKind::Map ? t : Unknown;
+                    default:
+                    {
+                        if (kind(t) == TypeKind::Class) construct(n, t, types);
+                        return is_container(t) || kind(t) == TypeKind::Class ? t : Unknown;
+                    }
                 }
             }
             default:
@@ -985,25 +1117,26 @@ namespace {
             case EntityKind::Class:
             {
                 if (is_generic_class(e)) return Unknown;  // reported with the names: Box needs its type arguments
-                construct(n, e, types);
-                return class_type(e);
+                TypeId t = class_type(e);
+                construct(n, t, types);
+                return t;
             }
             default:                        return Unknown;
         }
     }
 
-    // P(args): a new object, its init (its own, or the nearest parent's) run with the arguments
-    void Typer::construct(uint32_t n, uint32_t classEntity, const vector<TypeId>& args)
+    // P(args), Box<int>(args): a new object, its init (its own, or the nearest parent's) run with the arguments
+    void Typer::construct(uint32_t n, TypeId type, const vector<TypeId>& args)
     {
-        string cls = string(names.text(out.entities[classEntity].name));
+        string cls = name(type);
         uint32_t owner = NoEntity;
-        uint32_t init = find_method(classEntity, "init", &owner);
+        uint32_t init = find_method(out.types[type].a, "init", &owner);
         if (init == NoNode)
         {
             error(n, "class '" + cls + "' has no constructor 'init'");
             return;
         }
-        Signature sig = signature(init, true);
+        Signature sig = signature(init, true, binding(type, init));
         if (args.size() != sig.params.size())
         {
             error(n, "'" + cls + "' constructor takes " + to_string(sig.params.size()) + " argument(s) but got " +
@@ -1019,39 +1152,44 @@ namespace {
         }
     }
 
+    // f(args). A generic function's call uses the copy for its argument types, made and checked the first time.
     TypeId Typer::call_function(uint32_t n, uint32_t fn, const string& f, const vector<TypeId>& args)
     {
         Signature sig = signature(fn, false);  // a copy: checking the callee below adds signatures
         if (args.size() != sig.params.size())
         {
-            error(n, "function '" + f + "' expects " + to_string(sig.params.size()) + " argument(s) but got " + 
+            error(n, "function '" + f + "' expects " + to_string(sig.params.size()) + " argument(s) but got " +
                      to_string(args.size()));
             return Unknown;
         }
-        if (sig.generic) return Unknown;  // each call's copy is checked with generics
+        uint32_t instance = NoInstance;
+        string label = f;
+        if (sig.generic)
+        {
+            instance = make_copy(fn, args);
+            label = copy_name(f, args);
+            sig = signature(fn, false, instance);
+        }
         for (size_t i = 0; i < args.size(); i++)
         {
             if (!fits(args[i], sig.params[i]))
             {
-                error(n, "argument " + to_string(i + 1) + " of '" + f + "' expects " + name(sig.params[i]) + " but got " +
+                error(n, "argument " + to_string(i + 1) + " of '" + label + "' expects " + name(sig.params[i]) + " but got " +
                          name(args[i]));
             }
         }
-        if (sig.inferred)  // its return type is its first return's: check it now if it has not been
+        if (sig.inferred || instance != NoInstance)  // its return type is its first return's, or it is a new copy
         {
-            if (states[fn] == State::Checking)  // a call back into a function whose first return is not reached yet
+            if (states[state_key(instance, fn)] != State::Checking)
             {
-                if (out.signatures[fn].returns.empty())
-                {
-                    if (fn == context.function) context.selfCalled = true;
-                    return Unknown;
-                }
+                check_function(fn, label, false, instance);
             }
-            else
+            else if (signature(fn, false, instance).returns.empty())  // a call back into it before its first return
             {
-                check_function(fn, f, false);
+                if (fn == context.function && instance == context.instance) context.selfCalled = true;
+                return Unknown;
             }
-            sig = out.signatures[fn];
+            sig = signature(fn, false, instance);
         }
         return sig.returns.empty() ? Unknown : sig.returns[0];
     }
@@ -1140,7 +1278,7 @@ namespace {
             error(n, "class '" + cls + "' has no method '" + method + "'");
             return Unknown;
         }
-        Signature sig = signature(m, true);
+        Signature sig = signature(m, true, binding(object, m));
         for (size_t i = 0; i < args.size() && i < sig.params.size(); i++)
         {
             if (!fits(args[i], sig.params[i]))
@@ -1267,7 +1405,7 @@ namespace {
         if (kind(b) == TypeKind::Class || kind(b) == TypeKind::Struct)
         {
             uint32_t f = find_field(out.types[b].a, m);
-            if (f != NoNode) return field_type(f);
+            if (f != NoNode) return field_type(f, binding(b, f));
             error(n, string(kind(b) == TypeKind::Class ? "class '" : "struct '") + name(b) + "' has no field '" + m + "'");
             return Unknown;
         }

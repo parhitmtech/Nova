@@ -1,0 +1,7 @@
+# A generic function's copy is checked with its argument types: join("x", 1) adds a string and an int.
+def join(a, b):
+    return a + b
+
+def main():
+    print(join("x", "y"))
+    print(join("x", 1))

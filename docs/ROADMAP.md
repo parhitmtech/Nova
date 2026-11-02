@@ -68,8 +68,14 @@ first: they could not keep up with the language, and native code will come from 
      old parser let through), and an override must keep its parent's signature. A subclass fits where its parent
      does and `none` wherever an object does; objects compare with `==` / `!=` only. Vector and map keys, elements
      and methods are checked, with value methods (`v.size()`) told apart from statement methods (`v.push(x)`). A
-     method without `-> types` still returns Unknown. 2b-3: generic functions and classes.
-   - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed.
+     method without `-> types` still returns Unknown. 2b-3 (done): generic functions and classes, checked once per
+     copy. A call to a generic function makes the copy for its argument types (`scale<int, int>`) and checks its
+     body with them; writing `Box<int>` makes Box's copy for `int` and checks its fields and methods with `T` an
+     `int`. Copies are distinct types (`Box<int>` is not a `Box<double>`), and messages name them. Unknown is now
+     left only for a method's untyped parameter and the result of a method without `-> type`.
+   - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed. Inside a
+     copy's body, `nodeTypes` holds the types of the last copy checked, so lowering must check each copy's body again
+     before lowering it, or 2c must store the node types per copy.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 

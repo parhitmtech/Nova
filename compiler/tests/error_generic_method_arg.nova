@@ -1,0 +1,13 @@
+# A class copy's methods take its type arguments: Box<int>.set takes an int.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def set(T v):
+        self.value = v
+
+def main():
+    Box<int> b = Box<int>(1)
+    b.set("two")

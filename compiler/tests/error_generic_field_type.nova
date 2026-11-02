@@ -1,0 +1,10 @@
+# A class copy's fields have its type arguments: Box<int>'s value is an int.
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+def main():
+    Box<int> b = Box<int>(1)
+    b.value = 2.5

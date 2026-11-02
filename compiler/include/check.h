@@ -10,6 +10,7 @@
 // Every definition in the file is known before any body is checked, so a function can call one defined after it.
 
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -38,7 +39,7 @@ struct Type
 {
     TypeKind kind;
     uint32_t a = 0;  // Vector: the element type; Map: the key type; Struct / Class: its entity
-    uint32_t b = 0;  // Map: the element type
+    uint32_t b = 0;  // Map: the element type; Class: a generic class's copy, its index in instances + 1
 };
 
 // Every type, once: two types are the same exactly when their ids are.
@@ -91,11 +92,23 @@ struct Signature
     bool inferred = false;        // no '-> types' was written
 };
 
+// A generic function's or class's copy: the function with these argument types (scale<int, int>), or the class
+// with these type arguments (Box<int>). Each copy's body is checked with its own types.
+struct Instance
+{
+    uint32_t decl;              // the FunctionDecl or ClassDecl
+    std::vector<TypeId> args;
+    std::unordered_map<uint32_t, Signature> signatures;  // by FunctionDecl: the function's, or the class's methods
+};
+
+constexpr uint32_t NoInstance = UINT32_MAX;
+
 struct CheckResult
 {
     std::vector<Entity> entities;
     TypeTable types;
-    std::unordered_map<uint32_t, Signature> signatures;  // by FunctionDecl node
+    std::unordered_map<uint32_t, Signature> signatures;  // by FunctionDecl node; a copy's are in its Instance
+    std::deque<Instance> instances;  // a deque: checking a copy can make others, and references must stay valid
     std::vector<uint32_t> refs;     // by node: the entity a name refers to or a declaration declares; else NoEntity
     std::vector<TypeId> nodeTypes;  // by node: an expression's type
     std::vector<std::string> errors;  // "Error at line N: ...", in the order they were found
