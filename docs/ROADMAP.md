@@ -63,6 +63,10 @@ Planned in detail once phase 7 is done. It starts with **batched matmul (`bmm`)*
 `grad_bmm`, `error_bmm_batch_mismatch`), and then the tensor compiler below, custom CUDA / cuBLAS kernels,
 memory (out-of-memory) work, and FlashAttention / Triton-style inference.
 
+**Vector retrieval** (in progress, does not wait for phase 7): CPU approximate nearest neighbour search
+(Flat, HNSW, IVF-PQ) as runtime built-ins, a vector DB layer that returns TOON, and TOON in NovaBot's
+prompts. See [VECTORDB_ROADMAP.md](VECTORDB_ROADMAP.md).
+
 ## 3. Tensors on GPUs: MLIR and IREE
 
 - Lower Nova IR's tensor ops (and the backward graph that autograd builds) to StableHLO or MLIR `linalg`.
