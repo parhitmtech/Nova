@@ -24,6 +24,7 @@
 #include "lexer.h"
 #include "parse_tree.h"
 #include "check.h"
+#include "lower.h"
 #include "compiler.h"
 #include "autograd.h"
 #include "optimizer.h"
@@ -126,18 +127,35 @@ int main(int argc, char* argv[])
         lexer.ReinitializeFromString(processed);
     }
 
-    // The new front end: the parse tree and the check pass. Until they compile the program (roadmap phase 2), they 
-    // only find its errors before the old parser runs; -- dump-tree prints the tree without checking it.
+    // The new front end: the parse tree, the check pass, then lowering to the instructions the interpreter runs.
+    // Until lowering covers the whole language (roadmap phase 2c), the old parser compiles a program it does not
+    // cover; NOVA_LOWER_ONLY=1 stops with an error instead, to show which programs lowering covers. --dump-tree
+    // prints the tree without checking it.
+    struct InstructionNode* program = nullptr;
     {
         ParseTree tree = build_parse_tree(lexer.Scanned());
         vector<string> errors = tree.errors;
-        if (errors.empty() && !flag_dump_tree) errors = check_tree(tree).errors;
+        CheckResult checked;
+        if (errors.empty() && !flag_dump_tree)
+        {
+            checked = check_tree(tree);
+            errors = checked.errors;
+        }
         for (const string& err : errors) fprintf(stderr, "%s\n", err.c_str());
         if (!errors.empty()) return 1;
         if (flag_dump_tree)
         {
             tree.print(cout);
             return 0;
+        }
+        if (lowers(tree, checked))
+        {
+            program = lower_tree(tree, checked);
+        }
+        else if (getenv("NOVA_LOWER_ONLY"))
+        {
+            fprintf(stderr, "lowering does not cover this program yet\n");
+            return 1;
         }
     }
 
@@ -154,8 +172,8 @@ int main(int argc, char* argv[])
         import_line_offset = std::max(0, processed_lines - raw_lines);
     }
 
-    // parse 
-    struct InstructionNode* program = parse_generate_intermediate_representation();
+    // parse what lowering does not cover yet
+    if (program == nullptr) program = parse_generate_intermediate_representation();
     if (flag_check) return 0;  // parsing exits with status 1 after printing any errors
 
     if (debug_mode)

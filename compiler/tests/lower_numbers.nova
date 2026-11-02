@@ -1,0 +1,52 @@
+# Lowering: int, float and double arithmetic, % on negatives, unary minus, conversions, compound assignment, and
+# numbers declared without a value (they start at 0).
+def half(double x) -> double:
+    return x / 2.0
+
+def avg(float a, float b) -> float:
+    return (a + b) / 2.0
+
+def mix(int n):
+    double d = 0.5
+    float f = 1.5
+    return d * f
+
+ignite:
+    int a = 17
+    int b = -5
+    print(a % 5)
+    print(b % 3)
+    print(a / b)
+    print(-a)
+    print(- (a + b))
+    float f = 2.5
+    double d = 3.25
+    print(f * 2.0)
+    print(d - 1.0)
+    print(-f)
+    print(-d)
+    print(half(d))
+    print(avg(f, 0.5))
+    print(mix(1))
+    d = f
+    print(d)
+    double e = f + 1.0
+    print(e)
+    print(int(d * 3.0))
+    print(float(a) / 2.0)
+    print(double(a) / 4.0)
+    a += 3
+    a -= 1
+    a *= 2
+    a /= 3
+    print(a)
+    d += 1.5
+    print(d)
+    f *= 2.0
+    print(f)
+    int z
+    float fz
+    double dz
+    print(z)
+    print(fz)
+    print(dz)

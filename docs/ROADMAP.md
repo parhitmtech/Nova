@@ -75,7 +75,15 @@ first: they could not keep up with the language, and native code will come from 
      left only for a method's untyped parameter and the result of a method without `-> type`.
    - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed. Inside a
      copy's body, `nodeTypes` holds the types of the last copy checked, so lowering must check each copy's body again
-     before lowering it, or 2c must store the node types per copy.
+     before lowering it, or 2c must store the node types per copy. In six steps: 2c-1 (done): numbers, bools,
+     strings, arrays, control flow and functions, lowered by `lower.cc` into the same instructions and slots the old
+     parser writes, so the passes after it do not change. Every name and type comes from the check pass; lowering
+     keeps no tables by name. A function can call one defined after it, and two functions can call each other. The
+     driver lowers a program when lowering covers all of it and hands the rest to the old parser;
+     `NOVA_LOWER_ONLY=1` stops instead, to show what is covered. The rule that the ignite block comes last moved to
+     the check pass. 2c-2: tensors, built-ins, autograd, `hf` / `sol`. 2c-3: structs and classes. 2c-4: `vector` /
+     `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
+     front end, and the old parser, the braces-form pass and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 

@@ -1,0 +1,54 @@
+# Lowering: recursion, several return values, return types taken from the first return, a function that
+# returns nothing, and a recursive call's locals kept apart from its caller's.
+def fib(int n) -> int:
+    if (n < 2):
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+def divmod(int a, int b) -> int, int:
+    return a / b, a % b
+
+def stats(double x, double y) -> double, double, int:
+    return x + y, x * y, 7
+
+def count_down(int n):
+    if (n == 0):
+        return 0
+    print(n)
+    return count_down(n - 1)
+
+def sum_to(int n) -> int:
+    int acc = 0
+    for (i = 1 ; i <= n ; i += 1):
+        acc += i
+    return acc
+
+def infer_double(double x):
+    return x * 2.0
+
+def nothing(int x):
+    print(x + 1)
+
+def deep(int n) -> int:
+    int local = n * 10
+    if (n > 0):
+        int r = deep(n - 1)
+        return local + r
+    return local
+
+ignite:
+    print(fib(15))
+    int q, int r = divmod(17, 5)
+    print(q)
+    print(r)
+    double s, double p, int k = stats(1.5, 2.0)
+    print(s)
+    print(p)
+    print(k)
+    print(count_down(3))
+    print(sum_to(100))
+    print(infer_double(1.25))
+    nothing(4)
+    print(deep(3))
+    x = fib(10) + sum_to(4)
+    print(x)

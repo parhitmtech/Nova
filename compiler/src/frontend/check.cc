@@ -124,8 +124,16 @@ namespace {
         }
 
         uint32_t ignite = NoNode;
+        bool lateDefinition = false;
         for (uint32_t n : items)
         {
+            if (ignite != NoNode && tree.kind(n) != NodeKind::Ignite && !lateDefinition)  // Nova is one-pass
+            {
+                const char* keyword = tree.kind(n) == NodeKind::FunctionDecl ? "def" : 
+                                      tree.kind(n) == NodeKind::StructDecl   ? "struct" : "class";
+                error(n, string("the 'ignite' block must come last: move '") + keyword + "' above it");
+                lateDefinition = true;
+            }
             switch (tree.kind(n))
             {
                 case NodeKind::FunctionDecl: check_function(n); break;
