@@ -160,11 +160,15 @@ static void get_tensor_release_sites(struct InstructionNode* n,
             // arg_types array precisely because a call can bind any mix of
             // the three; TYPE_UNKNOWN (no type info) defaults to mem[], same
             // as the interpreter's own fallback in its param-binding loop.
-            defs.insert(n->call_inst.ret_val_index);
+            // a float or double result's slot is in fmem[] / dmem[], not mem[]
+            VarType rt = n->call_inst.ret_type;
+            if (rt != TYPE_FLOAT && rt != TYPE_DOUBLE) defs.insert(n->call_inst.ret_val_index);
             if (n->call_inst.all_ret_slots)
             {
                 for (int i = 0;i < n->call_inst.num_ret_slots; i++)
                 {
+                    VarType st = n->call_inst.ret_slot_types ? n->call_inst.ret_slot_types[i] : TYPE_UNKNOWN;
+                    if (st == TYPE_FLOAT || st == TYPE_DOUBLE) continue;
                     defs.insert(n->call_inst.all_ret_slots[i]);
                 }
             }

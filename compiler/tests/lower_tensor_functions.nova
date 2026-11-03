@@ -1,0 +1,59 @@
+# Lowering tensors (2c-2a): tensors through functions: parameters, results, several results, recursion, a
+# variable set on one branch, and tensors made and dropped in loops. The live count at the end is 5, as with the
+# old parser: power(two, 4) leaves 3 tensors (one per recursive call) and each pick call leaves 1. These are known
+# leaks of the tensor-free pass (ROADMAP phase 6).
+def scale_all(Tensor t, double s) -> Tensor:
+    return t * s
+
+def halves(Tensor t) -> Tensor, Tensor:
+    return t * 0.5, t - t * 0.5
+
+def total(Tensor t) -> double:
+    return tensor_sum(t)
+
+def power(Tensor t, int n) -> Tensor:
+    if (n <= 1):
+        return t
+    return t * power(t, n - 1)
+
+def make(int r, int c):
+    Tensor z = zeros(r, c)
+    z[0, 0] = 1.0
+    return z
+
+def pick(bool first, Tensor a, Tensor b) -> Tensor:
+    Tensor r
+    if (first):
+        r = a
+    else:
+        r = b
+    return r
+
+ignite:
+    Tensor a = ones(2, 2)
+    Tensor b = scale_all(a, 3.0)
+    print(b[1, 1])
+    Tensor h1, Tensor h2 = halves(b)
+    print(h1[0, 0])
+    print(h2[0, 0])
+    print(total(b) + total(h1))
+    Tensor two = a + a
+    print(power(two, 4)[0, 1])
+    print(make(3, 2).rows)
+    print(pick(true, a, b)[0, 0])
+    print(pick(false, a, b)[0, 0])
+    int i = 0
+    Tensor acc = zeros(2, 2)
+    while (i < 50):
+        Tensor step = scale_all(a, 0.5)
+        acc = acc + step
+        if (i % 10 == 0):
+            Tensor tmp = acc * 2
+            print(tmp[0, 0])
+        i += 1
+    print(acc[1, 1])
+    for (i = 0 ; i < 3 ; i += 1):
+        Tensor x, Tensor y = halves(acc)
+        acc = x + y
+    print(acc[0, 0])
+    print(tensor_live_count())

@@ -148,8 +148,10 @@ InstructionNode* exec_call(InstructionNode* pc)
                 // simultaneous alias (caller's aSLot, callee's pSlot) to the same tensor_heap 
                 // entry -- unlike RET, whc=ich is a transfer, not a duplicate. Retain here so the 
                 // two sides' independent TENSOR_RELEASE insertions (see insert_tensor_releases) each
-                // own one reference instead of double-freeing a single one.
-                if (g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
+                // own one reference instead of double-freeing a single one. A float or double parameter's
+                // slot is in fmem[] / dmem[], so g_tensorSlots (mem[] slots) says nothing about it.
+                bool intSlot = pt != TYPE_FLOAT && pt != TYPE_DOUBLE;
+                if (intSlot && g_tensorSlots.count(pSlot)) tensor_retain(mem[pSlot]);
                 if (pt == TYPE_CLASS || pt == TYPE_VECTOR || pt == TYPE_MAP) objects_bind_param(pSlot, mem[pSlot], pt);
             }
 

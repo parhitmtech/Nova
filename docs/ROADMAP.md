@@ -81,7 +81,12 @@ first: they could not keep up with the language, and native code will come from 
      keeps no tables by name. A function can call one defined after it, and two functions can call each other. The
      driver lowers a program when lowering covers all of it and hands the rest to the old parser;
      `NOVA_LOWER_ONLY=1` stops instead, to show what is covered. The rule that the ignite block comes last moved to
-     the check pass. 2c-2: tensors, built-ins, autograd, `hf` / `sol`. 2c-3: structs and classes. 2c-4: `vector` /
+     the check pass. 2c-2a (done): tensors, every tensor built-in and autograd (they are ordinary tensor calls),
+     with each tensor's slot listed in `g_tensorSlots` so lowered programs free their tensors as the old parser's
+     do; output and tensor-heap counts match the old parser on the test suite. It also fixed three places that took
+     a float or double slot's number as a `mem` slot (a call's result in liveness and in the tensor-free pass, and a
+     parameter's retain in the interpreter), which freed a live tensor early or kept a dead one; see
+     `tensor_free_number_calls`. 2c-2b: `hf` / `sol`. 2c-3: structs and classes. 2c-4: `vector` /
      `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
      front end, and the old parser, the braces-form pass and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
@@ -94,7 +99,9 @@ first: they could not keep up with the language, and native code will come from 
    tree whose children point back to their parent is freed.
 6. **Frames on a growable value stack** (CPython 3.11 / Lua style): a variable is an offset from its frame, so a
    call no longer copies the function's slots in and out; recursion depth is bounded by memory, with a clean
-   "recursion too deep" error at a set limit.
+   "recursion too deep" error at a set limit. The tensor-free pass then works per frame, which fixes two leaks it
+   has today (`lower_tensor_functions` prints the count): a recursive function that returns tensors leaves one per
+   call, and a tensor variable set on a branch and then returned leaves one per call.
 7. **Nova IR**, a typed IR between the check pass and the back ends, built on phase 6's frame model, that the
    interpreter runs. It replaces the slot-numbered linked list that mixes three memory spaces (`mem`, `fmem`,
    `dmem`), and it is what the ML work and LLVM lower from.

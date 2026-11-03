@@ -1,12 +1,14 @@
 // Lowering (lower.h): one walk over the checked tree, writing each function's instructions and then the ignite
 // block's. A value lives in a slot of mem[] (an int, a bool, or a string as its index in strMem), fmem[] (a float)
 // or dmem[] (a double), laid out as the old parser lays them out: a function's int slots are one range, which a call
-// saves and restores so a recursive call does not overwrite its caller's locals.
+// saves and restores so a recursive call does not overwrite its caller's locals. A tensor is an int slot holding its
+// handle; g_tensorSlots lists those slots, so the tensor-free pass knows which values to release.
 //
 // Functions are lowered in file order, and a function a call needs before its turn is lowered right then. A call
 // into a function whose body is still being lowered (a recursive call) gets its target when that body is done.
 #include <algorithm>
 #include <map>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -18,11 +20,15 @@ extern map<string, int> symbolTable;        // the ignite block's variables, whi
 extern map<string, int> floatSymbolTable;   // (parser_state.cc)
 extern map<string, int> doubleSymbolTable;
 extern map<string, vector<int>> functionReturnSlots;  // read by the tensor-free pass
+extern const map<string, TensorOp> TENSOR_OP_MAP;     // the tensor built-ins, and the kinds of their results
+extern const set<TensorOp> TENSOR_VOID_OPS;           // (parser_state.cc)
+extern const set<TensorOp> TENSOR_DOUBLE_OPS;
+extern const set<TensorOp> TENSOR_INT_OPS;
 
 namespace
 {
     // ─────────────────────────────────────────────────────────────────────────────
-    // What lowering covers: 2c-1, numbers, bools, strings, arrays, control flow and functions
+    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), and tensors (2c-2a)
     // ─────────────────────────────────────────────────────────────────────────────
 
     bool covered_type(const CheckResult& checked, TypeId t)
@@ -35,6 +41,7 @@ namespace
             case TypeKind::Double:
             case TypeKind::Bool:
             case TypeKind::String:
+            case TypeKind::Tensor:
             case TypeKind::Array:       return true;
             default:                    return false;
         }
@@ -44,14 +51,15 @@ namespace
     bool covered(const ParseTree& tree, const CheckResult& checked, uint32_t n)
     {
         auto entity = [&](uint32_t m) { return checked.refs[m] == NoEntity ? nullptr : &checked.entities[checked.refs[m]]; };
+        auto tensor = [&](uint32_t m) { return checked.types[checked.nodeTypes[m]].kind == TypeKind::Tensor; };
         vector<uint32_t> kids = tree.children(n);
         switch (tree.kind(n))
         {
             case NodeKind::StructDecl:
             case NodeKind::ClassDecl:
             case NodeKind::GenericType:
-            case NodeKind::Self:
-            case NodeKind::Member:          return false;
+            case NodeKind::Self:            return false;
+            case NodeKind::Member:          return tensor(kids[0]);  // t.T, t.rows, t.cols, t.rank
             case NodeKind::FunctionDecl:    // not a generic function, nor a method (a generic class's are in its copies)
             {
                 auto it = checked.signatures.find(n);
@@ -60,7 +68,8 @@ namespace
             case NodeKind::TypeName:
             {
                 TokenType k = tree.token(n).kind;
-                return k == INT_TYPE || k == FLOAT_TYPE || k == DOUBLE_TYPE || k == BOOL_TYPE || k == STRING_TYPE;
+                return k == INT_TYPE || k == FLOAT_TYPE || k == DOUBLE_TYPE || k == BOOL_TYPE || k == STRING_TYPE ||
+                       k == TENSOR_TYPE;
             }
             case NodeKind::MultiDecl:       // int a, double b = f(): a call to a function
             {
@@ -70,14 +79,9 @@ namespace
                 return e && e->kind == EntityKind::Function;
             }
             case NodeKind::Case:            return checked.types[checked.nodeTypes[kids[0]]].kind == TypeKind::Int;
-            case NodeKind::Binary:
+            case NodeKind::Index:           // t[i, j, ...] on any Tensor; a[i]: one index into an array variable
             {
-                if (tree.token(n).kind == AT) return false;
-                break;
-            }
-            case NodeKind::Index:           // a[i]: one index into an array variable
-            {
-                if (kids.size() != 2 || tree.kind(kids[0]) != NodeKind::Name) return false;
+                if (!tensor(kids[0]) && (kids.size() != 2 || tree.kind(kids[0]) != NodeKind::Name)) return false;
                 break;
             }
             case NodeKind::Call:
@@ -96,7 +100,7 @@ namespace
                 if (e->kind == EntityKind::Builtin)
                 {
                     string_view f = names.text(e->name);
-                    return f == "print" || f == "input" || f == "array";
+                    return f == "print" || f == "input" || f == "array" || TENSOR_OP_MAP.count(string(f));
                 }
                 if (e->kind != EntityKind::Variable && e->kind != EntityKind::Function) return false;
                 break;
@@ -195,6 +199,7 @@ namespace
             InstructionNode* assign(VarType t, int dst, int a, ArithmeticOperatorType op, int b, int line);
             void copy(int dst, VarType dt, int src, VarType st, int line);
             int convert(int slot, VarType from, VarType to, int line);
+            int negate(int v, VarType t, int line);
             int declare(uint32_t entity);
 
             // Definitions
@@ -233,6 +238,12 @@ namespace
             int call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args);
             void print(uint32_t n, uint32_t arg);
             void array_access(InstructionType type, uint32_t array, int index, int value, int line);
+
+            // Tensors
+            int tensor_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, int line);
+            int tensor_binary(TokenType op, int left, VarType lt, int right, VarType rt, int line);
+            void element(uint32_t index, vector<int>& args, vector<VarType>& types);
+            int member(uint32_t n);
     };
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -268,11 +279,14 @@ namespace
         add(JMP, line)->jmp_inst.target = target;
     }
 
+    // A slot for a value of type t; a tensor's is listed in g_tensorSlots
     int Lowerer::new_slot(VarType t)
     {
         if (t == TYPE_FLOAT) return alloc_float_slot();
         if (t == TYPE_DOUBLE) return alloc_double_slot();
-        return alloc_slot();
+        int s = alloc_slot();
+        if (t == TYPE_TENSOR) g_tensorSlots.insert(s);
+        return s;
     }
 
     int Lowerer::int_constant(int v)
@@ -318,6 +332,21 @@ namespace
         if (from == to) return slot;
         int dst = new_slot(to);
         add(CAST, line)->cast_inst = {slot, dst, from, to};
+        return dst;
+    }
+
+    // -v: 0 - v in v's number type; a tensor is scaled by -1
+    int Lowerer::negate(int v, VarType t, int line)
+    {
+        if (t == TYPE_TENSOR)
+        {
+            int minusOne = alloc_double_slot();
+            dmem[minusOne] = -1.0;
+            return tensor_op(TEN_SCALE, {v, minusOne}, {TYPE_TENSOR, TYPE_DOUBLE}, line);
+        }
+        VarType nt = t == TYPE_FLOAT || t == TYPE_DOUBLE ? t : TYPE_INT;
+        int dst = new_slot(nt);
+        assign(nt, dst, zero(nt), OPERATOR_MINUS, v, line);
         return dst;
     }
 
@@ -446,7 +475,8 @@ namespace
         }
     }
 
-    // int x = e, or int x: a number starts at 0 each time the declaration runs (a loop body runs it again)
+    // int x = e, or int x: a number starts at 0 each time the declaration runs (a loop body runs it again), and a
+    // Tensor at -1, which no tensor is, so using it before it is set is a runtime error
     void Lowerer::var_decl(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -454,7 +484,7 @@ namespace
         VarType t = var_type_of(e);
         if (kids.size() == 1)
         {
-            int start = zero(t);
+            int start = t == TYPE_TENSOR ? int_constant(-1) : zero(t);
             assign(t, declare(e), start, OPERATOR_NONE, 0, line(n));
             return;
         }
@@ -500,12 +530,22 @@ namespace
         store(target, expr(value), type_of(value), line);
     }
 
-    // The value in slot value, of the given type, into a variable or an array's element
+    // The value in slot value, of the given type, into a variable, an array's element or a tensor's
     void Lowerer::store(uint32_t target, int value, VarType type, int line)
     {
         if (tree.kind(target) == NodeKind::Index)
         {
             vector<uint32_t> kids = tree.children(target);
+            if (type_of(kids[0]) == TYPE_TENSOR)  // t[i, j] = v
+            {
+                vector<int> args;
+                vector<VarType> types;
+                element(target, args, types);
+                args.push_back(value);
+                types.push_back(type);
+                tensor_op(TEN_SET, args, types, line);
+                return;
+            }
             int index = expr(kids[1]);
             array_access(ARRAY_WRITE, kids[0], index, value, this->line(kids[0]));
             return;
@@ -701,8 +741,16 @@ namespace
             case NodeKind::Unary:           return unary(n);
             case NodeKind::Binary:          return binary(n);
             case NodeKind::Call:            return call(n);
-            case NodeKind::Index:           // a[i]
+            case NodeKind::Member:          return member(n);
+            case NodeKind::Index:           // a[i], t[i, j]
             {
+                if (type_of(tree.children(n)[0]) == TYPE_TENSOR)
+                {
+                    vector<int> args;
+                    vector<VarType> types;
+                    element(n, args, types);
+                    return tensor_op(TEN_GET, args, types, line(n));
+                }
                 vector<uint32_t> kids = tree.children(n);
                 int index = expr(kids[1]);
                 int value = alloc_slot();
@@ -721,7 +769,7 @@ namespace
         return int_constant(index);
     }
 
-    // not x; -x, where a literal folds into its constant (-2, -0.5) and anything else is 0 - x
+    // not x; -x, where a literal folds into its constant (-2, -0.5)
     int Lowerer::unary(uint32_t n)
     {
         uint32_t x = tree.children(n)[0];
@@ -743,11 +791,7 @@ namespace
             fmem[s] = -stof(text(x));
             return s;
         }
-        int v = expr(x);
-        VarType t = type_of(x) == TYPE_FLOAT || type_of(x) == TYPE_DOUBLE ? type_of(x) : TYPE_INT;
-        int dst = new_slot(t);
-        assign(t, dst, zero(t), OPERATOR_MINUS, v, line(n));
-        return dst;
+        return negate(expr(x), type_of(x), line(n));
     }
 
     bool comparison(TokenType t, ConditionalOperatorType& op)
@@ -788,9 +832,15 @@ namespace
     }
 
     // left op right: string + string concatenates; numbers are computed in the wider of their types (an int with an
-    // int stays an int). a % b on ints is a - (a / b) * b, as in C. The result's type goes in t.
+    // int stays an int). a % b on ints is a - (a / b) * b, as in C. A tensor on either side, or @, is a tensor
+    // operation. The result's type goes in t.
     int Lowerer::arith(TokenType op, int left, VarType lt, int right, VarType rt, int line, VarType& t)
     {
+        if (op == AT || lt == TYPE_TENSOR || rt == TYPE_TENSOR)
+        {
+            t = TYPE_TENSOR;
+            return tensor_binary(op, left, lt, right, rt, line);
+        }
         if (op == PLUS && lt == TYPE_STRING)
         {
             t = TYPE_STRING;
@@ -904,7 +954,8 @@ namespace
         node->cjmp_inst.operand_type = t;
     }
 
-    // f(args), print(x), input(), int(x) / float(x) / double(x). array(n) is lowered by the assignment it sets.
+    // f(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other tensor built-ins. array(n)
+    // is lowered by the assignment it sets.
     int Lowerer::call(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -922,6 +973,18 @@ namespace
         const Entity& e = in.entities[in.refs[callee]];
         if (e.kind == EntityKind::Function) return call_function(n, e.decl, args);
         string_view f = names.text(e.name);
+        auto op = TENSOR_OP_MAP.find(string(f));
+        if (op != TENSOR_OP_MAP.end())
+        {
+            vector<int> slots;
+            vector<VarType> types;
+            for (uint32_t a : args)
+            {
+                slots.push_back(expr(a));
+                types.push_back(type_of(a));
+            }
+            return tensor_op(op->second, slots, types, line(n));
+        }
         if (f == "print") print(n, args[0]);
         if (f != "input") return 0;
         int slot = alloc_slot();
@@ -1008,6 +1071,74 @@ namespace
         node->array_inst.array_size = a.dynamic ? -1 : a.size;
         node->array_inst.size_slot = a.dynamic ? a.size : -1;
         node->array_inst.line_no = line;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Tensors
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // One TENSOR_CALL. Its result is a tensor's handle, an int or a double, or nothing (tensor_print); a void op's
+    // value is a slot of its own that nothing reads.
+    int Lowerer::tensor_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, int line)
+    {
+        bool isVoid = TENSOR_VOID_OPS.count(op), isDouble = TENSOR_DOUBLE_OPS.count(op), isInt = TENSOR_INT_OPS.count(op);
+        int result = isVoid ? -1 : new_slot(isDouble ? TYPE_DOUBLE : isInt ? TYPE_INT : TYPE_TENSOR);
+        InstructionNode* node = add(TENSOR_CALL, line);
+        node->tensor_call_inst.op = op;
+        node->tensor_call_inst.result_slot = result;
+        node->tensor_call_inst.num_args = (int)args.size();
+        for (size_t i = 0; i < args.size(); i++)
+        {
+            node->tensor_call_inst.arg_slots[i] = args[i];
+            node->tensor_call_inst.arg_types[i] = types[i];
+        }
+        return isVoid ? alloc_slot() : result;
+    }
+
+    // Two tensors: + - * / element by element, @ is matmul. A tensor and a number: * scales, / scales by 1 / the
+    // number, and + and - add the number to every element: t - k is t + (-k), and k - t is (-t) + k.
+    int Lowerer::tensor_binary(TokenType op, int left, VarType lt, int right, VarType rt, int line)
+    {
+        if (op == AT) return tensor_op(TEN_MATMUL, {left, right}, {lt, rt}, line);
+        bool lT = lt == TYPE_TENSOR, rT = rt == TYPE_TENSOR;
+        if (lT && rT)
+        {
+            TensorOp t = op == PLUS ? TEN_ADD : op == MINUS ? TEN_SUB : op == MULT ? TEN_MUL : TEN_DIV;
+            return tensor_op(t, {left, right}, {lt, rt}, line);
+        }
+        int t = lT ? left : right, k = lT ? right : left;
+        VarType kt = lT ? rt : lt;
+        if (op == MULT) return tensor_op(TEN_SCALE, {t, k}, {TYPE_TENSOR, kt}, line);
+        if (op == DIV)
+        {
+            int one = alloc_double_slot();
+            dmem[one] = 1.0;
+            int recip = alloc_double_slot();
+            assign(TYPE_DOUBLE, recip, one, OPERATOR_DIV, convert(k, kt, TYPE_DOUBLE, line), line);
+            return tensor_op(TEN_SCALE, {t, recip}, {TYPE_TENSOR, TYPE_DOUBLE}, line);
+        }
+        if (op == MINUS && lT) k = negate(k, kt, line);
+        if (op == MINUS && rT) t = negate(t, TYPE_TENSOR, line);
+        return tensor_op(TEN_ADD_SCALAR, {t, k}, {TYPE_TENSOR, kt}, line);
+    }
+
+    // The tensor and the indexes of t[i, j, ...], one per dimension, as TEN_GET and TEN_SET take them
+    void Lowerer::element(uint32_t index, vector<int>& args, vector<VarType>& types)
+    {
+        for (uint32_t k : tree.children(index))
+        {
+            args.push_back(expr(k));
+            types.push_back(type_of(k));
+        }
+    }
+
+    // t.T is the transpose; t.rows, t.cols and t.rank are ints
+    int Lowerer::member(uint32_t n)
+    {
+        int t = expr(tree.children(n)[0]);
+        string m = text(n);
+        TensorOp op = m == "T" ? TEN_T : m == "rows" ? TEN_ROWS : m == "cols" ? TEN_COLS : TEN_RANK;
+        return tensor_op(op, {t}, {TYPE_TENSOR}, line(n));
     }
 }  // namespace
 
