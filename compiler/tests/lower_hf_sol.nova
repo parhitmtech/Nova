@@ -1,0 +1,21 @@
+# hf.* and sol.* calls, lowered to HF_INFER and SOL_CALL. hf.dataset, hf.set_token and sol.set_key run without the
+# network; train() is never called, so its calls (and the name=value arguments) are only compiled. A string an hf
+# call made, joined with +, is that string (STRCAT once took a stale index after one).
+def train(string ds) -> string:
+    string job = sol.finetune(model="distilbert-base-uncased", task="classification", dataset=ds, epochs=2, lr=0.00002, batch_size=8)
+    sol.wait(job)
+    string answer = sol.predict(job, "a great movie")
+    sol.save(job, "my-model")
+    return answer + hf.generate("gpt2", "Once upon a time", max_tokens=20) + hf.generate("gpt2", "Hi", 5)
+
+def data(string name) -> string:
+    return hf.dataset(name, "test")
+
+ignite:
+    hf.set_token("not-a-real-token")
+    sol.set_key("~/.ssh/id_rsa")
+    string d = hf.dataset("imdb", "train")
+    print(d)
+    print(hf.dataset("sst2"))
+    print(d + "!")
+    print(data("ag_news") + "!")

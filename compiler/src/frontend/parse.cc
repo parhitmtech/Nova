@@ -97,6 +97,7 @@ namespace {
             void parse_binary(int min);
             void parse_unary();
             void parse_postfix();
+            void parse_argument();
             void parse_primary();
     };
 
@@ -611,7 +612,7 @@ namespace {
                 uint32_t open = take();
                 if (!at(RPAREN))
                 {
-                    do parse_expression(); while (consume(COMMA));
+                    do parse_argument(); while (consume(COMMA));
                 }
                 expect(RPAREN, "expected ',' or ')' in the call's arguments");
                 add(NodeKind::Call, open, start);
@@ -633,6 +634,21 @@ namespace {
                 return;
             }
         }
+    }
+
+    // One of a call's arguments: a value, or name=value (the check pass allows that in hf.* and sol.* calls only)
+    void Parser::parse_argument()
+    {
+        if (!at(ID) || peek() != EQUAL)
+        {
+            parse_expression();
+            return;
+        }
+        size_t start = mark();
+        uint32_t name = take();
+        take();  // '='
+        parse_expression();
+        add(NodeKind::KeywordArg, name, start);
     }
 
     void Parser::parse_primary()

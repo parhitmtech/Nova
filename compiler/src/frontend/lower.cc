@@ -28,7 +28,8 @@ extern const set<TensorOp> TENSOR_INT_OPS;
 namespace
 {
     // ─────────────────────────────────────────────────────────────────────────────
-    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), and tensors (2c-2a)
+    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), tensors (2c-2a), and
+    // hf / sol (2c-2b)
     // ─────────────────────────────────────────────────────────────────────────────
 
     bool covered_type(const CheckResult& checked, TypeId t)
@@ -59,7 +60,11 @@ namespace
             case NodeKind::ClassDecl:
             case NodeKind::GenericType:
             case NodeKind::Self:            return false;
-            case NodeKind::Member:          return tensor(kids[0]);  // t.T, t.rows, t.cols, t.rank
+            case NodeKind::Member:          // t.T, t.rows, t.cols, t.rank; hf.infer, sol.wait
+            {
+                const Entity* e = tree.kind(kids[0]) == NodeKind::Name ? entity(kids[0]) : nullptr;
+                return tensor(kids[0]) || (e && e->kind == EntityKind::Module);
+            }
             case NodeKind::FunctionDecl:    // not a generic function, nor a method (a generic class's are in its copies)
             {
                 auto it = checked.signatures.find(n);
@@ -102,7 +107,10 @@ namespace
                     string_view f = names.text(e->name);
                     return f == "print" || f == "input" || f == "array" || TENSOR_OP_MAP.count(string(f));
                 }
-                if (e->kind != EntityKind::Variable && e->kind != EntityKind::Function) return false;
+                if (e->kind != EntityKind::Variable && e->kind != EntityKind::Function && e->kind != EntityKind::Module)
+                {
+                    return false;
+                }
                 break;
             }
             default:                        break;
@@ -244,6 +252,10 @@ namespace
             int tensor_binary(TokenType op, int left, VarType lt, int right, VarType rt, int line);
             void element(uint32_t index, vector<int>& args, vector<VarType>& types);
             int member(uint32_t n);
+
+            // hf and sol
+            int hf_call(uint32_t n, const string& method, const vector<uint32_t>& args);
+            int sol_call(uint32_t n, const string& method, const vector<uint32_t>& args);
     };
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -954,8 +966,8 @@ namespace
         node->cjmp_inst.operand_type = t;
     }
 
-    // f(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other tensor built-ins. array(n)
-    // is lowered by the assignment it sets.
+    // f(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other tensor built-ins, and
+    // hf.infer(...), sol.wait(...). array(n) is lowered by the assignment it sets.
     int Lowerer::call(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -969,6 +981,11 @@ namespace
             int dst = new_slot(to);
             add(CAST, line(n))->cast_inst = {src, dst, type_of(args[0]), to};
             return dst;
+        }
+        if (tree.kind(callee) == NodeKind::Member)  // hf.infer(...), sol.wait(...)
+        {
+            string module = text(tree.children(callee)[0]), method = text(callee);
+            return module == "hf" ? hf_call(n, method, args) : sol_call(n, method, args);
         }
         const Entity& e = in.entities[in.refs[callee]];
         if (e.kind == EntityKind::Function) return call_function(n, e.decl, args);
@@ -1139,6 +1156,77 @@ namespace
         string m = text(n);
         TensorOp op = m == "T" ? TEN_T : m == "rows" ? TEN_ROWS : m == "cols" ? TEN_COLS : TEN_RANK;
         return tensor_op(op, {t}, {TYPE_TENSOR}, line(n));
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // hf and sol
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // hf.method(...): one HF_INFER, given its first two arguments (the model, a dataset's name or the token, then the
+    // input or the split) and max_tokens, 100 unless given. A void call's value is a slot of its own that nothing reads.
+    int Lowerer::hf_call(uint32_t n, const string& method, const vector<uint32_t>& args)
+    {
+        HFOp op = method == "infer" ? HF_OP_INFER : method == "generate" ? HF_OP_GENERATE : method == "classify" ? HF_OP_CLASSIFY
+                : method == "dataset" ? HF_OP_DATASET : HF_OP_SET_TOKEN;
+        int slots[2] = {-1, -1};
+        int maxTokens = 100;
+        size_t count = 0;
+        for (uint32_t a : args)
+        {
+            if (tree.kind(a) == NodeKind::KeywordArg) maxTokens = stoi(text(tree.children(a)[0]));  // max_tokens=50
+            else if (count == 2) maxTokens = stoi(text(a));
+            else slots[count++] = expr(a);
+        }
+        bool isVoid = op == HF_OP_SET_TOKEN;
+        int result = isVoid ? -1 : alloc_slot();
+        InstructionNode* node = add(HF_INFER, line(n));
+        node->hf_inst.op = op;
+        node->hf_inst.model_slot = slots[0];
+        node->hf_inst.input_slot = slots[1];
+        node->hf_inst.result_slot = result;
+        node->hf_inst.max_tokens = maxTokens;
+        return isVoid ? alloc_slot() : result;
+    }
+
+    // sol.method(...): one SOL_CALL. finetune takes name=value arguments (epochs 3, lr 2e-5 and batch_size 16 unless
+    // given) and writes the job's handle, which wait, predict and save take first; predict's value is its answer.
+    int Lowerer::sol_call(uint32_t n, const string& method, const vector<uint32_t>& args)
+    {
+        SolOp op = method == "finetune" ? SOL_OP_FINETUNE : method == "wait" ? SOL_OP_WAIT : method == "predict" ? SOL_OP_PREDICT
+                 : method == "save" ? SOL_OP_SAVE : SOL_OP_SET_KEY;
+        int model = -1, task = -1, dataset = -1, epochs = 3, batchSize = 16;
+        float lr = 2e-5f;
+        vector<int> slots;
+        for (uint32_t a : args)
+        {
+            if (tree.kind(a) != NodeKind::KeywordArg)
+            {
+                slots.push_back(expr(a));
+                continue;
+            }
+            string k = text(a);
+            uint32_t v = tree.children(a)[0];
+            if (k == "epochs") epochs = stoi(text(v));
+            else if (k == "batch_size") batchSize = stoi(text(v));
+            else if (k == "lr") lr = stof(text(v));
+            else (k == "model" ? model : k == "task" ? task : dataset) = expr(v);
+        }
+        int job = op == SOL_OP_FINETUNE ? alloc_slot() : op == SOL_OP_SET_KEY ? -1 : slots[0];
+        int result = op == SOL_OP_PREDICT ? alloc_slot() : -1;
+        InstructionNode* node = add(SOL_CALL, line(n));
+        node->sol_inst.op = op;
+        node->sol_inst.job_slot = job;
+        node->sol_inst.model_slot = model;
+        node->sol_inst.task_slot = task;
+        node->sol_inst.dataset_slot = dataset;
+        node->sol_inst.epochs = epochs;
+        node->sol_inst.batch_size = batchSize;
+        node->sol_inst.lr = lr;
+        node->sol_inst.input_slot = op == SOL_OP_PREDICT ? slots[1] : -1;
+        node->sol_inst.result_slot = result;
+        node->sol_inst.path_slot = op == SOL_OP_SET_KEY ? slots[0] : op == SOL_OP_SAVE ? slots[1] : -1;
+        if (op == SOL_OP_FINETUNE) return job;
+        return op == SOL_OP_PREDICT ? result : alloc_slot();
     }
 }  // namespace
 

@@ -177,6 +177,7 @@ namespace {
             TypeId call_builtin(uint32_t n, const string& f, const vector<uint32_t>& args, const vector<TypeId>& types);
             void construct(uint32_t n, TypeId type, const vector<TypeId>& args);
             TypeId call_member(uint32_t n, uint32_t callee, const vector<uint32_t>& args, bool statement);
+            TypeId call_module(uint32_t n, const string& module, const string& method, const vector<uint32_t>& args);
             TypeId call_method(uint32_t n, uint32_t callee, TypeId object, const vector<TypeId>& args);
             TypeId call_container(uint32_t n, uint32_t callee, TypeId container, const vector<TypeId>& args, bool statement);
             void check_key(uint32_t n, uint32_t container, TypeId type, TypeId key);
@@ -923,6 +924,11 @@ namespace {
             case NodeKind::Call:        return typed(n, call(n, false));
             case NodeKind::Index:       return typed(n, index(n));
             case NodeKind::Member:      return typed(n, member(n));
+            case NodeKind::KeywordArg:
+            {
+                error(n, "a keyword argument (" + text(n) + "=...) is allowed only in an hf.* or sol.* call");
+                return expr(tree.children(n)[0]);
+            }
             default:                    return Unknown;
         }
     }
@@ -1235,28 +1241,7 @@ namespace {
     {
         uint32_t base = tree.children(callee)[0];
         uint32_t e = tree.kind(base) == NodeKind::Name ? out.refs[base] : NoEntity;
-        if (e != NoEntity && out.entities[e].kind == EntityKind::Module)
-        {
-            for (uint32_t a : args) expr(a);
-            string module = text(base), method = text(callee);
-            if (module == "hf")
-            {
-                static const set<string> methods = {"infer", "generate", "classify", "set_token", "dataset"};
-                if (!methods.count(method))
-                {
-                    error(n, "unknown hf method: hf." + method + "()");
-                    return Unknown;
-                }
-                return method == "set_token" ? Unknown : String;
-            }
-            static const set<string> methods = {"finetune", "wait", "predict", "save", "set_key"};
-            if (!methods.count(method))
-            {
-                error(n, "unknown sol method: sol." + method + "()");
-                return Unknown;
-            }
-            return (method == "finetune" || method == "predict") ? String : Unknown;
-        }
+        if (e != NoEntity && out.entities[e].kind == EntityKind::Module) return call_module(n, text(base), text(callee), args);
         TypeId b = expr(base);
         vector<TypeId> types;
         for (uint32_t a : args) types.push_back(expr(a));
@@ -1264,6 +1249,88 @@ namespace {
         if (is_container(b)) return call_container(n, callee, b, types, statement);
         if (b == Tensor) error(callee, "a Tensor has no member '" + text(callee) + "' (it has .T, .rows, .cols, and .rank)");
         return Unknown;
+    }
+
+    // hf.infer(model, input), hf.generate(model, prompt, max_tokens), hf.classify(model, text), hf.dataset(name, split),
+    // hf.set_token(token); sol.finetune(model=, task=, dataset=, epochs=, lr=, batch_size=), sol.wait(job),
+    // sol.predict(job, input), sol.save(job, path), sol.set_key(path). The values are strings, except max_tokens,
+    // epochs, batch_size and lr: the instruction holds those, so they are numbers written out.
+    TypeId Typer::call_module(uint32_t n, const string& module, const string& method, const vector<uint32_t>& args)
+    {
+        struct Method
+        {
+            const char* name;
+            size_t least, most;     // positional arguments
+            set<string> keywords;   // name=value arguments
+            bool returns;           // a string
+        };
+        static const vector<Method> hf = {
+            {"infer", 2, 2, {}, true},      {"generate", 2, 3, {"max_tokens"}, true}, {"classify", 2, 2, {}, true},
+            {"dataset", 1, 2, {}, true},    {"set_token", 1, 1, {}, false},
+        };
+        static const vector<Method> sol = {
+            {"finetune", 0, 0, {"model", "task", "dataset", "epochs", "lr", "batch_size"}, true},
+            {"wait", 1, 1, {}, false},      {"predict", 2, 2, {}, true},  {"save", 2, 2, {}, false},
+            {"set_key", 1, 1, {}, false},
+        };
+        const Method* m = nullptr;
+        for (const Method& x : module == "hf" ? hf : sol)
+        {
+            if (method == x.name) m = &x;
+        }
+        if (!m)
+        {
+            for (uint32_t a : args) expr(tree.kind(a) == NodeKind::KeywordArg ? tree.children(a)[0] : a);
+            error(n, "unknown " + module + " method: " + module + "." + method + "()");
+            return Unknown;
+        }
+        string label = "'" + module + "." + method + "'";
+        set<string> given;
+        size_t count = 0;  // positional arguments
+        for (uint32_t a : args)
+        {
+            bool keyword = tree.kind(a) == NodeKind::KeywordArg;
+            uint32_t v = keyword ? tree.children(a)[0] : a;
+            TypeId t = expr(v);
+            if (!keyword) count++;
+            string what = keyword ? text(a) : method == "generate" && count == 3 ? "max_tokens" : "";
+            if (keyword && !m->keywords.count(what))
+            {
+                error(a, label + " has no argument named '" + what + "'");
+                continue;
+            }
+            if (!what.empty() && !given.insert(what).second)
+            {
+                error(a, "'" + what + "' is given twice");
+                continue;
+            }
+            if (what == "max_tokens" || what == "epochs" || what == "batch_size" || what == "lr")
+            {
+                bool real = what == "lr";
+                NodeKind k = tree.kind(v);
+                if (k != NodeKind::IntLiteral && !(real && k == NodeKind::FloatLiteral))
+                {
+                    error(v, "'" + what + "' must be " + (real ? "a number" : "a whole number") + " written out, e.g. " +
+                             what + "=" + (real ? "0.00002" : "3"));
+                }
+            }
+            else if (!fits(t, String))
+            {
+                error(v, (keyword ? "'" + what + "'" : "argument " + to_string(count)) + " of " + label +
+                         " expects string but got " + name(t));
+            }
+        }
+        if (method == "finetune")
+        {
+            if (count) error(n, label + " takes name=value arguments only: sol.finetune(model=\"...\", task=\"...\", ...)");
+            else if (!given.count("model") || !given.count("task")) error(n, label + " needs model=\"...\" and task=\"...\"");
+        }
+        else if (count < m->least || count > m->most)
+        {
+            string takes = to_string(m->least) + (m->least == m->most ? "" : " or " + to_string(m->most));
+            error(n, label + " takes " + takes + " argument(s) but got " + to_string(count));
+        }
+        return m->returns ? String : Unknown;
     }
 
     // obj.m(args): the method its class runs (its own, or the nearest parent's), its arguments checked as a

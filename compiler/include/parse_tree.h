@@ -56,6 +56,8 @@ enum class NodeKind : uint8_t
     Continue,
     Pass,
     Empty,              // a part of a for header left out. token: the ';' or ')' where it would be
+    KeywordArg,         // name=value among a call's arguments (hf.generate(m, p, max_tokens=50)). token: the name.
+                        // children: the value
 
     // expressions
     IntLiteral,

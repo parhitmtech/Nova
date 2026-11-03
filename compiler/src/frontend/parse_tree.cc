@@ -18,7 +18,7 @@ static const struct { const char* name; bool spelled; bool ownLine; } kinds[] = 
     {"While", false, true},         {"DoWhile", false, true},       {"For", false, true},
     {"Switch", false, true},        {"Case", false, true},          {"Default", false, true},
     {"Return", false, true},        {"Break", false, true},         {"Continue", false, true},
-    {"Pass", false, true},          {"Empty", false, false},
+    {"Pass", false, true},          {"Empty", false, false},        {"KeywordArg", true, false},
     {"IntLiteral", true, false},    {"FloatLiteral", true, false},  {"StringLiteral", true, false},
     {"BoolLiteral", true, false},   {"Name", true, false},          {"Self", false, false},
     {"Paren", false, false},        {"Unary", true, false},         {"Binary", true, false},

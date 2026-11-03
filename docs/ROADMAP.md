@@ -86,7 +86,10 @@ first: they could not keep up with the language, and native code will come from 
      do; output and tensor-heap counts match the old parser on the test suite. It also fixed three places that took
      a float or double slot's number as a `mem` slot (a call's result in liveness and in the tensor-free pass, and a
      parameter's retain in the interpreter), which freed a live tensor early or kept a dead one; see
-     `tensor_free_number_calls`. 2c-2b: `hf` / `sol`. 2c-3: structs and classes. 2c-4: `vector` /
+     `tensor_free_number_calls`. 2c-2b (done): `hf` / `sol`, with name=value arguments (`max_tokens=50`,
+     `sol.finetune(model=..., task=...)`), which the new parser had stopped accepting; the check pass allows them in
+     those calls only and checks every `hf` / `sol` call's arguments. STRCAT now numbers its string from `strMem`
+     itself, since an `hf` call adds strings there too. 2c-3: structs and classes. 2c-4: `vector` /
      `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
      front end, and the old parser, the braces-form pass and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives

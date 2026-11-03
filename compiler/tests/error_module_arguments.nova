@@ -1,0 +1,14 @@
+def f(int x) -> int:
+    return x
+
+ignite:
+    string a = hf.infer("gpt2")
+    string b = hf.generate("gpt2", "hi", max_tokens=n)
+    string c = hf.generate("gpt2", "hi", 10, max_tokens=20)
+    string d = hf.classify("m", 5)
+    string j = sol.finetune("bert", "cls")
+    string k = sol.finetune(model="bert", epoch=3)
+    string l = sol.finetune(model="bert", task="cls", lr=rate)
+    sol.wait(job=j)
+    int y = f(x=1)
+    hf.fetch("x")

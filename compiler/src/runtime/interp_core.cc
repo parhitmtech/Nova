@@ -340,8 +340,10 @@ InstructionNode* exec_strcat(InstructionNode* pc)
     do {
             int leftIdx = mem[pc->strcat_inst.left_slot];
             int rightIdx = mem[pc->strcat_inst.right_slot];
+            // the new string's index: hf and sol calls add strings to strMem too, so count from strMem itself
+            int dest = (int)strMem.size();
             strMem.push_back(strMem[leftIdx] + strMem[rightIdx]);
-            int dest = next_str_available++;
+            next_str_available = dest + 1;
             mem[pc->strcat_inst.dest_slot] = dest;
             pc = pc->next;
             break;
