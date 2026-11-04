@@ -1,0 +1,70 @@
+# Objects that refer to objects, lowered: a linked list with none at its end, a recursive method, objects
+# returned from methods and functions and used at once (build(4).head.sum()), and comparisons with none, of
+# variables and of temporaries.
+class Node:
+    int value
+    Node next
+
+    def init(int v):
+        self.value = v
+
+    def sum() -> int:
+        if (self.next == none):
+            return self.value
+        return self.value + self.next.sum()
+
+class List:
+    Node head
+    int size
+
+    def init():
+        self.size = 0
+
+    def push(int v):
+        Node n = Node(v)
+        n.next = self.head
+        self.head = n
+        self.size += 1
+
+    def pop() -> int:
+        Node h = self.head
+        self.head = h.next
+        self.size -= 1
+        return h.value
+
+    def first() -> Node:
+        return self.head
+
+def build(int k) -> List:
+    List l = List()
+    int i = 0
+    while (i < k):
+        l.push(i * i)
+        i += 1
+    return l
+
+ignite:
+    List l = build(6)
+    print(l.size)
+    print(l.head.sum())
+    print(l.pop())
+    print(l.pop())
+    print(l.first().value)
+    print(l.first().next.value)
+    print(build(4).head.sum())
+    Node n = l.head
+    int count = 0
+    while (n != none):
+        count += 1
+        n = n.next
+    print(count)
+    if (l.first() != none):
+        print("non-empty")
+    if (build(0).first() == none):
+        print("empty")
+    int j = 0
+    while (j < 40):
+        List t = build(5)
+        t.pop()
+        j += 1
+    print(l.size)

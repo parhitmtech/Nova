@@ -2,7 +2,8 @@
 // block's. A value lives in a slot of mem[] (an int, a bool, or a string as its index in strMem), fmem[] (a float)
 // or dmem[] (a double), laid out as the old parser lays them out: a function's int slots are one range, which a call
 // saves and restores so a recursive call does not overwrite its caller's locals. A tensor is an int slot holding its
-// handle; g_tensorSlots lists those slots, so the tensor-free pass knows which values to release.
+// handle; g_tensorSlots lists those slots, so the tensor-free pass knows which values to release. A struct is one
+// slot per field; an object is an int slot holding its handle into the runtime's object heap (interp_objects.cc).
 //
 // Functions are lowered in file order, and a function a call needs before its turn is lowered right then. A call
 // into a function whose body is still being lowered (a recursive call) gets its target when that body is done.
@@ -28,8 +29,8 @@ extern const set<TensorOp> TENSOR_INT_OPS;
 namespace
 {
     // ─────────────────────────────────────────────────────────────────────────────
-    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), tensors (2c-2a), and
-    // hf / sol (2c-2b)
+    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), tensors (2c-2a),
+    // hf / sol (2c-2b), and structs and classes (2c-3)
     // ─────────────────────────────────────────────────────────────────────────────
 
     bool covered_type(const CheckResult& checked, TypeId t)
@@ -43,7 +44,10 @@ namespace
             case TypeKind::Bool:
             case TypeKind::String:
             case TypeKind::Tensor:
-            case TypeKind::Array:       return true;
+            case TypeKind::Array:
+            case TypeKind::None:
+            case TypeKind::Struct:      return true;
+            case TypeKind::Class:       return checked.types[t].b == 0;  // not a generic class's copy (2c-5)
             default:                    return false;
         }
     }
@@ -52,27 +56,62 @@ namespace
     bool covered(const ParseTree& tree, const CheckResult& checked, uint32_t n)
     {
         auto entity = [&](uint32_t m) { return checked.refs[m] == NoEntity ? nullptr : &checked.entities[checked.refs[m]]; };
-        auto tensor = [&](uint32_t m) { return checked.types[checked.nodeTypes[m]].kind == TypeKind::Tensor; };
+        auto kind = [&](uint32_t m) { return checked.types[checked.nodeTypes[m]].kind; };
+        auto tensor = [&](uint32_t m) { return kind(m) == TypeKind::Tensor; };
+        auto whole = [&](uint32_t m) { return kind(m) == TypeKind::Struct; };  // a struct as one value
         vector<uint32_t> kids = tree.children(n);
         switch (tree.kind(n))
         {
-            case NodeKind::StructDecl:
-            case NodeKind::ClassDecl:
-            case NodeKind::GenericType:
-            case NodeKind::Self:            return false;
-            case NodeKind::Member:          // t.T, t.rows, t.cols, t.rank; hf.infer, sol.wait
+            case NodeKind::GenericType:     return false;
+            case NodeKind::StructDecl:      // fields of numbers, bools, strings, Tensors and structs
+            case NodeKind::ClassDecl:       // ... and of objects and int arrays (int data[256]); not generic (2c-5)
             {
+                bool isClass = tree.kind(n) == NodeKind::ClassDecl;
+                for (uint32_t f : kids)
+                {
+                    if (tree.kind(f) == NodeKind::TypeParams) return false;
+                    if (tree.kind(f) != NodeKind::FieldDecl) continue;
+                    vector<uint32_t> parts = tree.children(f);  // its type, then an array field's size
+                    const Entity* e = entity(parts[0]);
+                    if (parts.size() > 1 && (!isClass || tree.token(parts[0]).kind != INT_TYPE ||
+                                             tree.kind(parts[1]) != NodeKind::IntLiteral)) return false;
+                    if (!isClass && e && e->kind == EntityKind::Class) return false;
+                }
+                return true;
+            }
+            case NodeKind::Member:          // a field; t.T, t.rows, t.cols, t.rank; hf.infer, sol.wait; obj.m(...)
+            {
+                if (whole(kids[0]))  // l.a.x: a field of a struct variable
+                {
+                    if (tree.kind(kids[0]) != NodeKind::Name && tree.kind(kids[0]) != NodeKind::Member) return false;
+                    break;
+                }
+                if (kind(kids[0]) == TypeKind::Class) break;
                 const Entity* e = tree.kind(kids[0]) == NodeKind::Name ? entity(kids[0]) : nullptr;
                 return tensor(kids[0]) || (e && e->kind == EntityKind::Module);
             }
-            case NodeKind::FunctionDecl:    // not a generic function, nor a method (a generic class's are in its copies)
-            {
+            case NodeKind::FunctionDecl:    // not a generic function, nor one that takes or returns a struct (a
+            {                               // generic class's methods are in its copies)
                 auto it = checked.signatures.find(n);
-                return it != checked.signatures.end() && !it->second.generic;
+                if (it == checked.signatures.end() || it->second.generic) return false;
+                for (TypeId t : it->second.params)
+                {
+                    if (checked.types[t].kind == TypeKind::Struct) return false;
+                }
+                for (TypeId t : it->second.returns)
+                {
+                    if (checked.types[t].kind == TypeKind::Struct) return false;
+                }
+                return true;
             }
-            case NodeKind::TypeName:
+            case NodeKind::TypeName:        // a built-in type, a struct or a class
             {
                 TokenType k = tree.token(n).kind;
+                if (k == ID)
+                {
+                    const Entity* e = entity(n);
+                    return e && (e->kind == EntityKind::Struct || e->kind == EntityKind::Class);
+                }
                 return k == INT_TYPE || k == FLOAT_TYPE || k == DOUBLE_TYPE || k == BOOL_TYPE || k == STRING_TYPE ||
                        k == TENSOR_TYPE;
             }
@@ -84,17 +123,34 @@ namespace
                 return e && e->kind == EntityKind::Function;
             }
             case NodeKind::Case:            return checked.types[checked.nodeTypes[kids[0]]].kind == TypeKind::Int;
-            case NodeKind::Index:           // t[i, j, ...] on any Tensor; a[i]: one index into an array variable
-            {
-                if (!tensor(kids[0]) && (kids.size() != 2 || tree.kind(kids[0]) != NodeKind::Name)) return false;
+            case NodeKind::Index:           // t[i, j, ...] on any Tensor; a[i]: one index into an array variable or an
+            {                               // int array field (self.data[i])
+                bool array = tree.kind(kids[0]) == NodeKind::Name ||
+                             (tree.kind(kids[0]) == NodeKind::Member && kind(kids[0]) == TypeKind::Array);
+                if (!tensor(kids[0]) && (kids.size() != 2 || !array)) return false;
                 break;
             }
-            case NodeKind::Call:
+            case NodeKind::Call:            // a struct is an argument only to its own constructor, Point(3, 4)
             {
                 if (tree.kind(kids[0]) == NodeKind::TypeName)  // a conversion: int(x), float(x), double(x)
                 {
                     TokenType k = tree.token(kids[0]).kind;
                     if (k != INT_TYPE && k != FLOAT_TYPE && k != DOUBLE_TYPE) return false;
+                }
+                const Entity* e = tree.kind(kids[0]) == NodeKind::Name ? entity(kids[0]) : nullptr;
+                bool structValue = e && e->kind == EntityKind::Struct;
+                for (size_t i = 1; i < kids.size(); i++)
+                {
+                    if (whole(kids[i]) && !structValue) return false;
+                }
+                break;
+            }
+            case NodeKind::Return:          // a struct is not returned, nor compared
+            case NodeKind::Binary:
+            {
+                for (uint32_t k : kids)
+                {
+                    if (whole(k)) return false;
                 }
                 break;
             }
@@ -107,9 +163,15 @@ namespace
                     string_view f = names.text(e->name);
                     return f == "print" || f == "input" || f == "array" || TENSOR_OP_MAP.count(string(f));
                 }
-                if (e->kind != EntityKind::Variable && e->kind != EntityKind::Function && e->kind != EntityKind::Module)
+                switch (e->kind)
                 {
-                    return false;
+                    case EntityKind::Variable:
+                    case EntityKind::Function:
+                    case EntityKind::Module:
+                    case EntityKind::Struct:    // Point(3, 4)
+                    case EntityKind::Class:     // Counter()
+                    case EntityKind::None:      break;
+                    default:                    return false;
                 }
                 break;
             }
@@ -163,12 +225,14 @@ namespace
             InstructionNode* tail = nullptr;
 
             // A variable's slot. An array's slot is its first element and size its length; a dynamic one, array(n),
-            // is placed when it runs, and slot and size are the int slots that hold its place and length.
+            // is placed when it runs, and slot and size are the int slots that hold its place and length. A struct's
+            // fields have a slot each, a nested struct's spread out in its place (struct_layout's order).
             struct Variable
             {
                 int slot = -1;
                 int size = 0;
                 bool dynamic = false;
+                vector<int> fields;
             };
             unordered_map<uint32_t, Variable> variables;  // by entity
 
@@ -180,8 +244,21 @@ namespace
                 vector<int> params, returns;      // their slots
                 vector<VarType> paramTypes, returnTypes;
                 vector<InstructionNode*> pending;  // calls made before its body was done
+                int self = -1;                     // a method's: the slot of its object, its hidden parameter 0
             };
             unordered_map<uint32_t, Function> functions;  // by FunctionDecl
+            unordered_map<uint32_t, uint32_t> methods;    // a method's FunctionDecl -> its ClassDecl
+
+            // A class: its id, which its objects record (a virtual call runs the method of the object's class), and
+            // its fields, its parent's first, in the order an object keeps them
+            struct Class
+            {
+                int id = 0;
+                vector<uint32_t> fields;  // FieldDecls
+                bool registered = false;  // its methods are in virtualTable
+            };
+            unordered_map<uint32_t, Class> classes;  // by class entity
+            unordered_map<string, int> methodIds;    // a virtual call names its method by this id
 
             struct Loop
             {
@@ -192,6 +269,8 @@ namespace
             uint32_t function = NoNode;  // the FunctionDecl being lowered; NoNode in the ignite block
 
             VarType type_of(uint32_t n) const { return var_type(in.types[in.nodeTypes[n]].kind); }
+            TypeKind kind_of(uint32_t n) const { return in.types[in.nodeTypes[n]].kind; }
+            uint32_t entity_of(uint32_t n) const { return in.types[in.nodeTypes[n]].a; }  // a struct's or class's
             VarType var_type_of(uint32_t entity) const { return var_type(in.types[in.entities[entity].type].kind); }
             int line(uint32_t n) const { return tree.token(n).line; }
             string text(uint32_t n) const { return string(tree.spelling(n)); }
@@ -208,6 +287,7 @@ namespace
             void copy(int dst, VarType dt, int src, VarType st, int line);
             int convert(int slot, VarType from, VarType to, int line);
             int negate(int v, VarType t, int line);
+            int start(VarType t);
             int declare(uint32_t entity);
 
             // Definitions
@@ -220,7 +300,7 @@ namespace
             void var_decl(uint32_t n);
             void multi_decl(uint32_t n);
             void assign_statement(uint32_t target, uint32_t value, int line);
-            void store(uint32_t target, int value, VarType type, int line);
+            void store(uint32_t target, int value, VarType type, int line, bool temp = false);
             void compound_assign(uint32_t n);
             void declare_array(uint32_t entity, uint32_t call, int line);
             void if_statement(uint32_t n);
@@ -242,12 +322,16 @@ namespace
             void compare(int left, VarType lt, ConditionalOperatorType op, int right, VarType rt, InstructionNode* fail,
                          int line);
             int call(uint32_t n);
-            InstructionNode* call_instruction(uint32_t n, uint32_t fn, const vector<uint32_t>& args);
-            int call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args);
+            InstructionNode* call_instruction(uint32_t n, uint32_t fn, const vector<uint32_t>& args, vector<int>& slots,
+                                              int object);
+            int call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args, int object = -1);
+            void release_temporaries(const vector<uint32_t>& args, const vector<int>& slots, int line);
             void print(uint32_t n, uint32_t arg);
             void array_access(InstructionType type, uint32_t array, int index, int value, int line);
 
             // Tensors
+            InstructionNode* tensor_call(TensorOp op, const vector<int>& args, const vector<VarType>& types, int result,
+                                         int line);
             int tensor_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, int line);
             int tensor_binary(TokenType op, int left, VarType lt, int right, VarType rt, int line);
             void element(uint32_t index, vector<int>& args, vector<VarType>& types);
@@ -256,6 +340,31 @@ namespace
             // hf and sol
             int hf_call(uint32_t n, const string& method, const vector<uint32_t>& args);
             int sol_call(uint32_t n, const string& method, const vector<uint32_t>& args);
+
+            // Structs
+            VarType field_type(uint32_t field) const;
+            void struct_layout(uint32_t entity, vector<VarType>& types) const;
+            vector<int> struct_slots(uint32_t n);
+            vector<int> struct_value(uint32_t n, vector<VarType>& types);
+            void struct_copy(const vector<int>& dst, uint32_t entity, uint32_t value, int line);
+
+            // Classes
+            uint32_t parent_of(uint32_t cls) const;
+            uint32_t find_method(uint32_t cls, const string& method) const;
+            const Class& class_of(uint32_t cls);
+            int field_index(uint32_t cls, const string& field, uint32_t& decl);
+            int method_id(const string& method);
+            void register_class(uint32_t cls);
+            bool temporary(uint32_t n) const;
+            void release(int value, int line);
+            void object_store(int slot, int value, bool temp, int line);
+            int new_object(uint32_t cls, int line);
+            void default_object(uint32_t n, uint32_t entity);
+            int construct(uint32_t n, uint32_t cls, const vector<uint32_t>& args);
+            int call_method(uint32_t n, uint32_t callee, const vector<uint32_t>& args);
+            int field_read(uint32_t n);
+            void field_write(uint32_t target, int value, VarType type, bool temp, int line);
+            void field_element(InstructionType type, uint32_t field, int index, int value, int line);
     };
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -362,9 +471,23 @@ namespace
         return dst;
     }
 
-    // A variable's slot, made where it is declared
+    // What a variable starts as: 0, or -1 for a Tensor, which no tensor is, so using it before it is set is an error
+    int Lowerer::start(VarType t)
+    {
+        return t == TYPE_TENSOR ? int_constant(-1) : zero(t);
+    }
+
+    // A variable's slot, made where it is declared; a struct's slots, one per field
     int Lowerer::declare(uint32_t entity)
     {
+        const Type& type = in.types[in.entities[entity].type];
+        if (type.kind == TypeKind::Struct)
+        {
+            vector<VarType> types;
+            struct_layout(type.a, types);
+            for (VarType t : types) variables[entity].fields.push_back(new_slot(t));
+            return -1;
+        }
         VarType t = var_type_of(entity);
         int slot = new_slot(t);
         variables[entity].slot = slot;
@@ -380,23 +503,43 @@ namespace
     // Definitions
     // ─────────────────────────────────────────────────────────────────────────────
 
-    // Every function, in file order, then the ignite block (or a call to main() when there is none)
+    // Every function and method, in file order, then the ignite block (or a call to main() when there is none). The
+    // classes' methods go into virtualTable once all are lowered.
     InstructionNode* Lowerer::run()
     {
+        vector<uint32_t> classDecls;
+        for (uint32_t n : tree.children(tree.root()))
+        {
+            if (tree.kind(n) != NodeKind::ClassDecl) continue;
+            classDecls.push_back(n);
+            for (uint32_t m : tree.children(n))
+            {
+                if (tree.kind(m) == NodeKind::FunctionDecl) methods[m] = n;
+            }
+        }
         uint32_t ignite = NoNode;
         for (uint32_t n : tree.children(tree.root()))
         {
             if (tree.kind(n) == NodeKind::FunctionDecl) lower_function(n);
             else if (tree.kind(n) == NodeKind::Ignite) ignite = n;
+            else if (tree.kind(n) == NodeKind::ClassDecl)
+            {
+                for (uint32_t m : tree.children(n))
+                {
+                    if (tree.kind(m) == NodeKind::FunctionDecl) lower_function(m);
+                }
+            }
         }
         if (ignite != NoNode) block(tree.children(ignite)[0]);
         else call_main();
+        for (uint32_t n : classDecls) register_class(in.refs[n]);
         if (head == nullptr) add(NOOP, ignite != NoNode ? line(ignite) : 0);
         return head;
     }
 
     // A function's body, once. Its parameters, return slots and locals are its int slot range; it ends with a return
-    // of whatever is in its return slot, for a body that ends without one.
+    // of whatever is in its return slot, for a body that ends without one. A method's object is in a slot of the
+    // range too (self); a method is in classMethodTable, by its class's name, where the tensor-free pass finds it.
     Lowerer::Function& Lowerer::lower_function(uint32_t fn)
     {
         Function& f = functions[fn];
@@ -415,22 +558,29 @@ namespace
         f.slotBase = next_available;
         for (uint32_t p : tree.children(kids[0]))
         {
+            if (tree.token(p).kind == SELF) continue;
             f.params.push_back(declare(in.refs[p]));
             f.paramTypes.push_back(var_type_of(in.refs[p]));
         }
         for (TypeId t : sig.returns) f.returnTypes.push_back(var_type(in.types[t].kind));
         if (f.returnTypes.empty()) f.returnTypes.push_back(TYPE_UNKNOWN);  // returns nothing
         for (VarType t : f.returnTypes) f.returns.push_back(new_slot(t));
+        bool method = methods.count(fn);
         string name = text(fn);
-        functionParamTypes[name] = f.paramTypes;
-        functionReturnType[name] = f.returnTypes[0];
-        functionReturnSlots[name] = f.returns;
+        if (method) f.self = alloc_slot();
+        else
+        {
+            functionParamTypes[name] = f.paramTypes;
+            functionReturnType[name] = f.returnTypes[0];
+            functionReturnSlots[name] = f.returns;
+        }
 
         block(kids.back());
         add(RET, line(fn))->ret_inst = {f.returns[0], f.returnTypes[0]};
         f.head = head;
         f.slotCount = next_available - f.slotBase;
-        functionTable[name] = head;
+        if (method) classMethodTable[text(methods[fn])][name] = head;
+        else functionTable[name] = head;
         for (InstructionNode* call : f.pending)
         {
             call->call_inst.function_head = f.head;
@@ -474,7 +624,12 @@ namespace
             case NodeKind::MultiDecl:       multi_decl(n); return;
             case NodeKind::Assign:          assign_statement(kids[0], kids[1], line(n)); return;
             case NodeKind::CompoundAssign:  compound_assign(n); return;
-            case NodeKind::ExprStatement:   expr(kids[0]); return;
+            case NodeKind::ExprStatement:   // a temporary object nothing takes (a call's result) is dropped
+            {
+                int v = expr(kids[0]);
+                if (temporary(kids[0])) release(v, line(n));
+                return;
+            }
             case NodeKind::If:              if_statement(n); return;
             case NodeKind::While:           while_statement(n); return;
             case NodeKind::DoWhile:         do_while_statement(n); return;
@@ -487,21 +642,37 @@ namespace
         }
     }
 
-    // int x = e, or int x: a number starts at 0 each time the declaration runs (a loop body runs it again), and a
-    // Tensor at -1, which no tensor is, so using it before it is set is a runtime error
+    // int x = e, or int x: a variable starts as start() says each time the declaration runs (a loop body runs it
+    // again); a struct's fields each do. Point p alone is a new object, its init run if it takes no arguments.
     void Lowerer::var_decl(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
         uint32_t e = in.refs[n];
+        const Type& type = in.types[in.entities[e].type];
         VarType t = var_type_of(e);
+        if (type.kind == TypeKind::Struct)
+        {
+            declare(e);
+            const vector<int>& fields = variables[e].fields;
+            if (kids.size() > 1)
+            {
+                struct_copy(fields, type.a, kids[1], line(n));
+                return;
+            }
+            vector<VarType> types;
+            struct_layout(type.a, types);
+            for (size_t i = 0; i < fields.size(); i++) assign(types[i], fields[i], start(types[i]), OPERATOR_NONE, 0, line(n));
+            return;
+        }
         if (kids.size() == 1)
         {
-            int start = t == TYPE_TENSOR ? int_constant(-1) : zero(t);
-            assign(t, declare(e), start, OPERATOR_NONE, 0, line(n));
+            if (t == TYPE_CLASS) default_object(n, e);
+            else assign(t, declare(e), start(t), OPERATOR_NONE, 0, line(n));
             return;
         }
         int value = expr(kids[1]);
-        copy(declare(e), t, value, type_of(kids[1]), line(n));
+        if (t == TYPE_CLASS) object_store(declare(e), value, temporary(kids[1]), line(n));
+        else copy(declare(e), t, value, type_of(kids[1]), line(n));
     }
 
     // int q, int r = divmod(a, b): one variable per value the function returns, each copied from its return slot
@@ -510,7 +681,9 @@ namespace
         vector<uint32_t> kids = tree.children(n);
         vector<uint32_t> call = tree.children(kids.back());
         uint32_t fn = in.entities[in.refs[call[0]]].decl;
-        InstructionNode* node = call_instruction(kids.back(), fn, vector<uint32_t>(call.begin() + 1, call.end()));
+        vector<uint32_t> args(call.begin() + 1, call.end());
+        vector<int> slots;
+        InstructionNode* node = call_instruction(kids.back(), fn, args, slots, -1);
         const Function& f = functions[fn];
         node->call_inst.all_ret_slots = array_of(f.returns);
         node->call_inst.ret_slot_types = array_of(f.returnTypes);
@@ -520,31 +693,44 @@ namespace
             uint32_t e = in.refs[kids[i]];
             copy(declare(e), var_type_of(e), f.returns[i], f.returnTypes[i], line(n));
         }
+        release_temporaries(args, slots, line(n));
     }
 
-    // x = e (declaring x if this is its first assignment), a[i] = e
+    // x = e (declaring x if this is its first assignment), a[i] = e, obj.f = e; a struct is copied field by field
     void Lowerer::assign_statement(uint32_t target, uint32_t value, int line)
     {
+        bool declares = false;
         if (tree.kind(target) == NodeKind::Name)
         {
             uint32_t e = in.refs[target];
-            bool declares = in.entities[e].decl == target;
+            declares = in.entities[e].decl == target;
             if (declares && in.types[in.entities[e].type].kind == TypeKind::Array)
             {
                 declare_array(e, value, line);
                 return;
             }
-            int v = expr(value);
-            if (declares) declare(e);
-            store(target, v, type_of(value), line);
+        }
+        if (kind_of(value) == TypeKind::Struct)  // q = p, l.a = Point(1, 2)
+        {
+            if (declares) declare(in.refs[target]);
+            struct_copy(struct_slots(target), entity_of(value), value, line);
             return;
         }
-        store(target, expr(value), type_of(value), line);
+        int v = expr(value);
+        if (declares) declare(in.refs[target]);
+        store(target, v, type_of(value), line, temporary(value));
     }
 
-    // The value in slot value, of the given type, into a variable, an array's element or a tensor's
-    void Lowerer::store(uint32_t target, int value, VarType type, int line)
+    // The value in slot value, of the given type, into a variable, an array's element or a tensor's, or a field. An
+    // object variable or field takes a temporary's reference (temp), or one of its own.
+    void Lowerer::store(uint32_t target, int value, VarType type, int line, bool temp)
     {
+        if (tree.kind(target) == NodeKind::Member)
+        {
+            if (kind_of(tree.children(target)[0]) == TypeKind::Class) field_write(target, value, type, temp, line);
+            else copy(struct_slots(target)[0], type_of(target), value, type, line);  // a struct variable's field
+            return;
+        }
         if (tree.kind(target) == NodeKind::Index)
         {
             vector<uint32_t> kids = tree.children(target);
@@ -558,12 +744,18 @@ namespace
                 tensor_op(TEN_SET, args, types, line);
                 return;
             }
+            if (tree.kind(kids[0]) == NodeKind::Member)  // self.data[i] = v
+            {
+                field_element(ARRAY_WRITE, kids[0], expr(kids[1]), value, line);
+                return;
+            }
             int index = expr(kids[1]);
             array_access(ARRAY_WRITE, kids[0], index, value, this->line(kids[0]));
             return;
         }
         uint32_t e = in.refs[target];
-        copy(variables[e].slot, var_type_of(e), value, type, line);
+        if (var_type_of(e) == TYPE_CLASS) object_store(variables[e].slot, value, temp, line);
+        else copy(variables[e].slot, var_type_of(e), value, type, line);
     }
 
     // x += e is x = x + e
@@ -748,13 +940,18 @@ namespace
             }
             case NodeKind::StringLiteral:   return string_constant(n);
             case NodeKind::BoolLiteral:     return int_constant(tree.token(n).kind == TRUE);
-            case NodeKind::Name:            return variables[in.refs[n]].slot;
+            case NodeKind::Name:            // none is the handle 0, no object
+            {
+                if (in.entities[in.refs[n]].kind == EntityKind::None) return int_constant(0);
+                return variables[in.refs[n]].slot;
+            }
+            case NodeKind::Self:            return functions[function].self;
             case NodeKind::Paren:           return expr(tree.children(n)[0]);
             case NodeKind::Unary:           return unary(n);
             case NodeKind::Binary:          return binary(n);
             case NodeKind::Call:            return call(n);
             case NodeKind::Member:          return member(n);
-            case NodeKind::Index:           // a[i], t[i, j]
+            case NodeKind::Index:           // a[i], t[i, j], self.data[i]
             {
                 if (type_of(tree.children(n)[0]) == TYPE_TENSOR)
                 {
@@ -766,7 +963,8 @@ namespace
                 vector<uint32_t> kids = tree.children(n);
                 int index = expr(kids[1]);
                 int value = alloc_slot();
-                array_access(ARRAY_READ, kids[0], index, value, line(kids[1]));
+                if (tree.kind(kids[0]) == NodeKind::Member) field_element(ARRAY_READ, kids[0], index, value, line(n));
+                else array_access(ARRAY_READ, kids[0], index, value, line(kids[1]));
                 return value;
             }
             default:                        return 0;
@@ -837,6 +1035,8 @@ namespace
             compare(left, type_of(kids[0]), cond, right, type_of(kids[1]), done, line(n));
             assign(TYPE_INT, result, int_constant(1), OPERATOR_NONE, 0, line(n));
             append(done);
+            if (temporary(kids[0])) release(left, line(n));  // make() == none: a temporary object, once compared
+            if (temporary(kids[1])) release(right, line(n));
             return result;
         }
         VarType t;
@@ -915,15 +1115,16 @@ namespace
         return result;
     }
 
-    // Falls through when condition n holds and jumps to fail when it does not. A comparison jumps on itself;
-    // any other value is true when it is not zero.
+    // Falls through when condition n holds and jumps to fail when it does not. A comparison jumps on itself (unless
+    // it has a temporary object to drop after, both ways); any other value is true when it is not zero.
     void Lowerer::condition(uint32_t n, InstructionNode* fail)
     {
         while (tree.kind(n) == NodeKind::Paren) n = tree.children(n)[0];
         ConditionalOperatorType op;
-        if (tree.kind(n) == NodeKind::Binary && comparison(tree.token(n).kind, op))
+        vector<uint32_t> kids = tree.children(n);
+        if (tree.kind(n) == NodeKind::Binary && comparison(tree.token(n).kind, op) && !temporary(kids[0]) &&
+            !temporary(kids[1]))
         {
-            vector<uint32_t> kids = tree.children(n);
             int left = expr(kids[0]);
             int right = expr(kids[1]);
             compare(left, type_of(kids[0]), op, right, type_of(kids[1]), fail, line(n));
@@ -966,8 +1167,9 @@ namespace
         node->cjmp_inst.operand_type = t;
     }
 
-    // f(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other tensor built-ins, and
-    // hf.infer(...), sol.wait(...). array(n) is lowered by the assignment it sets.
+    // f(args), obj.m(args), Counter(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other
+    // tensor built-ins, and hf.infer(...), sol.wait(...). array(n) is lowered by the assignment it sets, and a struct's
+    // Point(3, 4) by the declaration or assignment it is the value of.
     int Lowerer::call(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -982,13 +1184,15 @@ namespace
             add(CAST, line(n))->cast_inst = {src, dst, type_of(args[0]), to};
             return dst;
         }
-        if (tree.kind(callee) == NodeKind::Member)  // hf.infer(...), sol.wait(...)
+        if (tree.kind(callee) == NodeKind::Member)  // obj.m(...), hf.infer(...), sol.wait(...)
         {
+            if (kind_of(tree.children(callee)[0]) == TypeKind::Class) return call_method(n, callee, args);
             string module = text(tree.children(callee)[0]), method = text(callee);
             return module == "hf" ? hf_call(n, method, args) : sol_call(n, method, args);
         }
         const Entity& e = in.entities[in.refs[callee]];
         if (e.kind == EntityKind::Function) return call_function(n, e.decl, args);
+        if (e.kind == EntityKind::Class) return construct(n, in.refs[callee], args);
         string_view f = names.text(e.name);
         auto op = TENSOR_OP_MAP.find(string(f));
         if (op != TENSOR_OP_MAP.end())
@@ -1009,10 +1213,12 @@ namespace
         return slot;
     }
 
-    // The arguments, then the CALL: it copies them into the function's parameter slots and saves its int slots
-    InstructionNode* Lowerer::call_instruction(uint32_t n, uint32_t fn, const vector<uint32_t>& args)
+    // The arguments (their slots go in slots), then the CALL: it copies them into the function's parameter slots and
+    // saves its int slots. A method's object (object: its slot, or -1 for a function) is its hidden parameter 0, and
+    // a method's call is virtual (init's excepted): it runs the method of the object's own class.
+    InstructionNode* Lowerer::call_instruction(uint32_t n, uint32_t fn, const vector<uint32_t>& args, vector<int>& slots,
+                                               int object)
     {
-        vector<int> slots;
         vector<VarType> types;
         for (uint32_t a : args)
         {
@@ -1020,15 +1226,25 @@ namespace
             types.push_back(type_of(a));
         }
         Function& f = lower_function(fn);
+        vector<int> params = f.params, values = slots;
+        vector<VarType> paramTypes = f.paramTypes;
+        if (object >= 0)
+        {
+            params.insert(params.begin(), f.self);
+            paramTypes.insert(paramTypes.begin(), TYPE_CLASS);
+            values.insert(values.begin(), object);
+            types.insert(types.begin(), TYPE_CLASS);
+        }
         InstructionNode* node = add(CALL, line(n));
         node->call_inst.ret_val_index = f.returns[0];
         node->call_inst.ret_type = f.returnTypes[0];
-        node->call_inst.num_params = (int)f.params.size();
-        if (!f.params.empty())
+        node->call_inst.num_params = (int)params.size();
+        if (object >= 0 && text(fn) != "init") node->call_inst.virtual_method = method_id(text(fn));
+        if (!params.empty())
         {
-            node->call_inst.param_slots = array_of(f.params);
-            node->call_inst.param_types = array_of(f.paramTypes);
-            node->call_inst.arg_val_slots = array_of(slots);
+            node->call_inst.param_slots = array_of(params);
+            node->call_inst.param_types = array_of(paramTypes);
+            node->call_inst.arg_val_slots = array_of(values);
             node->call_inst.arg_types = array_of(types);
         }
         if (f.state == Function::Lowering)
@@ -1042,14 +1258,25 @@ namespace
         return node;
     }
 
-    // f(args) as a value: its first result, copied out of the function's return slot before another call reuses it
-    int Lowerer::call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args)
+    // f(args) as a value: its first result, copied out of the function's return slot before another call reuses it.
+    // The temporary objects passed to it are then dropped (its parameters had their own references).
+    int Lowerer::call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args, int object)
     {
-        InstructionNode* node = call_instruction(n, fn, args);
+        vector<int> slots;
+        InstructionNode* node = call_instruction(n, fn, args, slots, object);
         VarType t = node->call_inst.ret_type;
         int result = new_slot(t);
         assign(t, result, node->call_inst.ret_val_index, OPERATOR_NONE, 0, line(n));
+        release_temporaries(args, slots, line(n));
         return result;
+    }
+
+    void Lowerer::release_temporaries(const vector<uint32_t>& args, const vector<int>& slots, int line)
+    {
+        for (size_t i = 0; i < args.size(); i++)
+        {
+            if (temporary(args[i])) release(slots[i], line);
+        }
     }
 
     // print(x): a string literal is printed from strMem directly
@@ -1094,12 +1321,11 @@ namespace
     // Tensors
     // ─────────────────────────────────────────────────────────────────────────────
 
-    // One TENSOR_CALL. Its result is a tensor's handle, an int or a double, or nothing (tensor_print); a void op's
-    // value is a slot of its own that nothing reads.
-    int Lowerer::tensor_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, int line)
+    // A TENSOR_CALL: a tensor built-in, or an object operation (OBJ_NEW, OBJ_GET, ...), which the runtime runs as
+    // one. result is its result's slot, or -1.
+    InstructionNode* Lowerer::tensor_call(TensorOp op, const vector<int>& args, const vector<VarType>& types, int result,
+                                          int line)
     {
-        bool isVoid = TENSOR_VOID_OPS.count(op), isDouble = TENSOR_DOUBLE_OPS.count(op), isInt = TENSOR_INT_OPS.count(op);
-        int result = isVoid ? -1 : new_slot(isDouble ? TYPE_DOUBLE : isInt ? TYPE_INT : TYPE_TENSOR);
         InstructionNode* node = add(TENSOR_CALL, line);
         node->tensor_call_inst.op = op;
         node->tensor_call_inst.result_slot = result;
@@ -1109,6 +1335,16 @@ namespace
             node->tensor_call_inst.arg_slots[i] = args[i];
             node->tensor_call_inst.arg_types[i] = types[i];
         }
+        return node;
+    }
+
+    // A tensor built-in. Its result is a tensor's handle, an int or a double, or nothing (tensor_print); a void op's
+    // value is a slot of its own that nothing reads.
+    int Lowerer::tensor_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, int line)
+    {
+        bool isVoid = TENSOR_VOID_OPS.count(op), isDouble = TENSOR_DOUBLE_OPS.count(op), isInt = TENSOR_INT_OPS.count(op);
+        int result = isVoid ? -1 : new_slot(isDouble ? TYPE_DOUBLE : isInt ? TYPE_INT : TYPE_TENSOR);
+        tensor_call(op, args, types, result, line);
         return isVoid ? alloc_slot() : result;
     }
 
@@ -1149,10 +1385,13 @@ namespace
         }
     }
 
-    // t.T is the transpose; t.rows, t.cols and t.rank are ints
+    // A field of an object or of a struct variable; t.T is the transpose; t.rows, t.cols and t.rank are ints
     int Lowerer::member(uint32_t n)
     {
-        int t = expr(tree.children(n)[0]);
+        uint32_t base = tree.children(n)[0];
+        if (kind_of(base) == TypeKind::Class) return field_read(n);
+        if (kind_of(base) == TypeKind::Struct) return struct_slots(n)[0];
+        int t = expr(base);
         string m = text(n);
         TensorOp op = m == "T" ? TEN_T : m == "rows" ? TEN_ROWS : m == "cols" ? TEN_COLS : TEN_RANK;
         return tensor_op(op, {t}, {TYPE_TENSOR}, line(n));
@@ -1227,6 +1466,313 @@ namespace
         node->sol_inst.path_slot = op == SOL_OP_SET_KEY ? slots[0] : op == SOL_OP_SAVE ? slots[1] : -1;
         if (op == SOL_OP_FINETUNE) return job;
         return op == SOL_OP_PREDICT ? result : alloc_slot();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Structs
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // A field's type as a slot holds it: an int array field's slot holds where its elements start. A struct field's
+    // is TYPE_UNKNOWN: it takes its struct's slots (struct_layout).
+    VarType Lowerer::field_type(uint32_t field) const
+    {
+        vector<uint32_t> kids = tree.children(field);  // its type, then an array field's size
+        if (kids.size() > 1) return TYPE_INT;
+        switch (tree.token(kids[0]).kind)
+        {
+            case INT_TYPE:      return TYPE_INT;
+            case FLOAT_TYPE:    return TYPE_FLOAT;
+            case DOUBLE_TYPE:   return TYPE_DOUBLE;
+            case BOOL_TYPE:     return TYPE_BOOL;
+            case STRING_TYPE:   return TYPE_STRING;
+            case TENSOR_TYPE:   return TYPE_TENSOR;
+            default:            return in.entities[in.refs[kids[0]]].kind == EntityKind::Class ? TYPE_CLASS : TYPE_UNKNOWN;
+        }
+    }
+
+    // The types of a struct's slots: one per field, in order, a nested struct's fields in its place
+    void Lowerer::struct_layout(uint32_t entity, vector<VarType>& types) const
+    {
+        for (uint32_t f : tree.children(in.entities[entity].decl))
+        {
+            VarType t = field_type(f);
+            if (t == TYPE_UNKNOWN) struct_layout(in.refs[tree.children(f)[0]], types);
+            else types.push_back(t);
+        }
+    }
+
+    // The slots of a struct variable (p), or of a field of one (l.a, l.a.x): its part of the variable's
+    vector<int> Lowerer::struct_slots(uint32_t n)
+    {
+        if (tree.kind(n) == NodeKind::Name) return variables[in.refs[n]].fields;
+        uint32_t base = tree.children(n)[0];
+        vector<int> all = struct_slots(base);
+        size_t at = 0;
+        for (uint32_t f : tree.children(in.entities[entity_of(base)].decl))
+        {
+            vector<VarType> types;
+            VarType t = field_type(f);
+            if (t == TYPE_UNKNOWN) struct_layout(in.refs[tree.children(f)[0]], types);
+            else types.push_back(t);
+            if (text(f) == text(n)) return vector<int>(all.begin() + at, all.begin() + at + types.size());
+            at += types.size();
+        }
+        return {};
+    }
+
+    // A struct value's field values in struct_layout's order, their types appended to types: a variable's or a
+    // field's slots, or a new struct's values, Point(3, 4)
+    vector<int> Lowerer::struct_value(uint32_t n, vector<VarType>& types)
+    {
+        while (tree.kind(n) == NodeKind::Paren) n = tree.children(n)[0];
+        if (tree.kind(n) != NodeKind::Call)
+        {
+            struct_layout(entity_of(n), types);
+            return struct_slots(n);
+        }
+        vector<int> slots;
+        vector<uint32_t> kids = tree.children(n);
+        for (size_t i = 1; i < kids.size(); i++)
+        {
+            if (kind_of(kids[i]) == TypeKind::Struct)
+            {
+                vector<int> inner = struct_value(kids[i], types);
+                slots.insert(slots.end(), inner.begin(), inner.end());
+                continue;
+            }
+            slots.push_back(expr(kids[i]));
+            types.push_back(type_of(kids[i]));
+        }
+        return slots;
+    }
+
+    // A struct value into the slots dst of a struct variable or field (of struct entity), field by field
+    void Lowerer::struct_copy(const vector<int>& dst, uint32_t entity, uint32_t value, int line)
+    {
+        vector<VarType> to, from;
+        struct_layout(entity, to);
+        vector<int> src = struct_value(value, from);
+        for (size_t i = 0; i < dst.size() && i < src.size(); i++) copy(dst[i], to[i], src[i], from[i], line);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Classes
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // A class's parent class, or NoEntity
+    uint32_t Lowerer::parent_of(uint32_t cls) const
+    {
+        for (uint32_t m : tree.children(in.entities[cls].decl))
+        {
+            if (tree.kind(m) == NodeKind::Extends) return in.refs[tree.children(m)[0]];
+        }
+        return NoEntity;
+    }
+
+    // The FunctionDecl a class runs for a method: its own, or the nearest parent's; NoNode if none has it
+    uint32_t Lowerer::find_method(uint32_t cls, const string& method) const
+    {
+        for (uint32_t c = cls; c != NoEntity; c = parent_of(c))
+        {
+            for (uint32_t m : tree.children(in.entities[c].decl))
+            {
+                if (tree.kind(m) == NodeKind::FunctionDecl && text(m) == method) return m;
+            }
+        }
+        return NoNode;
+    }
+
+    // A class's id and fields, the first time it is needed
+    const Lowerer::Class& Lowerer::class_of(uint32_t cls)
+    {
+        auto it = classes.find(cls);
+        if (it != classes.end()) return it->second;
+        uint32_t up = parent_of(cls);
+        vector<uint32_t> fields = up == NoEntity ? vector<uint32_t>() : class_of(up).fields;
+        for (uint32_t m : tree.children(in.entities[cls].decl))
+        {
+            if (tree.kind(m) == NodeKind::FieldDecl) fields.push_back(m);
+        }
+        Class& c = classes[cls];
+        c.id = (int)classes.size();
+        c.fields = fields;
+        return c;
+    }
+
+    // A field's index in its class's objects (the first field of that name, a parent's before the class's own), and
+    // its FieldDecl in decl
+    int Lowerer::field_index(uint32_t cls, const string& field, uint32_t& decl)
+    {
+        const vector<uint32_t>& fields = class_of(cls).fields;
+        for (size_t i = 0; i < fields.size(); i++)
+        {
+            if (text(fields[i]) != field) continue;
+            decl = fields[i];
+            return (int)i;
+        }
+        decl = NoNode;
+        return 0;
+    }
+
+    int Lowerer::method_id(const string& method)
+    {
+        auto it = methodIds.find(method);
+        if (it != methodIds.end()) return it->second;
+        int id = (int)methodIds.size() + 1;
+        methodIds[method] = id;
+        return id;
+    }
+
+    // The method a virtual call of each name runs on this class's objects, its own or its parent's (virtualTable)
+    void Lowerer::register_class(uint32_t cls)
+    {
+        int id = class_of(cls).id;
+        Class& c = classes[cls];
+        if (c.registered) return;
+        c.registered = true;
+        uint32_t up = parent_of(cls);
+        if (up != NoEntity)
+        {
+            register_class(up);
+            virtualTable[id] = virtualTable[classes[up].id];
+        }
+        for (uint32_t m : tree.children(in.entities[cls].decl))
+        {
+            if (tree.kind(m) != NodeKind::FunctionDecl) continue;
+            const Function& f = lower_function(m);
+            vector<int> params = f.params;
+            vector<VarType> types = f.paramTypes;
+            params.insert(params.begin(), f.self);
+            types.insert(types.begin(), TYPE_CLASS);
+            MethodTarget t;
+            t.head = f.head;
+            t.num_params = (int)params.size();
+            t.param_slots = array_of(params);
+            t.param_types = array_of(types);
+            t.slot_base = f.slotBase;
+            t.slot_count = f.slotCount;
+            virtualTable[id][method_id(text(m))] = t;
+        }
+    }
+
+    // Whether n is a temporary object: one reference that a store takes, or that release drops once it is used. A
+    // new object, a call's result and an object read from a field are; a variable, self and none keep their own.
+    bool Lowerer::temporary(uint32_t n) const
+    {
+        while (tree.kind(n) == NodeKind::Paren) n = tree.children(n)[0];
+        return type_of(n) == TYPE_CLASS && (tree.kind(n) == NodeKind::Call || tree.kind(n) == NodeKind::Member);
+    }
+
+    void Lowerer::release(int value, int line)
+    {
+        tensor_call(OBJ_RELEASE, {value}, {TYPE_CLASS}, -1, line);
+    }
+
+    // slot = value: the variable refers to value's object, taking a temporary's reference (OBJ_MOVE) or counting one
+    // of its own (OBJ_STORE); the object it referred to before loses that reference
+    void Lowerer::object_store(int slot, int value, bool temp, int line)
+    {
+        tensor_call(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, {TYPE_INT, TYPE_CLASS}, slot, line);
+    }
+
+    // A new object, a temporary, with all fields 0 (an object field none), but an int array field, which gets a
+    // block of slots of its own, and a Tensor field, -1 (unset: an error if used)
+    int Lowerer::new_object(uint32_t cls, int line)
+    {
+        const Class& c = class_of(cls);
+        int h = alloc_slot();
+        tensor_call(OBJ_NEW, {int_constant((int)c.fields.size()), int_constant(c.id)}, {TYPE_INT, TYPE_INT}, h, line);
+        for (size_t i = 0; i < c.fields.size(); i++)
+        {
+            vector<uint32_t> kids = tree.children(c.fields[i]);  // its type, then an array field's size
+            int value;
+            if (kids.size() > 1)
+            {
+                value = alloc_slot();
+                add(ALLOC, line)->alloc_inst = {value, int_constant(stoi(text(kids[1])))};
+            }
+            else if (field_type(c.fields[i]) == TYPE_TENSOR) value = int_constant(-1);
+            else continue;
+            tensor_call(OBJ_SET, {h, int_constant((int)i), value}, {TYPE_INT, TYPE_INT, TYPE_INT}, -1, line);
+        }
+        return h;
+    }
+
+    // Counter c: a new object, its init run if it takes no arguments
+    void Lowerer::default_object(uint32_t n, uint32_t entity)
+    {
+        uint32_t cls = in.types[in.entities[entity].type].a;
+        int h = new_object(cls, line(n));
+        uint32_t init = find_method(cls, "init");
+        if (init != NoNode && in.signatures.at(init).params.empty()) call_function(n, init, {}, h);
+        object_store(declare(entity), h, true, line(n));
+    }
+
+    // Counter(args): a new object, its init (its own, or the nearest parent's) run with the arguments; a temporary
+    int Lowerer::construct(uint32_t n, uint32_t cls, const vector<uint32_t>& args)
+    {
+        int h = new_object(cls, line(n));
+        uint32_t init = find_method(cls, "init");
+        if (init != NoNode) call_function(n, init, args, h);
+        return h;
+    }
+
+    // obj.m(args): the CALL names the method obj's class (as the check pass typed it) runs, and the runtime runs the
+    // object's own class's instead, an override, when it has one. A temporary object is dropped after.
+    int Lowerer::call_method(uint32_t n, uint32_t callee, const vector<uint32_t>& args)
+    {
+        uint32_t object = tree.children(callee)[0];
+        int h = expr(object);
+        int result = call_function(n, find_method(entity_of(object), text(callee)), args, h);
+        if (temporary(object)) release(h, line(n));
+        return result;
+    }
+
+    // obj.f: OBJ_GET, or OBJ_GET_D for a float or double, which comes back as a double. A Tensor read is one more
+    // owner of it, an object read a temporary, and an int array field reads as where its elements start.
+    int Lowerer::field_read(uint32_t n)
+    {
+        uint32_t object = tree.children(n)[0];
+        int h = expr(object);
+        uint32_t decl;
+        int index = field_index(entity_of(object), text(n), decl);
+        VarType t = field_type(decl);
+        bool inDmem = t == TYPE_FLOAT || t == TYPE_DOUBLE;
+        int result = inDmem ? alloc_double_slot() : new_slot(t);
+        tensor_call(inDmem ? OBJ_GET_D : OBJ_GET, {h, int_constant(index)}, {TYPE_INT, TYPE_INT}, result, line(n));
+        if (t == TYPE_FLOAT) result = convert(result, TYPE_DOUBLE, TYPE_FLOAT, line(n));
+        if (temporary(object)) release(h, line(n));
+        return result;
+    }
+
+    // obj.f = value: OBJ_SET, which counts the field's own reference to a Tensor or an object; a temporary value is
+    // then dropped
+    void Lowerer::field_write(uint32_t target, int value, VarType type, bool temp, int line)
+    {
+        uint32_t object = tree.children(target)[0];
+        int h = expr(object);
+        uint32_t decl;
+        int index = field_index(entity_of(object), text(target), decl);
+        tensor_call(OBJ_SET, {h, int_constant(index), value}, {TYPE_INT, TYPE_INT, type}, -1, line);
+        if (temp) release(value, line);
+        if (temporary(object)) release(h, line);
+    }
+
+    // self.data[i]: ARRAY_READ copies the element into value, ARRAY_WRITE copies value into it. The field holds where
+    // the object's elements start; i is checked against the field's size.
+    void Lowerer::field_element(InstructionType type, uint32_t field, int index, int value, int line)
+    {
+        int base = expr(field);
+        uint32_t decl;
+        field_index(entity_of(tree.children(field)[0]), text(field), decl);
+        InstructionNode* node = add(type, line);
+        node->array_inst.base_index = base;
+        node->array_inst.dynamic_base = true;
+        node->array_inst.index_slot = index;
+        node->array_inst.target_index = value;
+        node->array_inst.array_size = stoi(text(tree.children(decl)[1]));
+        node->array_inst.size_slot = -1;
+        node->array_inst.line_no = line;
     }
 }  // namespace
 

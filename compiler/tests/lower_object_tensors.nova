@@ -1,0 +1,45 @@
+# Tensor fields and objects in fields, lowered: a Net holding two Layers, each holding Tensors; a field's
+# element store (self.b[0, 0] = ...); nets made in a loop are freed with their tensors, so tensor_live_count() does
+# not grow with the iterations.
+class Layer:
+    Tensor W
+    Tensor b
+
+    def init(int n):
+        self.W = ones(n, n)
+        self.b = zeros(1, n)
+
+    def forward(Tensor x) -> Tensor:
+        return x @ self.W + self.b
+
+    def grow():
+        self.W = self.W * 2.0
+        self.b[0, 0] = self.b[0, 0] + 1.0
+
+class Net:
+    Layer one
+    Layer two
+
+    def init():
+        self.one = Layer(2)
+        self.two = Layer(2)
+
+    def forward(Tensor x) -> Tensor:
+        return self.two.forward(self.one.forward(x))
+
+ignite:
+    Net n = Net()
+    Tensor y = n.forward(ones(1, 2))
+    print(y[0, 1])
+    n.one.grow()
+    print(n.forward(ones(1, 2))[0, 0])
+    print(n.one.b[0, 0])
+    int i = 0
+    while (i < 25):
+        Net t = Net()
+        t.two.grow()
+        Tensor z = t.forward(ones(1, 2))
+        i += 1
+    print(tensor_live_count())
+    n = Net()
+    print(tensor_live_count())

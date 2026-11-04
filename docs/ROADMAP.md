@@ -89,8 +89,16 @@ first: they could not keep up with the language, and native code will come from 
      `tensor_free_number_calls`. 2c-2b (done): `hf` / `sol`, with name=value arguments (`max_tokens=50`,
      `sol.finetune(model=..., task=...)`), which the new parser had stopped accepting; the check pass allows them in
      those calls only and checks every `hf` / `sol` call's arguments. STRCAT now numbers its string from `strMem`
-     itself, since an `hf` call adds strings there too. 2c-3: structs and classes. 2c-4: `vector` /
-     `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
+     itself, since an `hf` call adds strings there too. 2c-3 (done): structs and classes. A struct variable is one
+     slot per field (a nested struct's fields in its place), and `q = p` copies it field by field, which the old
+     parser cannot do. Objects, fields, inheritance and `self` lower to the object instructions; a method call is
+     virtual and resolved at run time through `virtualTable`; a temporary object (a new one, a call's result, a field
+     read) is moved into a variable or released, so object counts match the old parser's. Methods are registered in
+     `classMethodTable`, or the tensor-free pass never sees their bodies and their tensors are not freed. Not covered
+     yet, so still handed to the old parser: struct parameters and return values, classes with `vector` / `map`
+     fields (2c-4) and generic classes (2c-5). The old parser reads `return 0.0` in a method returning double as a
+     double from the float literal's slot, so it prints the wrong value; lowering gets it right, and the bug goes
+     with the old parser. 2c-4: `vector` / `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
      front end, and the old parser, the braces-form pass and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
