@@ -3,7 +3,8 @@
 // or dmem[] (a double), laid out as the old parser lays them out: a function's int slots are one range, which a call
 // saves and restores so a recursive call does not overwrite its caller's locals. A tensor is an int slot holding its
 // handle; g_tensorSlots lists those slots, so the tensor-free pass knows which values to release. A struct is one
-// slot per field; an object is an int slot holding its handle into the runtime's object heap (interp_objects.cc).
+// slot per field; an object is an int slot holding its handle into the runtime's object heap (interp_objects.cc),
+// and a vector or a map one holding its handle into the container heap (interp_containers.cc).
 //
 // Functions are lowered in file order, and a function a call needs before its turn is lowered right then. A call
 // into a function whose body is still being lowered (a recursive call) gets its target when that body is done.
@@ -30,7 +31,7 @@ namespace
 {
     // ─────────────────────────────────────────────────────────────────────────────
     // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), tensors (2c-2a),
-    // hf / sol (2c-2b), and structs and classes (2c-3)
+    // hf / sol (2c-2b), structs and classes (2c-3), and vectors and maps (2c-4)
     // ─────────────────────────────────────────────────────────────────────────────
 
     bool covered_type(const CheckResult& checked, TypeId t)
@@ -48,6 +49,8 @@ namespace
             case TypeKind::None:
             case TypeKind::Struct:      return true;
             case TypeKind::Class:       return checked.types[t].b == 0;  // not a generic class's copy (2c-5)
+            case TypeKind::Vector:      return covered_type(checked, checked.types[t].a);  // of what it holds
+            case TypeKind::Map:         return covered_type(checked, checked.types[t].b);
             default:                    return false;
         }
     }
@@ -59,12 +62,18 @@ namespace
         auto kind = [&](uint32_t m) { return checked.types[checked.nodeTypes[m]].kind; };
         auto tensor = [&](uint32_t m) { return kind(m) == TypeKind::Tensor; };
         auto whole = [&](uint32_t m) { return kind(m) == TypeKind::Struct; };  // a struct as one value
+        auto container = [&](uint32_t m) { return kind(m) == TypeKind::Vector || kind(m) == TypeKind::Map; };
         vector<uint32_t> kids = tree.children(n);
         switch (tree.kind(n))
         {
-            case NodeKind::GenericType:     return false;
+            case NodeKind::GenericType:     // vector<T>, map<K, V>; not a generic class's copy, Box<int> (2c-5)
+            {
+                string_view name = tree.spelling(n);
+                return name == "vector" || name == "map";
+            }
             case NodeKind::StructDecl:      // fields of numbers, bools, strings, Tensors and structs
-            case NodeKind::ClassDecl:       // ... and of objects and int arrays (int data[256]); not generic (2c-5)
+            case NodeKind::ClassDecl:       // ... and of objects, containers and int arrays (int data[256]); not
+                                            // generic (2c-5)
             {
                 bool isClass = tree.kind(n) == NodeKind::ClassDecl;
                 for (uint32_t f : kids)
@@ -75,18 +84,21 @@ namespace
                     const Entity* e = entity(parts[0]);
                     if (parts.size() > 1 && (!isClass || tree.token(parts[0]).kind != INT_TYPE ||
                                              tree.kind(parts[1]) != NodeKind::IntLiteral)) return false;
-                    if (!isClass && e && e->kind == EntityKind::Class) return false;
+                    if (!isClass && ((e && e->kind == EntityKind::Class) || tree.kind(parts[0]) == NodeKind::GenericType))
+                    {
+                        return false;
+                    }
                 }
                 return true;
             }
-            case NodeKind::Member:          // a field; t.T, t.rows, t.cols, t.rank; hf.infer, sol.wait; obj.m(...)
-            {
+            case NodeKind::Member:          // a field; t.T, t.rows, t.cols, t.rank; hf.infer, sol.wait; obj.m(...),
+            {                               // v.push(...)
                 if (whole(kids[0]))  // l.a.x: a field of a struct variable
                 {
                     if (tree.kind(kids[0]) != NodeKind::Name && tree.kind(kids[0]) != NodeKind::Member) return false;
                     break;
                 }
-                if (kind(kids[0]) == TypeKind::Class) break;
+                if (kind(kids[0]) == TypeKind::Class || container(kids[0])) break;
                 const Entity* e = tree.kind(kids[0]) == NodeKind::Name ? entity(kids[0]) : nullptr;
                 return tensor(kids[0]) || (e && e->kind == EntityKind::Module);
             }
@@ -115,8 +127,13 @@ namespace
                 return k == INT_TYPE || k == FLOAT_TYPE || k == DOUBLE_TYPE || k == BOOL_TYPE || k == STRING_TYPE ||
                        k == TENSOR_TYPE;
             }
-            case NodeKind::MultiDecl:       // int a, double b = f(): a call to a function
+            case NodeKind::MultiDecl:       // int a, double b = f(): a call to a function, giving no containers
             {
+                for (size_t i = 0; i + 1 < kids.size(); i++)
+                {
+                    TypeKind k = checked.types[checked.entities[checked.refs[kids[i]]].type].kind;
+                    if (k == TypeKind::Vector || k == TypeKind::Map) return false;
+                }
                 uint32_t value = kids.back();
                 if (tree.kind(value) != NodeKind::Call) return false;
                 const Entity* e = entity(tree.children(value)[0]);
@@ -124,10 +141,10 @@ namespace
             }
             case NodeKind::Case:            return checked.types[checked.nodeTypes[kids[0]]].kind == TypeKind::Int;
             case NodeKind::Index:           // t[i, j, ...] on any Tensor; a[i]: one index into an array variable or an
-            {                               // int array field (self.data[i])
+            {                               // int array field (self.data[i]); v[i] and m[k] on any container
                 bool array = tree.kind(kids[0]) == NodeKind::Name ||
                              (tree.kind(kids[0]) == NodeKind::Member && kind(kids[0]) == TypeKind::Array);
-                if (!tensor(kids[0]) && (kids.size() != 2 || !array)) return false;
+                if (!tensor(kids[0]) && (kids.size() != 2 || !(array || container(kids[0])))) return false;
                 break;
             }
             case NodeKind::Call:            // a struct is an argument only to its own constructor, Point(3, 4)
@@ -145,12 +162,12 @@ namespace
                 }
                 break;
             }
-            case NodeKind::Return:          // a struct is not returned, nor compared
+            case NodeKind::Return:          // a struct is not returned, nor compared; nor is a container compared
             case NodeKind::Binary:
             {
                 for (uint32_t k : kids)
                 {
-                    if (whole(k)) return false;
+                    if (whole(k) || (tree.kind(n) == NodeKind::Binary && container(k))) return false;
                 }
                 break;
             }
@@ -202,6 +219,20 @@ namespace
             default:                    return TYPE_UNKNOWN;
         }
     }
+
+    // An object's or a container's handle: counted references, which a store takes and a release drops
+    bool reference(VarType t)
+    {
+        return t == TYPE_CLASS || t == TYPE_VECTOR || t == TYPE_MAP;
+    }
+
+    // A vector's or a map's methods, and the op each runs (pop, min, max and sum of floats or doubles run the *_D op)
+    const map<string, TensorOp> CONTAINER_METHODS = {
+        {"size", CON_SIZE},         {"push", CON_PUSH},         {"pop", CON_POP},           {"clear", CON_CLEAR},
+        {"contains", CON_CONTAINS}, {"index_of", CON_INDEX_OF}, {"binary_search", CON_BSEARCH},
+        {"min", CON_MIN},           {"max", CON_MAX},           {"sum", CON_SUM},           {"sort", CON_SORT},
+        {"reverse", CON_REVERSE},   {"has", CON_HAS},           {"remove", CON_REMOVE},
+    };
 
     template <class T> T* array_of(const vector<T>& v)  // a call's slots and types, as the CALL instruction keeps them
     {
@@ -271,6 +302,7 @@ namespace
             VarType type_of(uint32_t n) const { return var_type(in.types[in.nodeTypes[n]].kind); }
             TypeKind kind_of(uint32_t n) const { return in.types[in.nodeTypes[n]].kind; }
             uint32_t entity_of(uint32_t n) const { return in.types[in.nodeTypes[n]].a; }  // a struct's or class's
+            bool container(uint32_t n) const { return kind_of(n) == TypeKind::Vector || kind_of(n) == TypeKind::Map; }
             VarType var_type_of(uint32_t entity) const { return var_type(in.types[in.entities[entity].type].kind); }
             int line(uint32_t n) const { return tree.token(n).line; }
             string text(uint32_t n) const { return string(tree.spelling(n)); }
@@ -342,6 +374,7 @@ namespace
             int sol_call(uint32_t n, const string& method, const vector<uint32_t>& args);
 
             // Structs
+            VarType written_type(uint32_t type) const;
             VarType field_type(uint32_t field) const;
             void struct_layout(uint32_t entity, vector<VarType>& types) const;
             vector<int> struct_slots(uint32_t n);
@@ -356,8 +389,8 @@ namespace
             int method_id(const string& method);
             void register_class(uint32_t cls);
             bool temporary(uint32_t n) const;
-            void release(int value, int line);
-            void object_store(int slot, int value, bool temp, int line);
+            void release(int value, VarType type, int line);
+            void object_store(int slot, int value, VarType type, bool temp, int line);
             int new_object(uint32_t cls, int line);
             void default_object(uint32_t n, uint32_t entity);
             int construct(uint32_t n, uint32_t cls, const vector<uint32_t>& args);
@@ -365,6 +398,13 @@ namespace
             int field_read(uint32_t n);
             void field_write(uint32_t target, int value, VarType type, bool temp, int line);
             void field_element(InstructionType type, uint32_t field, int index, int value, int line);
+
+            // Containers
+            int container_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, VarType result, int line);
+            int new_container(uint32_t type, int line);
+            int container_call(uint32_t n, uint32_t callee, const vector<uint32_t>& args);
+            int container_get(uint32_t n);
+            void container_set(uint32_t target, int value, VarType type, bool temp, int line);
     };
 
     // ─────────────────────────────────────────────────────────────────────────────
@@ -627,7 +667,7 @@ namespace
             case NodeKind::ExprStatement:   // a temporary object nothing takes (a call's result) is dropped
             {
                 int v = expr(kids[0]);
-                if (temporary(kids[0])) release(v, line(n));
+                if (temporary(kids[0])) release(v, type_of(kids[0]), line(n));
                 return;
             }
             case NodeKind::If:              if_statement(n); return;
@@ -643,7 +683,8 @@ namespace
     }
 
     // int x = e, or int x: a variable starts as start() says each time the declaration runs (a loop body runs it
-    // again); a struct's fields each do. Point p alone is a new object, its init run if it takes no arguments.
+    // again); a struct's fields each do. Point p alone is a new object, its init run if it takes no arguments, and
+    // vector<int> v a new, empty vector.
     void Lowerer::var_decl(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -667,11 +708,16 @@ namespace
         if (kids.size() == 1)
         {
             if (t == TYPE_CLASS) default_object(n, e);
+            else if (reference(t))
+            {
+                int h = new_container(kids[0], line(n));
+                object_store(declare(e), h, t, true, line(n));
+            }
             else assign(t, declare(e), start(t), OPERATOR_NONE, 0, line(n));
             return;
         }
         int value = expr(kids[1]);
-        if (t == TYPE_CLASS) object_store(declare(e), value, temporary(kids[1]), line(n));
+        if (reference(t)) object_store(declare(e), value, t, temporary(kids[1]), line(n));
         else copy(declare(e), t, value, type_of(kids[1]), line(n));
     }
 
@@ -721,8 +767,9 @@ namespace
         store(target, v, type_of(value), line, temporary(value));
     }
 
-    // The value in slot value, of the given type, into a variable, an array's element or a tensor's, or a field. An
-    // object variable or field takes a temporary's reference (temp), or one of its own.
+    // The value in slot value, of the given type, into a variable, an array's, a tensor's or a container's element,
+    // or a field. An object or container variable, field or element takes a temporary's reference (temp), or one of
+    // its own.
     void Lowerer::store(uint32_t target, int value, VarType type, int line, bool temp)
     {
         if (tree.kind(target) == NodeKind::Member)
@@ -744,6 +791,11 @@ namespace
                 tensor_op(TEN_SET, args, types, line);
                 return;
             }
+            if (container(kids[0]))  // v[i] = x, m[k] = x, self.ids[w] = x
+            {
+                container_set(target, value, type, temp, line);
+                return;
+            }
             if (tree.kind(kids[0]) == NodeKind::Member)  // self.data[i] = v
             {
                 field_element(ARRAY_WRITE, kids[0], expr(kids[1]), value, line);
@@ -754,7 +806,7 @@ namespace
             return;
         }
         uint32_t e = in.refs[target];
-        if (var_type_of(e) == TYPE_CLASS) object_store(variables[e].slot, value, temp, line);
+        if (reference(var_type_of(e))) object_store(variables[e].slot, value, var_type_of(e), temp, line);
         else copy(variables[e].slot, var_type_of(e), value, type, line);
     }
 
@@ -951,7 +1003,7 @@ namespace
             case NodeKind::Binary:          return binary(n);
             case NodeKind::Call:            return call(n);
             case NodeKind::Member:          return member(n);
-            case NodeKind::Index:           // a[i], t[i, j], self.data[i]
+            case NodeKind::Index:           // a[i], t[i, j], self.data[i], v[i], m[k]
             {
                 if (type_of(tree.children(n)[0]) == TYPE_TENSOR)
                 {
@@ -960,6 +1012,7 @@ namespace
                     element(n, args, types);
                     return tensor_op(TEN_GET, args, types, line(n));
                 }
+                if (container(tree.children(n)[0])) return container_get(n);
                 vector<uint32_t> kids = tree.children(n);
                 int index = expr(kids[1]);
                 int value = alloc_slot();
@@ -1035,8 +1088,8 @@ namespace
             compare(left, type_of(kids[0]), cond, right, type_of(kids[1]), done, line(n));
             assign(TYPE_INT, result, int_constant(1), OPERATOR_NONE, 0, line(n));
             append(done);
-            if (temporary(kids[0])) release(left, line(n));  // make() == none: a temporary object, once compared
-            if (temporary(kids[1])) release(right, line(n));
+            if (temporary(kids[0])) release(left, type_of(kids[0]), line(n));  // make() == none: a temporary object,
+            if (temporary(kids[1])) release(right, type_of(kids[1]), line(n));  // once compared
             return result;
         }
         VarType t;
@@ -1167,9 +1220,9 @@ namespace
         node->cjmp_inst.operand_type = t;
     }
 
-    // f(args), obj.m(args), Counter(args), print(x), input(), int(x) / float(x) / double(x), zeros(2, 3) and the other
-    // tensor built-ins, and hf.infer(...), sol.wait(...). array(n) is lowered by the assignment it sets, and a struct's
-    // Point(3, 4) by the declaration or assignment it is the value of.
+    // f(args), obj.m(args), Counter(args), vector<int>(), v.push(x), print(x), input(), int(x) / float(x) / double(x),
+    // zeros(2, 3) and the other tensor built-ins, and hf.infer(...), sol.wait(...). array(n) is lowered by the
+    // assignment it sets, and a struct's Point(3, 4) by the declaration or assignment it is the value of.
     int Lowerer::call(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -1184,9 +1237,11 @@ namespace
             add(CAST, line(n))->cast_inst = {src, dst, type_of(args[0]), to};
             return dst;
         }
-        if (tree.kind(callee) == NodeKind::Member)  // obj.m(...), hf.infer(...), sol.wait(...)
+        if (tree.kind(callee) == NodeKind::GenericType) return new_container(callee, line(n));  // vector<int>()
+        if (tree.kind(callee) == NodeKind::Member)  // obj.m(...), v.push(...), hf.infer(...), sol.wait(...)
         {
             if (kind_of(tree.children(callee)[0]) == TypeKind::Class) return call_method(n, callee, args);
+            if (container(tree.children(callee)[0])) return container_call(n, callee, args);
             string module = text(tree.children(callee)[0]), method = text(callee);
             return module == "hf" ? hf_call(n, method, args) : sol_call(n, method, args);
         }
@@ -1275,7 +1330,7 @@ namespace
     {
         for (size_t i = 0; i < args.size(); i++)
         {
-            if (temporary(args[i])) release(slots[i], line);
+            if (temporary(args[i])) release(slots[i], type_of(args[i]), line);
         }
     }
 
@@ -1472,13 +1527,12 @@ namespace
     // Structs
     // ─────────────────────────────────────────────────────────────────────────────
 
-    // A field's type as a slot holds it: an int array field's slot holds where its elements start. A struct field's
-    // is TYPE_UNKNOWN: it takes its struct's slots (struct_layout).
-    VarType Lowerer::field_type(uint32_t field) const
+    // A written type (int, Point, vector<int>) as a slot holds it. A struct's is TYPE_UNKNOWN: it takes its fields'
+    // slots (struct_layout).
+    VarType Lowerer::written_type(uint32_t type) const
     {
-        vector<uint32_t> kids = tree.children(field);  // its type, then an array field's size
-        if (kids.size() > 1) return TYPE_INT;
-        switch (tree.token(kids[0]).kind)
+        if (tree.kind(type) == NodeKind::GenericType) return text(type) == "map" ? TYPE_MAP : TYPE_VECTOR;
+        switch (tree.token(type).kind)
         {
             case INT_TYPE:      return TYPE_INT;
             case FLOAT_TYPE:    return TYPE_FLOAT;
@@ -1486,8 +1540,15 @@ namespace
             case BOOL_TYPE:     return TYPE_BOOL;
             case STRING_TYPE:   return TYPE_STRING;
             case TENSOR_TYPE:   return TYPE_TENSOR;
-            default:            return in.entities[in.refs[kids[0]]].kind == EntityKind::Class ? TYPE_CLASS : TYPE_UNKNOWN;
+            default:            return in.entities[in.refs[type]].kind == EntityKind::Class ? TYPE_CLASS : TYPE_UNKNOWN;
         }
+    }
+
+    // A field's type as a slot holds it: an int array field's slot holds where its elements start
+    VarType Lowerer::field_type(uint32_t field) const
+    {
+        vector<uint32_t> kids = tree.children(field);  // its type, then an array field's size
+        return kids.size() > 1 ? TYPE_INT : written_type(kids[0]);
     }
 
     // The types of a struct's slots: one per field, in order, a nested struct's fields in its place
@@ -1655,28 +1716,32 @@ namespace
         }
     }
 
-    // Whether n is a temporary object: one reference that a store takes, or that release drops once it is used. A
-    // new object, a call's result and an object read from a field are; a variable, self and none keep their own.
+    // Whether n is a temporary object or container: one reference that a store takes, or that release drops once it
+    // is used. A new one, a call's result, and one read from a field or a container's element are; a variable, self
+    // and none keep their own.
     bool Lowerer::temporary(uint32_t n) const
     {
         while (tree.kind(n) == NodeKind::Paren) n = tree.children(n)[0];
-        return type_of(n) == TYPE_CLASS && (tree.kind(n) == NodeKind::Call || tree.kind(n) == NodeKind::Member);
+        NodeKind k = tree.kind(n);
+        return reference(type_of(n)) && (k == NodeKind::Call || k == NodeKind::Member || k == NodeKind::Index);
     }
 
-    void Lowerer::release(int value, int line)
+    // Drops a temporary object or container (type says which)
+    void Lowerer::release(int value, VarType type, int line)
     {
-        tensor_call(OBJ_RELEASE, {value}, {TYPE_CLASS}, -1, line);
+        tensor_call(OBJ_RELEASE, {value}, {type}, -1, line);
     }
 
-    // slot = value: the variable refers to value's object, taking a temporary's reference (OBJ_MOVE) or counting one
-    // of its own (OBJ_STORE); the object it referred to before loses that reference
-    void Lowerer::object_store(int slot, int value, bool temp, int line)
+    // slot = value: the variable refers to value's object or container (type), taking a temporary's reference
+    // (OBJ_MOVE) or counting one of its own (OBJ_STORE); what it referred to before loses that reference
+    void Lowerer::object_store(int slot, int value, VarType type, bool temp, int line)
     {
-        tensor_call(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, {TYPE_INT, TYPE_CLASS}, slot, line);
+        tensor_call(temp ? OBJ_MOVE : OBJ_STORE, {slot, value}, {TYPE_INT, type}, slot, line);
     }
 
     // A new object, a temporary, with all fields 0 (an object field none), but an int array field, which gets a
-    // block of slots of its own, and a Tensor field, -1 (unset: an error if used)
+    // block of slots of its own, a Tensor field, -1 (unset: an error if used), and a container field, a new, empty
+    // container
     int Lowerer::new_object(uint32_t cls, int line)
     {
         const Class& c = class_of(cls);
@@ -1685,15 +1750,22 @@ namespace
         for (size_t i = 0; i < c.fields.size(); i++)
         {
             vector<uint32_t> kids = tree.children(c.fields[i]);  // its type, then an array field's size
+            VarType t = field_type(c.fields[i]);
             int value;
             if (kids.size() > 1)
             {
                 value = alloc_slot();
                 add(ALLOC, line)->alloc_inst = {value, int_constant(stoi(text(kids[1])))};
             }
-            else if (field_type(c.fields[i]) == TYPE_TENSOR) value = int_constant(-1);
+            else if (t == TYPE_TENSOR)
+            {
+                value = int_constant(-1);
+                t = TYPE_INT;
+            }
+            else if (t == TYPE_VECTOR || t == TYPE_MAP) value = new_container(kids[0], line);
             else continue;
-            tensor_call(OBJ_SET, {h, int_constant((int)i), value}, {TYPE_INT, TYPE_INT, TYPE_INT}, -1, line);
+            tensor_call(OBJ_SET, {h, int_constant((int)i), value}, {TYPE_INT, TYPE_INT, t}, -1, line);
+            if (t == TYPE_VECTOR || t == TYPE_MAP) release(value, t, line);  // the field has its own reference
         }
         return h;
     }
@@ -1705,7 +1777,7 @@ namespace
         int h = new_object(cls, line(n));
         uint32_t init = find_method(cls, "init");
         if (init != NoNode && in.signatures.at(init).params.empty()) call_function(n, init, {}, h);
-        object_store(declare(entity), h, true, line(n));
+        object_store(declare(entity), h, TYPE_CLASS, true, line(n));
     }
 
     // Counter(args): a new object, its init (its own, or the nearest parent's) run with the arguments; a temporary
@@ -1724,12 +1796,13 @@ namespace
         uint32_t object = tree.children(callee)[0];
         int h = expr(object);
         int result = call_function(n, find_method(entity_of(object), text(callee)), args, h);
-        if (temporary(object)) release(h, line(n));
+        if (temporary(object)) release(h, TYPE_CLASS, line(n));
         return result;
     }
 
     // obj.f: OBJ_GET, or OBJ_GET_D for a float or double, which comes back as a double. A Tensor read is one more
-    // owner of it, an object read a temporary, and an int array field reads as where its elements start.
+    // owner of it, an object or container read a temporary, and an int array field reads as where its elements
+    // start.
     int Lowerer::field_read(uint32_t n)
     {
         uint32_t object = tree.children(n)[0];
@@ -1741,12 +1814,12 @@ namespace
         int result = inDmem ? alloc_double_slot() : new_slot(t);
         tensor_call(inDmem ? OBJ_GET_D : OBJ_GET, {h, int_constant(index)}, {TYPE_INT, TYPE_INT}, result, line(n));
         if (t == TYPE_FLOAT) result = convert(result, TYPE_DOUBLE, TYPE_FLOAT, line(n));
-        if (temporary(object)) release(h, line(n));
+        if (temporary(object)) release(h, TYPE_CLASS, line(n));
         return result;
     }
 
-    // obj.f = value: OBJ_SET, which counts the field's own reference to a Tensor or an object; a temporary value is
-    // then dropped
+    // obj.f = value: OBJ_SET, which counts the field's own reference to a Tensor, an object or a container; a
+    // temporary value is then dropped
     void Lowerer::field_write(uint32_t target, int value, VarType type, bool temp, int line)
     {
         uint32_t object = tree.children(target)[0];
@@ -1754,8 +1827,8 @@ namespace
         uint32_t decl;
         int index = field_index(entity_of(object), text(target), decl);
         tensor_call(OBJ_SET, {h, int_constant(index), value}, {TYPE_INT, TYPE_INT, type}, -1, line);
-        if (temp) release(value, line);
-        if (temporary(object)) release(h, line);
+        if (temp) release(value, type, line);
+        if (temporary(object)) release(h, TYPE_CLASS, line);
     }
 
     // self.data[i]: ARRAY_READ copies the element into value, ARRAY_WRITE copies value into it. The field holds where
@@ -1773,6 +1846,86 @@ namespace
         node->array_inst.array_size = stoi(text(tree.children(decl)[1]));
         node->array_inst.size_slot = -1;
         node->array_inst.line_no = line;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────────
+    // Containers
+    // ─────────────────────────────────────────────────────────────────────────────
+
+    // A container op (a TENSOR_CALL) whose result is of type result, or TYPE_UNKNOWN for none. A float or double
+    // comes back as a double (a *_D op), and a float is then narrowed; a Tensor is one more owner of it.
+    int Lowerer::container_op(TensorOp op, const vector<int>& args, const vector<VarType>& types, VarType result, int line)
+    {
+        bool inDmem = result == TYPE_FLOAT || result == TYPE_DOUBLE;
+        int slot = result == TYPE_UNKNOWN ? -1 : inDmem ? alloc_double_slot() : new_slot(result);
+        tensor_call(op, args, types, slot, line);
+        if (result == TYPE_FLOAT) return convert(slot, TYPE_DOUBLE, TYPE_FLOAT, line);
+        return slot >= 0 ? slot : alloc_slot();
+    }
+
+    // vector<T>() or map<K, V>() from its written type: a new, empty container, a temporary. The runtime is told the
+    // key's type and the elements'.
+    int Lowerer::new_container(uint32_t type, int line)
+    {
+        vector<int> args;
+        for (uint32_t t : tree.children(type)) args.push_back(int_constant(written_type(t)));
+        TensorOp op = args.size() == 2 ? CON_MAP_NEW : CON_VEC_NEW;
+        return container_op(op, args, vector<VarType>(args.size(), TYPE_INT), TYPE_INT, line);
+    }
+
+    // v.push(x), v.pop(), m.has(k), ...: the check pass has checked the method and its argument. The container
+    // takes its own reference to a temporary object pushed, which is then dropped, and so is the object v.pop()
+    // gives when nothing takes it (a statement on its own, which the check pass types as giving nothing).
+    int Lowerer::container_call(uint32_t n, uint32_t callee, const vector<uint32_t>& args)
+    {
+        uint32_t base = tree.children(callee)[0];
+        const Type& type = in.types[in.nodeTypes[base]];
+        VarType elem = var_type(in.types[type.kind == TypeKind::Map ? type.b : type.a].kind);
+        string m = text(callee);
+        bool element = m == "pop" || m == "min" || m == "max" || m == "sum";  // gives an element
+        VarType result = element ? elem : type_of(n);
+        TensorOp op = CONTAINER_METHODS.at(m);
+        if (result == TYPE_FLOAT || result == TYPE_DOUBLE)
+        {
+            op = op == CON_POP ? CON_POP_D : op == CON_MIN ? CON_MIN_D : op == CON_MAX ? CON_MAX_D : CON_SUM_D;
+        }
+        vector<int> slots = {expr(base)};
+        vector<VarType> types = {TYPE_INT};
+        for (uint32_t a : args)
+        {
+            slots.push_back(expr(a));
+            types.push_back(type_of(a));
+        }
+        int r = container_op(op, slots, types, result, line(n));
+        if (!args.empty() && temporary(args[0])) release(slots[1], types[1], line(n));
+        if (m == "pop" && elem == TYPE_CLASS && type_of(n) == TYPE_UNKNOWN) release(r, TYPE_CLASS, line(n));
+        if (temporary(base)) release(slots[0], type_of(base), line(n));
+        return r;
+    }
+
+    // v[i], m[k]: an object element is a temporary, and a Tensor element one more owner of it
+    int Lowerer::container_get(uint32_t n)
+    {
+        vector<uint32_t> kids = tree.children(n);
+        int h = expr(kids[0]);
+        int key = expr(kids[1]);
+        VarType t = type_of(n);
+        TensorOp op = t == TYPE_FLOAT || t == TYPE_DOUBLE ? CON_GET_D : CON_GET;
+        int r = container_op(op, {h, key}, {TYPE_INT, type_of(kids[1])}, t, line(n));
+        if (temporary(kids[0])) release(h, type_of(kids[0]), line(n));
+        return r;
+    }
+
+    // v[i] = x (i must be there), m[k] = x (k is added if it is not): the container counts its own reference to an
+    // object, so a temporary value is then dropped
+    void Lowerer::container_set(uint32_t target, int value, VarType type, bool temp, int line)
+    {
+        vector<uint32_t> kids = tree.children(target);
+        int h = expr(kids[0]);
+        int key = expr(kids[1]);
+        container_op(CON_SET, {h, key, value}, {TYPE_INT, type_of(kids[1]), type}, TYPE_UNKNOWN, line);
+        if (temp) release(value, type, line);
+        if (temporary(kids[0])) release(h, type_of(kids[0]), line);
     }
 }  // namespace
 

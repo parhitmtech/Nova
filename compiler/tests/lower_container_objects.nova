@@ -1,0 +1,147 @@
+# Objects in containers and containers in objects
+class Node:
+    int value
+
+    def init(int v):
+        self.value = v
+
+    def bump():
+        self.value += 1
+
+class Layer:
+    Tensor W
+
+    def init(int n):
+        self.W = ones(n, n)
+
+    def total() -> double:
+        return tensor_sum(self.W)
+
+class Vocab:
+    map<string, int> ids
+    vector<string> words
+
+    def init():
+        self.words.push("<pad>")
+        self.ids["<pad>"] = 0
+
+    def add(string w) -> int:
+        if (self.ids.has(w)):
+            return self.ids[w]
+        int id = self.words.size()
+        self.words.push(w)
+        self.ids[w] = id
+        return id
+
+    def all_words() -> vector<string>:
+        return self.words
+
+class Counter:
+    map<string, int> counts
+
+    def init():
+        pass
+
+    def see(string w):
+        if (not self.counts.has(w)):
+            self.counts[w] = 0
+        self.counts[w] += 1
+
+class Bag:
+    vector<int> items
+
+    def init():
+        pass
+
+    def reset():
+        self.items = vector<int>()
+
+    def take(vector<int> xs):
+        self.items = xs
+
+class Base:
+    vector<Node> nodes
+
+    def init():
+        self.nodes.push(Node(1))
+
+class Child extends Base:
+    def init():
+        self.nodes.push(Node(2))
+
+    def count() -> int:
+        return self.nodes.size()
+
+def make_nodes(int n) -> vector<Node>:
+    vector<Node> ns = vector<Node>()
+    int i = 0
+    while (i < n):
+        ns.push(Node(i))
+        i += 1
+    return ns
+
+def main():
+    vector<Node> ns = vector<Node>()
+    ns.push(Node(1))
+    ns.push(Node(2))
+    Node two = ns[1]
+    print(ns.contains(two))
+    print(ns.index_of(two))
+    print(ns.contains(Node(2)))
+    ns[0].value = 9
+    print(ns[0].value)
+    ns[0].bump()
+    print(ns[0].value)
+    Node popped = ns.pop()
+    print(ns.size())
+    print(popped.value)
+    ns.push(Node(5))
+    ns.pop()
+    ns[0] = Node(42)
+    print(ns[0].value)
+    map<string, Layer> layers = map<string, Layer>()
+    layers["x"] = Layer(1)
+    layers["y"] = Layer(4)
+    print(layers["y"].total())
+    layers["x"] = Layer(2)
+    print(layers["x"].total())
+    print(tensor_live_count())
+    Vocab v = Vocab()
+    print(v.add("the"))
+    print(v.add("cat"))
+    print(v.add("the"))
+    print(v.words[1])
+    print(v.ids["cat"])
+    print(v.all_words()[2])
+    v.words.push("extra")
+    v.ids["extra"] = 9
+    print(v.words.size())
+    print(v.ids.has("extra"))
+    Counter c = Counter()
+    c.see("a")
+    c.see("b")
+    c.see("a")
+    print(c.counts["a"])
+    print(c.counts.size())
+    Bag b = Bag()
+    b.reset()
+    vector<int> mine = vector<int>()
+    mine.push(7)
+    b.take(mine)
+    mine.push(8)
+    print(b.items.size())
+    print(b.items[1])
+    Child ch = Child()
+    print(ch.count())
+    print(ch.nodes[0].value)
+    print(make_nodes(4)[3].value)
+    print(make_nodes(3).size())
+    int i = 0
+    while (i < 20):
+        vector<Node> tmp = make_nodes(3)
+        Vocab t = Vocab()
+        t.add("x")
+        map<string, Layer> ls = map<string, Layer>()
+        ls["a"] = Layer(1)
+        i += 1
+    print(tensor_live_count())

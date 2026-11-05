@@ -98,8 +98,16 @@ first: they could not keep up with the language, and native code will come from 
      yet, so still handed to the old parser: struct parameters and return values, classes with `vector` / `map`
      fields (2c-4) and generic classes (2c-5). The old parser reads `return 0.0` in a method returning double as a
      double from the float literal's slot, so it prints the wrong value; lowering gets it right, and the bug goes
-     with the old parser. 2c-4: `vector` / `map`. 2c-5: generics, each copy lowered with its own node types. 2c-6: the REPL and debugger move to the new
-     front end, and the old parser, the braces-form pass and the fallback are deleted.
+     with the old parser. 2c-4 (done): `vector` / `map`. Containers are reference-counted as objects are, through the
+     same `OBJ_STORE` / `OBJ_MOVE` / `OBJ_RELEASE` (the runtime tells the heaps apart): `vector<int> v` and
+     `vector<int>()` make a new, empty one, a container field gets one when its object is made, and a container read
+     from a field or an element is a temporary. Elements, methods (`push`, `pop`, `has`, `min`, `sum`, ...) and
+     `v[i] = x` / `m[k] = x` lower to the container ops, the `*_D` ones for float and double elements; an object
+     pushed or set is counted by the container, and one popped with nothing to take it is dropped. Object and
+     container counts match the old parser's. Not covered yet: container values in a multiple declaration, container
+     comparisons, container fields of structs, and generic classes and functions (2c-5). 2c-5: generics, each copy
+     lowered with its own node types. 2c-6: the REPL and debugger move to the new front end, and the old parser, the
+     braces-form pass and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 

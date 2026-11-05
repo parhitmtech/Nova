@@ -1,0 +1,79 @@
+# Element kinds, the *_D ops, algorithms, compound assignment on elements
+def main():
+    vector<double> d = vector<double>()
+    d.push(1.5)
+    d.push(2.25)
+    d.push(0.5)
+    print(d[0] + d[1])
+    print(d.min())
+    print(d.max())
+    print(d.sum())
+    print(d.pop())
+    vector<float> f
+    f.push(0.5)
+    f.push(1.25)
+    float x = f[0]
+    print(x)
+    print(f.sum())
+    float y = f.pop()
+    print(y)
+    vector<int> v = vector<int>()
+    int i = 0
+    while (i < 6):
+        v.push((i * 7) % 5)
+        i += 1
+    print(v.sum())
+    print(v.min())
+    print(v.max())
+    v.sort()
+    print(v[0])
+    print(v[5])
+    print(v.binary_search(4))
+    print(v.index_of(3))
+    v.reverse()
+    print(v[0])
+    v[1] += 10
+    v[2] -= 1
+    print(v[1] + v[2])
+    v.pop()
+    print(v.size())
+    vector<string> s = vector<string>()
+    s.push("pear")
+    s.push("apple")
+    s.push("fig")
+    s.sort()
+    print(s[0] + s[2])
+    print(s.contains("fig"))
+    print(s.index_of("kiwi"))
+    vector<bool> flags = vector<bool>()
+    flags.push(true)
+    flags.push(false)
+    if (flags[0]):
+        print(1)
+    if (not flags[1]):
+        print(2)
+    map<int, double> wts = map<int, double>()
+    wts[3] = 1.5
+    wts[10] = 2.0
+    wts[3] += 1.0
+    print(wts[3] + wts[10])
+    map<string, int> vocab = map<string, int>()
+    vocab["a"] = 0
+    vocab["b"] = 1
+    vocab["a"] = 5
+    vocab["b"] *= 4
+    print(vocab["a"] + vocab["b"])
+    print(vocab.size())
+    if (vocab.has("b")):
+        print(11)
+    vocab.remove("b")
+    vocab.remove("zz")
+    print(vocab.size())
+    vocab.clear()
+    print(vocab.size())
+    int k = 0
+    while (k < 3):
+        vector<int> tmp
+        tmp.push(k)
+        print(tmp.size())
+        k += 1
