@@ -1,0 +1,61 @@
+# Lowering generic class copies made in loops and functions (2c-5), a linked Node<T>, and a copy sharing the
+# vector it is given. Each loop iteration's copies free the previous one's objects, containers and tensors.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+class Node<T>:
+    T val
+    Node<T> next
+
+    def init(T v):
+        self.val = v
+
+def total(Node<int> head) -> int:
+    int s = 0
+    Node<int> cur = head
+    while (cur != none):
+        s += cur.val
+        cur = cur.next
+    return s
+
+def build(int n) -> Node<int>:
+    Node<int> head = none
+    int i = 0
+    while (i < n):
+        Node<int> nd = Node<int>(i)
+        nd.next = head
+        head = nd
+        i += 1
+    return head
+
+def keep(v):
+    Box<vector<int>> b = Box<vector<int>>(v)
+    b.value.push(7)
+    return b.get().size()
+
+def main():
+    int i = 0
+    while (i < 4):
+        Box<P> b = Box<P>(P(i))
+        Box<vector<int>> bv = Box<vector<int>>(vector<int>())
+        bv.value.push(i)
+        Box<Tensor> bt = Box<Tensor>(ones(1, 2))
+        print(b.get().x + bv.get().size())
+        i += 1
+    print(total(build(5)))
+    vector<int> v = vector<int>()
+    print(keep(v))
+    print(v.size())
+    print(tensor_live_count())

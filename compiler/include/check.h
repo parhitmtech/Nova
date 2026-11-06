@@ -93,12 +93,16 @@ struct Signature
 };
 
 // A generic function's or class's copy: the function with these argument types (scale<int, int>), or the class
-// with these type arguments (Box<int>). Each copy's body is checked with its own types.
+// with these type arguments (Box<int>). Each copy's body is checked with its own types, which are kept with the
+// copy, so lowering can lower each copy with its own.
 struct Instance
 {
     uint32_t decl;              // the FunctionDecl or ClassDecl
     std::vector<TypeId> args;
     std::unordered_map<uint32_t, Signature> signatures;  // by FunctionDecl: the function's, or the class's methods
+    std::unordered_map<uint32_t, TypeId> nodeTypes;      // by node in its body: an expression's type in this copy
+    std::unordered_map<uint32_t, TypeId> varTypes;       // by entity: a parameter's or local's type in this copy
+    std::unordered_map<uint32_t, uint32_t> calls;        // by Call node in its body: the generic function copy it calls
 };
 
 constexpr uint32_t NoInstance = UINT32_MAX;
@@ -110,7 +114,8 @@ struct CheckResult
     std::unordered_map<uint32_t, Signature> signatures;  // by FunctionDecl node; a copy's are in its Instance
     std::deque<Instance> instances;  // a deque: checking a copy can make others, and references must stay valid
     std::vector<uint32_t> refs;     // by node: the entity a name refers to or a declaration declares; else NoEntity
-    std::vector<TypeId> nodeTypes;  // by node: an expression's type
+    std::vector<TypeId> nodeTypes;  // by node: an expression's type (in a copy's body, the last copy checked's)
+    std::unordered_map<uint32_t, uint32_t> calls;  // by Call node outside any copy: the generic function copy it calls
     std::vector<std::string> errors;  // "Error at line N: ...", in the order they were found
 };
 

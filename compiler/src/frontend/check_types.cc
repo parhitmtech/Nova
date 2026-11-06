@@ -107,9 +107,10 @@ namespace {
             string text(uint32_t n) const { return string(tree.spelling(n)); }
             string name(TypeId t) const { return type_name(out, t); }
             TypeKind kind(TypeId t) const { return out.types[t].kind; }
-            TypeId typed(uint32_t n, TypeId t)  // records an expression's type
+            TypeId typed(uint32_t n, TypeId t)  // records an expression's type, and in a copy the copy's own
             {
                 out.nodeTypes[n] = t;
+                if (context.instance != NoInstance) out.instances[context.instance].nodeTypes[n] = t;
                 return t;
             }
             void error(uint32_t n, const string& message)
@@ -482,7 +483,7 @@ namespace {
     // A function's body, once: in file order, or earlier when a caller first needs its return type. A generic
     // function's body is checked once per copy, when a call first needs it, and a generic class's methods once per
     // class copy. A copy's locals start untyped, and the types another copy of the same function gave them (it may
-    // still be being checked: a copy can call another) come back after.
+    // still be being checked: a copy can call another) come back after; the copy keeps its own (varTypes).
     void Typer::check_function(uint32_t fn, const string& label, bool method, uint32_t instance)
     {
         uint64_t key = state_key(instance, fn);
@@ -526,7 +527,11 @@ namespace {
             for (uint32_t t : tree.children(kids[1])) written(t, true);
         }
         check_block(kids.back());
-        for (const auto& [e, t] : saved) out.entities[e].type = t;
+        for (const auto& [e, t] : saved)
+        {
+            out.instances[instance].varTypes[e] = out.entities[e].type;  // the copy's own, kept for lowering
+            out.entities[e].type = t;
+        }
         context = outer;
         states[key] = State::Done;
     }
@@ -537,7 +542,7 @@ namespace {
     {
         auto it = copies.find({decl, args});
         if (it != copies.end()) return it->second;
-        out.instances.push_back({decl, args, {}});
+        out.instances.push_back({decl, args, {}, {}, {}, {}});
         return copies[{decl, args}] = (uint32_t)out.instances.size() - 1;
     }
 
@@ -1175,6 +1180,7 @@ namespace {
             instance = make_copy(fn, args);
             label = copy_name(f, args);
             sig = signature(fn, false, instance);
+            (context.instance == NoInstance ? out.calls : out.instances[context.instance].calls)[n] = instance;
         }
         for (size_t i = 0; i < args.size(); i++)
         {

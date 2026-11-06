@@ -73,9 +73,8 @@ first: they could not keep up with the language, and native code will come from 
      body with them; writing `Box<int>` makes Box's copy for `int` and checks its fields and methods with `T` an
      `int`. Copies are distinct types (`Box<int>` is not a `Box<double>`), and messages name them. Unknown is now
      left only for a method's untyped parameter and the result of a method without `-> type`.
-   - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed. Inside a
-     copy's body, `nodeTypes` holds the types of the last copy checked, so lowering must check each copy's body again
-     before lowering it, or 2c must store the node types per copy. In six steps: 2c-1 (done): numbers, bools,
+   - 2c: lowering from the checked tree to the IR; the old parser and the braces-form pass are removed. In six
+     steps: 2c-1 (done): numbers, bools,
      strings, arrays, control flow and functions, lowered by `lower.cc` into the same instructions and slots the old
      parser writes, so the passes after it do not change. Every name and type comes from the check pass; lowering
      keeps no tables by name. A function can call one defined after it, and two functions can call each other. The
@@ -105,9 +104,15 @@ first: they could not keep up with the language, and native code will come from 
      `v[i] = x` / `m[k] = x` lower to the container ops, the `*_D` ones for float and double elements; an object
      pushed or set is counted by the container, and one popped with nothing to take it is dropped. Object and
      container counts match the old parser's. Not covered yet: container values in a multiple declaration, container
-     comparisons, container fields of structs, and generic classes and functions (2c-5). 2c-5: generics, each copy
-     lowered with its own node types. 2c-6: the REPL and debugger move to the new front end, and the old parser, the
-     braces-form pass and the fallback are deleted.
+     comparisons, container fields of structs, and generic classes and functions (2c-5). 2c-5 (done): generics. Each
+     copy the check pass makes keeps its own node types, variable types and the copies its calls run (`nodeTypes`
+     alone held only the last copy checked's), and lowering lowers each copy with them: `scale<int, int>` is a function
+     of its own and `Box<int>` a class of its own, with its own methods and class id, named as the old parser names
+     them. A copy never made is never lowered. Lowering now covers every run test in the suite. Not covered yet: a
+     class whose parent is a generic class (`class C extends Box`, which the check pass lets through), struct
+     parameters and return values, container values in a multiple declaration, container comparisons, and container
+     fields of structs. 2c-6: the REPL and debugger move to the new front end, and the old parser, the braces-form pass
+     and the fallback are deleted.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 
