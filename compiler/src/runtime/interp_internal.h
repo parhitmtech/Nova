@@ -30,7 +30,7 @@ void objects_retain(int h);                // an object field's / container elem
 void objects_release(int h);
 void objects_add_temp(int h);              // a value read from a field or element: the call's temporary
 void objects_take_temp(int h);             // v.pop(): the element's reference becomes the call's temporary
-void objects_exit_call(int returned, VarType type);
+void objects_exit_call(const std::vector<std::pair<int, VarType>>& returned);
 void objects_add_container_temp(int h);             // a new container: the running call's temporary
 bool containers_live(int h);                        // containers are counted like objects (interp_containers.cc)
 void containers_retain(int h);      

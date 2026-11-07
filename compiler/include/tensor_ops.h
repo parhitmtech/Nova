@@ -14,8 +14,6 @@ void require_2d(int h, const char* op, int line);
 void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast);
 [[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
-bool slot_owns(int i);
-void set_owns(int i, bool v);
 int ten_zeros(const std::vector<int>& shape);
 int ten_ones(const std::vector<int>& shape);
 int ten_randn(const std::vector<int>& shape);

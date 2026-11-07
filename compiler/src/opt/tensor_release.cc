@@ -19,12 +19,12 @@
 using namespace std;
 
 extern unordered_set<InstructionNode*> pure_functions;
-extern map<string, vector<int>> functionReturnSlots;  // parser_state.cc: each function's return slots
+extern map<string, vector<int>> functionReturnSlots;  // state.cc: each function's return slots
 
 // ── Compiler-inserted tensor frees ──────────────────────────────────────────
 //
-// Nova types tensor handles as plain TYPE_INT (see the tensorToInt coercions
-// in parser.cc), so g_tensorSlots — populated during parsing — is the only
+// At run time a tensor handle is a plain int in a mem[] slot, so
+// g_tensorSlots — filled by lowering — is the only
 // record of which mem[] slots actually hold a tensor handle. Two things
 // follow from that:
 //
@@ -194,13 +194,6 @@ static void get_tensor_release_sites(struct InstructionNode* n,
     }
 }
 
-// Object slots hold object state and are never released by liveness; see g_fieldSlots / g_selfSlots
-// in parser.cc and own_kind in compiler.h
-static bool is_object_slot(int s)
-{
-    return g_fieldSlots.count(s)  || g_selfSlots.count(s);
-}
-
 // ownReturn: this function's own return slots. They hand their tensors to the caller (which releases
 // them after copying), so they are never released here; RET names only the first of them, so liveness
 // alone would think a second return value dead right after it is computed.
@@ -296,7 +289,7 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead, con
         const auto& assigned = assignedOut[n];
         for (int s : out)
         {
-            if (!g_tensorSlots.count(s) || is_object_slot(s) || ownReturn.count(s) || !assigned.count(s)) continue;
+            if (!g_tensorSlots.count(s) || ownReturn.count(s) || !assigned.count(s)) continue;
             if (!inFall.count(s)) ep.fallRel.push_back(s);  // dies on fall-through
             if (!inJump.count(s)) ep.jumpRel.push_back(s);  // dies on the jump
         }
@@ -313,14 +306,14 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead, con
         std::vector<int> toRelease;
         for (int s : defs)
         {
-            if (g_tensorSlots.count(s) && !is_object_slot(s) && !ownReturn.count(s) && !liveOut.count(s))
+            if (g_tensorSlots.count(s) && !ownReturn.count(s) && !liveOut.count(s))
             {
                 toRelease.push_back(s);
             }
         }
         for (int s : uses)
         {
-            if (g_tensorSlots.count(s) && !is_object_slot(s) && !ownReturn.count(s) && !liveOut.count(s) && 
+            if (g_tensorSlots.count(s) && !ownReturn.count(s) && !liveOut.count(s) && 
                 std::find(toRelease.begin(), toRelease.end(), s) == toRelease.end())
             {
                 toRelease.push_back(s);
@@ -417,23 +410,6 @@ void insert_tensor_releases(struct InstructionNode* program)
 
     std::set<struct InstructionNode*> taintedParamFunctions;
     propagate_tensor_slots(allBodies, taintedParamFunctions);
-
-    // Mark ASSIGNs that write object state (see own_kind in compiler.h):
-    // self <- field and field <- self are the method copy-in / copy-back
-    // (move); any other write into a field or self slot is a store.
-    for (auto bodyHead : allBodies)
-    {
-        for (struct InstructionNode* n = bodyHead; n != nullptr; n = n->next)
-        {
-            if (n->type != ASSIGN || n->assign_inst.op != OPERATOR_NONE) continue;
-            int lhs = n->assign_inst.left_hand_side_index;
-            int src = n->assign_inst.operand1_index;
-            bool move = (g_selfSlots.count(lhs) && g_fieldSlots.count(src)) || 
-                        (g_fieldSlots.count(lhs) && g_selfSlots.count(src));
-            if (move) n->assign_inst.own_kind = 2;
-            else if (is_object_slot(lhs)) n->assign_inst.own_kind = 1;
-        }
-    }
 
     for (auto fhead : taintedParamFunctions)
     {

@@ -23,7 +23,7 @@ using namespace std;
 // ── Liveness Analysis ─────────────────────────────────────────────────────────
 
 // mem[], fmem[], and dmem[] are the three independent, seperately-numbered slot spaces. A TENSOR_CALL's 
-// result_slot is NOT always a mem[] index: ops in TENSOR_DOUBLE_OPS (parser.cc) allocate their result from
+// result_slot is NOT always a mem[] index: ops in TENSOR_DOUBLE_OPS (builtins.cc) allocate their result from
 // dmem[] via alloc_double_slot() instead of alloc_slot, e.g. tensor_get()'s result is a scalar double,
 // not a tensor handle. Treating that dmem[] index as a mem[] "def" here is wrong on its own terms 
 // (register allocation only colors mem[] slots) and actively dangerous for the tensor-free pass

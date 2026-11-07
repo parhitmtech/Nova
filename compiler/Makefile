@@ -16,9 +16,7 @@ endif
 SRCS := src/driver/main.cc src/driver/repl.cc src/driver/debugger.cc \
         src/frontend/source.cc src/frontend/interner.cc src/frontend/lexer.cc src/frontend/imports.cc \
         src/frontend/parse.cc src/frontend/parse_tree.cc src/frontend/check.cc src/frontend/check_types.cc src/frontend/lower.cc \
-        src/frontend/parser.cc src/frontend/parser_state.cc src/frontend/parser_util.cc \
-        src/frontend/parser_classes.cc src/frontend/parser_builtins.cc \
-        src/frontend/parser_statements.cc src/frontend/parser_expressions.cc  src/frontend/parser_containers.cc src/frontend/parser_objects.cc \
+        src/frontend/builtins.cc \
         src/runtime/state.cc src/runtime/memory.cc src/runtime/tensor.cc src/runtime/interpreter.cc \
         src/runtime/interp_core.cc src/runtime/interp_calls.cc src/runtime/interp_tensor.cc \
         src/runtime/interp_integrations.cc src/runtime/interp_containers.cc src/runtime/interp_objects.cc \

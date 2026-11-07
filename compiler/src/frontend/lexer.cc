@@ -1,5 +1,4 @@
-// The lexer: a pointer-based Scanner that decides layout as it scans (NEWLINE / INDENT / DEDENT), and 
-// LexicalAnalyzer, which turns the scanner's tokens into the braces-and-semicolons form the current parser reads.
+// The lexer: a pointer-based Scanner that decides layout as it scans (NEWLINE / INDENT / DEDENT).
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -8,40 +7,11 @@
 
 using namespace std;
 
-// must match TokenType enum order exactly
-static const char* const kind_names[] = {
-    "END_OF_FILE", "IGNITE",
-    "FOR", "IF", "ELIF", "WHILE", "DO", "SWITCH", "CASE", "DEFAULT",
-    "INPUT", "ARRAY", "PRINT",
-    "DEF", "RETURN", "ELSE",
-    "AND", "OR", "NOT",
-    "INT_TYPE", "BOOL_TYPE", "STRING_TYPE",
-    "FLOAT_TYPE", "DOUBLE_TYPE", "TENSOR_TYPE",
-    "TRUE", "FALSE",
-    "STRUCT", "CLASS", "EXTENDS", "SELF", "IMPORT",
-    "BREAK", "CONTINUE",
-    "PLUS", "MINUS", "DIV", "MULT",
-    "EQUAL", "COLON", "COMMA", "SEMICOLON",
-    "LBRAC", "RBRAC", "LPAREN", "RPAREN", "LBRACE", "RBRACE",
-    "NOTEQUAL", "GREATER", "LESS", "EQEQ",
-    "ARROW", "DOT",
-    "GREATEREQ", "LESSEQ", "MOD", "AT",
-    "PLUSEQ", "MINUSEQ", "MULTEQ", "DIVEQ",
-    "NUM", "FLOAT_LITERAL", "ID", "STRING", "ERROR",
-    "NEWLINE", "INDENT", "DEDENT"
-};
-static_assert(sizeof(kind_names) / sizeof(kind_names[0]) == DEDENT + 1, "kind_names must list every TokenType");
-
 // Layout and lexical errors stop compilation with the line, like the parser's errors.
 [[noreturn]] static void layout_error(int line, const string& msg)
 {
     fprintf(stderr, "Error at line %d: %s\n", line, msg.c_str());
     exit(1);
-}
-
-void Token::Print() const
-{
-    cout << "{" << lexeme << ", " << kind_names[(int)token_type] << " , " << line_no << "}\n";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -346,249 +316,14 @@ void Scanner::scan_token(vector<LexToken>& out)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// LexicalAnalyzer: the scanner's tokens in the current parser's form
+// A whole program
 // ─────────────────────────────────────────────────────────────────────────────
 
-LexicalAnalyzer::LexicalAnalyzer()
+vector<LexToken> scan_program(const string& source)
 {
-    eof.token_type = END_OF_FILE;
-    eof.line_no = 1;
-}
-
-void LexicalAnalyzer::ReinitializeFromString(const string& s)
-{
-    tokenList.clear();
-    index = 0;
-    SourceLoc start = sourceManager.add_buffer("<input>", s);
-    scanned.clear();
-    scanned.reserve(s.size() / 3 + 16);
-    Scanner(start, sourceManager.text_at(start)).scan(scanned);
-    // An error at the end of the file points at the last line with code on it
-    eof.line_no = 1;
-    for (size_t i = scanned.size(); i-- > 0;)
-    {
-        if (scanned[i].kind != NEWLINE && scanned[i].kind != INDENT && scanned[i].kind != DEDENT && scanned[i].kind != END_OF_FILE)
-        {
-            eof.line_no = scanned[i].line;
-            break;
-        }
-    }
-    eof.loc = scanned.back().loc;
-    ToBracesForm(scanned);
-    DesugarCompoundAssignments();
-    AddMainEntry();
-}
-
-// The form the current parser reads: a block's ':' becomes '{' and its DEDENT '}', and each statement ends with ';'.
-// 
-//          if (x > 0):             if (x > 0) {
-//              y = 1     becomes       y = 1 ;
-//          else: y = 2             } else { y = 2 ; }
-//
-// A 'case' / 'default' label keeps its ':' (the parser expects "case 1: {"), and a line that is just 'pass' is an
-// empty statement. A token's lexeme is its text for names, keywords and numbers, the text between the quotes for a 
-// string, "->" for an arrow, and empty for other operators (as before).
-void LexicalAnalyzer::ToBracesForm(const vector<LexToken>& lexed)
-{
-    tokenList.reserve(lexed.size() + lexed.size() / 4);
-    auto add = [&](TokenType type, const char* lexeme, int line, SourceLoc loc) {
-        Token k;
-        k.token_type = type;
-        k.lexeme = lexeme;
-        k.line_no = line;
-        k.loc = loc;
-        tokenList.push_back(k);
-    };
-    auto copy = [&](size_t from, size_t to) {
-        for (size_t i = from; i < to; i++)
-        {
-            const LexToken& t = lexed[i];
-            Token k;
-            k.token_type = t.kind;
-            k.line_no = t.line;
-            k.loc = t.loc;
-            if (t.symbol) k.lexeme = string(names.text(t.symbol));
-            else if (t.kind == NUM || t.kind == FLOAT_LITERAL) k.lexeme.assign(sourceManager.text_at(t.loc), t.length);
-            else if (t.kind == ARROW) k.lexeme = "->";
-            tokenList.push_back(move(k));
-        }
-    };
-    auto is_pass = [&](size_t a, size_t b) {
-        return b - a == 1 && lexed[a].kind == ID && names.text(lexed[a].symbol) == "pass";
-    };
-
-    size_t i = 0, n = lexed.size();
-    while (i < n && lexed[i].kind != END_OF_FILE)
-    {
-        const LexToken& t = lexed[i];
-        if (t.kind == INDENT) { i++; continue; }
-        if (t.kind == DEDENT) { add(RBRACE, "}", t.line, t.loc); i++; continue; }
-
-        // one logical line: up to its NEWLINE
-        size_t start = i, end = i;
-        int depth = 0, colon = -1;
-        for (; lexed[end].kind != NEWLINE; end++)
-        {
-            TokenType k = lexed[end].kind;
-            if (k == LPAREN || k == LBRAC) depth++;
-            else if (k == RPAREN || k == RBRAC) depth--;
-            else if (depth == 0 && k == COLON && colon < 0) colon = (int)end;
-        }
-        int line = lexed[start].line;
-        SourceLoc loc = lexed[start].loc;
-        if (is_pass(start, end))
-        {
-            // empty statement
-        }
-        else if (colon < 0)
-        {
-            copy(start, end);
-            add(SEMICOLON, ";", lexed[end - 1].line, lexed[end].loc);
-        }
-        else
-        {
-            bool label = (lexed[start].kind == CASE || lexed[start].kind == DEFAULT);
-            copy(start, colon + (label ? 1 : 0));
-            add(LBRACE, "{", line, lexed[colon].loc);
-            if (colon + 1 == (int)end)
-            {
-                // the body is on the following, indented lines; its DEDENT closes it
-            }
-            else if (!is_pass(colon + 1, end))
-            {
-                copy(colon + 1, end);  // a one-line body: if (x): y = 1
-                add(SEMICOLON, ";", line, loc);
-                add(RBRACE, "}", line, loc);
-            }
-            else
-            {
-                add(RBRACE, "}", line, loc);
-            }
-        }
-        i = end + 1;
-    }
-}
-
-// "target op= expr" becomes "target = target op (expr)" in the token list, before parsing. Every
-// kind of target the parser accepts (x, a[i], obj.f, self.f) then gets += -= *= /= without code of
-// its own. The target is the run of tokens since the start of the statement, and it is evaluated
-// twice (once to read, once to write): the new parser (roadmap phase 2) makes these real operators.
-void LexicalAnalyzer::DesugarCompoundAssignments()
-{
-    vector<Token> out;
-    out.reserve(tokenList.size());
-    for (size_t i = 0; i < tokenList.size(); i++)
-    {
-        const Token& t = tokenList[i];
-        TokenType base;
-        switch (t.token_type)
-        {
-            case PLUSEQ:  base = PLUS;  break;
-            case MINUSEQ: base = MINUS; break;
-            case MULTEQ:  base = MULT;  break;
-            case DIVEQ:   base = DIV;   break;
-            default:      out.push_back(t); continue;
-        }
-
-        // the target: tokens since the last statement boundary
-        size_t start = out.size();
-        while (start > 0)
-        {
-            TokenType p = out[start - 1].token_type;
-            if (p == SEMICOLON || p == LBRACE || p == RBRACE || p == COLON) break;
-            start--;
-        }
-        vector<Token> target(out.begin() + start, out.end());
-
-        auto make = [&](TokenType type, const char* lexeme) {
-            Token k = t;
-            k.token_type = type;
-            k.lexeme = lexeme;
-            return k;
-        };
-        out.push_back(make(EQUAL, "="));
-        out.insert(out.end(), target.begin(), target.end());
-        out.push_back(make(base, ""));
-        out.push_back(make(LPAREN, "("));
-
-        // the right side runs to the end of the statement (';', or the ')' closing a for header)
-        int depth = 0;
-        for (i = i + 1; i < tokenList.size(); i++)
-        {
-            TokenType k= tokenList[i].token_type;
-            if (depth == 0 && (k == SEMICOLON || k == RPAREN || k == RBRACE)) break;
-            if (k == LPAREN || k == LBRAC) depth++;
-            if (k == RPAREN || k == RBRAC) depth--;
-            out.push_back(tokenList[i]);
-        }
-        out.push_back(make(RPAREN, ")"));
-        i--;  // the terminator is copied by the outer loop
-    }
-    tokenList.swap(out);
-}
-
-// The entry point is the 'ignite { ... }' block. A file without one may define 'def main()' instead:
-// then "ignite { main() ; }" is appended, so the parser always sees a single entry block.
-void LexicalAnalyzer::AddMainEntry()
-{
-    bool hasMain = false;
-    for (size_t i = 0; i < tokenList.size(); i++)
-    {
-        if (tokenList[i].token_type == IGNITE) return;
-        if (tokenList[i].token_type == DEF && i + 3 < tokenList.size() && 
-            tokenList[i + 1].token_type == ID && tokenList[i + 1].lexeme == "main" &&
-            tokenList[i + 2].token_type == LPAREN && tokenList[i + 3].token_type == RPAREN)
-        {
-            hasMain = true;
-        }
-    }
-    if (!hasMain) return;
-
-    int line = tokenList.back().line_no;
-    auto add = [&](TokenType type, const char* lexeme) {
-        Token k;
-        k.token_type = type;
-        k.lexeme = lexeme;
-        k.line_no = line;
-        tokenList.push_back(k);
-    };
-    add(IGNITE, "ignite");
-    add(LBRACE, "{");
-    add(ID, "main");
-    add(LPAREN, "(");
-    add(RPAREN, ")");
-    add(SEMICOLON, ";");
-    add(RBRACE, "}");
-}
-
-const Token& LexicalAnalyzer::GetToken()
-{
-    if (index >= (int)tokenList.size()) return eof;
-    return tokenList[index++];
-}
-
-void LexicalAnalyzer::UngetToken(int howMany)
-{
-    if (howMany <= 0)
-    {
-        cout << "LexicalAnalyzer:UngetToken:Error: non positive argument\n";
-        exit(-1);
-    }
-    index = index - howMany;
-    if (index < 0)
-    {
-        cout << "LexicalAnalyzer:UngetToken:Error: large argument\n";
-        exit(-1);
-    }
-}
-
-const Token& LexicalAnalyzer::peek(int howFar)
-{
-    if (howFar <= 0)
-    {
-        cout << "LexicalAnalyzer:peek:Error: non positive argument\n";
-        exit(-1);
-    }
-    int at = index + howFar - 1;
-    return at < (int)tokenList.size() ? tokenList[at] : eof;
+    SourceLoc start = sourceManager.add_buffer("<input>", source);
+    vector<LexToken> tokens;
+    tokens.reserve(source.size() / 3 + 16);
+    Scanner(start, sourceManager.text_at(start)).scan(tokens);
+    return tokens;
 }

@@ -1,16 +1,18 @@
 // Lowering (lower.h): one walk over the checked tree, writing each function's instructions and then the ignite
 // block's. A value lives in a slot of mem[] (an int, a bool, or a string as its index in strMem), fmem[] (a float)
-// or dmem[] (a double), laid out as the old parser lays them out: a function's int slots are one range, which a call
-// saves and restores so a recursive call does not overwrite its caller's locals. A tensor is an int slot holding its
-// handle; g_tensorSlots lists those slots, so the tensor-free pass knows which values to release. A struct is one
-// slot per field; an object is an int slot holding its handle into the runtime's object heap (interp_objects.cc),
-// and a vector or a map one holding its handle into the container heap (interp_containers.cc).
+// or dmem[] (a double). A function's int slots are one range, which a call saves and restores so a recursive call
+// does not overwrite its caller's locals. A tensor is an int slot holding its handle; g_tensorSlots lists those
+// slots, so the tensor-free pass knows which values to release. A struct is one slot per field; an object is an int
+// slot holding its handle into the runtime's object heap (interp_objects.cc), and a vector or a map one holding its
+// handle into the container heap (interp_containers.cc).
 //
 // Functions are lowered in file order, and a function a call needs before its turn is lowered right then. A call
 // into a function whose body is still being lowered (a recursive call) gets its target when that body is done.
 //
 // A generic function or class is lowered once per copy the check pass made, with that copy's own types (check.h's
 // Instance): scale<int, int> is a function of its own, and Box<int> a class of its own, with its own methods.
+//
+// The REPL lowers each entry as a program of its own (lower.h's ReplVariable).
 #include <algorithm>
 #include <map>
 #include <set>
@@ -22,19 +24,18 @@
 using namespace std;
 
 extern map<string, int> symbolTable;        // the ignite block's variables, which the debugger shows
-extern map<string, int> floatSymbolTable;   // (parser_state.cc)
+extern map<string, int> floatSymbolTable;   // (state.cc)
 extern map<string, int> doubleSymbolTable;
 extern map<string, vector<int>> functionReturnSlots;  // read by the tensor-free pass
 extern const map<string, TensorOp> TENSOR_OP_MAP;     // the tensor built-ins, and the kinds of their results
-extern const set<TensorOp> TENSOR_VOID_OPS;           // (parser_state.cc)
+extern const set<TensorOp> TENSOR_VOID_OPS;           // (builtins.cc)
 extern const set<TensorOp> TENSOR_DOUBLE_OPS;
 extern const set<TensorOp> TENSOR_INT_OPS;
 
 namespace
 {
     // ─────────────────────────────────────────────────────────────────────────────
-    // What lowering covers: numbers, bools, strings, arrays, control flow and functions (2c-1), tensors (2c-2a),
-    // hf / sol (2c-2b), structs and classes (2c-3), vectors and maps (2c-4), and generics (2c-5)
+    // What lowering covers: every program the check pass accepts (unlowered() checks it)
     // ─────────────────────────────────────────────────────────────────────────────
 
     // A node's type, a variable's type and a function's signature; in a generic function's or class's copy (copy:
@@ -191,13 +192,8 @@ namespace
                 return k == INT_TYPE || k == FLOAT_TYPE || k == DOUBLE_TYPE || k == BOOL_TYPE || k == STRING_TYPE ||
                        k == TENSOR_TYPE;
             }
-            case NodeKind::MultiDecl:       // int a, double b = f(): a call to a function, giving no containers
+            case NodeKind::MultiDecl:       // int a, double b = f(): a call to a function
             {
-                for (size_t i = 0; i + 1 < kids.size(); i++)
-                {
-                    TypeKind k = checked.types[variable_type(checked, checked.refs[kids[i]], copy)].kind;
-                    if (k == TypeKind::Vector || k == TypeKind::Map) return false;
-                }
                 uint32_t value = kids.back();
                 if (tree.kind(value) != NodeKind::Call) return false;
                 const Entity* e = entity(tree.children(value)[0]);
@@ -226,12 +222,12 @@ namespace
                 }
                 break;
             }
-            case NodeKind::Return:          // a struct is not returned, nor compared; nor is a container compared
+            case NodeKind::Return:          // a struct is neither returned nor compared
             case NodeKind::Binary:
             {
                 for (uint32_t k : kids)
                 {
-                    if (whole(k) || (tree.kind(n) == NodeKind::Binary && container(k))) return false;
+                    if (whole(k)) return false;
                 }
                 break;
             }
@@ -298,6 +294,10 @@ namespace
         {"reverse", CON_REVERSE},   {"has", CON_HAS},           {"remove", CON_REMOVE},
     };
 
+    // Class and method ids by name (Box<int>, area), kept from one lowering to the next: a REPL session lowers its
+    // classes again with each entry, and its objects keep the class ids they were made with
+    unordered_map<string, int> classIds, methodIds;
+
     template <class T> T* array_of(const vector<T>& v)  // a call's slots and types, as the CALL instruction keeps them
     {
         T* a = new T[v.size()];
@@ -308,12 +308,14 @@ namespace
     class Lowerer
     {
         public:
-            Lowerer(const ParseTree& tree, const CheckResult& in) : tree(tree), in(in) {}
+            Lowerer(const ParseTree& tree, const CheckResult& in, vector<ReplVariable>* session)
+                : tree(tree), in(in), session(session) {}
             InstructionNode* run();
 
         private:
             const ParseTree& tree;
             const CheckResult& in;
+            vector<ReplVariable>* session;  // a REPL session's variables, or nullptr
 
             // The instructions being written: a function's body, or the ignite block's
             InstructionNode* head = nullptr;
@@ -360,7 +362,6 @@ namespace
                 bool registered = false;  // its methods are in virtualTable
             };
             unordered_map<uint64_t, Class> classes;
-            unordered_map<string, int> methodIds;    // a virtual call names its method by this id
 
             struct Loop
             {
@@ -370,6 +371,7 @@ namespace
             vector<Loop> loops;  // the loops around the statement being lowered, innermost last
             uint32_t function = NoNode;  // the FunctionDecl being lowered; NoNode in the ignite block
             uint32_t instance = NoInstance;  // the generic function's or class's copy it belongs to
+            unordered_map<uint32_t, int> evaluated;  // a compound assignment's target's parts, worked out once
 
             // Types as the check pass gave them; in a copy, the copy's own
             TypeId type_id(uint32_t n) const { return node_type(in, n, instance); }
@@ -404,6 +406,9 @@ namespace
             Function& lower_function(uint32_t fn, uint32_t fnCopy = NoInstance);
             uint32_t call_copy(uint32_t n) const;
             void call_main();
+            void ignite_block(uint32_t n);
+            vector<uint32_t> declared(uint32_t statement) const;
+            string redeclaration(uint32_t entity) const;
 
             // Statements
             void block(uint32_t n);
@@ -557,7 +562,7 @@ namespace
         InstructionNode* node = add(t == TYPE_FLOAT ? ASSIGN_F : t == TYPE_DOUBLE ? ASSIGN_D : ASSIGN, line);
         if (t == TYPE_FLOAT) node->assign_f_inst = {dst, a, b, op};
         else if (t == TYPE_DOUBLE) node->assign_d_inst = {dst, a, b, op};
-        else node->assign_inst = {dst, a, b, op, 0};
+        else node->assign_inst = {dst, a, b, op};
         return node;
     }
 
@@ -659,14 +664,14 @@ namespace
                 }
             }
         }
-        if (ignite != NoNode) block(tree.children(ignite)[0]);
+        if (ignite != NoNode) ignite_block(tree.children(ignite)[0]);
         else call_main();
         for (uint64_t c : classKeys) register_class(c);
         if (head == nullptr) add(NOOP, ignite != NoNode ? line(ignite) : 0);
         return head;
     }
 
-    // A copy's name, as the old parser names it: scale<int, double>, Box<int>
+    // A copy's name, as messages write it: scale<int, double>, Box<int>
     string Lowerer::copy_name(uint32_t decl, uint32_t c) const
     {
         string s = text(decl);
@@ -761,6 +766,77 @@ namespace
         }
     }
 
+    // The ignite block. In a REPL session, its first statements declare again the variables earlier entries made:
+    // each takes the slots it has, and the variables the rest of the block declares are added to the session.
+    void Lowerer::ignite_block(uint32_t n)
+    {
+        vector<uint32_t> statements = tree.children(n);
+        size_t restored = session ? session->size() : 0;
+        for (size_t i = 0; i < statements.size(); i++)
+        {
+            if (i >= restored)
+            {
+                statement(statements[i]);
+                continue;
+            }
+            const ReplVariable& saved = (*session)[i];
+            Variable& v = variables[declared(statements[i])[0]];
+            v.slot = saved.slot;
+            v.size = saved.size;
+            v.dynamic = saved.dynamic;
+            v.fields = saved.fields;
+        }
+        for (size_t i = restored; session && i < statements.size(); i++)
+        {
+            for (uint32_t e : declared(statements[i]))
+            {
+                string again = redeclaration(e);
+                const Variable& v = variables[e];
+                if (!again.empty()) session->push_back({again, v.slot, v.size, v.dynamic, v.fields});
+            }
+        }
+    }
+
+    // The variables a statement declares: int x = 1, int a, int b = f(), and x = 1 when it is x's first assignment
+    vector<uint32_t> Lowerer::declared(uint32_t s) const
+    {
+        vector<uint32_t> kids = tree.children(s);
+        switch (tree.kind(s))
+        {
+            case NodeKind::VarDecl:     return {in.refs[s]};
+            case NodeKind::MultiDecl:
+            {
+                vector<uint32_t> entities;
+                for (size_t i = 0; i + 1 < kids.size(); i++) entities.push_back(in.refs[kids[i]]);
+                return entities;
+            }
+            case NodeKind::Assign:
+            {
+                uint32_t e = tree.kind(kids[0]) == NodeKind::Name ? in.refs[kids[0]] : NoEntity;
+                if (e != NoEntity && in.entities[e].decl == kids[0]) return {e};
+                return {};
+            }
+            default:                    return {};
+        }
+    }
+
+    // How a REPL session declares a variable again: int x, string s = "", Box<int> b = none, a = array(1); "" for one
+    // that cannot be (a variable only ever none)
+    string Lowerer::redeclaration(uint32_t e) const
+    {
+        TypeId t = var_type_id(e);
+        string name(names.text(in.entities[e].name));
+        switch (in.types[t].kind)
+        {
+            case TypeKind::Array:   return name + " = array(1)";
+            case TypeKind::String:  return "string " + name + " = \"\"";
+            case TypeKind::Class:   return type_name(in, t) + " " + name + " = none";
+            case TypeKind::Unknown:
+            case TypeKind::None:    return "";
+            default:                return type_name(in, t) + " " + name;
+        }
+    }
+
     // ─────────────────────────────────────────────────────────────────────────────
     // Statements
     // ─────────────────────────────────────────────────────────────────────────────
@@ -836,7 +912,8 @@ namespace
         else copy(declare(e), t, value, type_of(kids[1]), line(n));
     }
 
-    // int q, int r = divmod(a, b): one variable per value the function returns, each copied from its return slot
+    // int q, int r = divmod(a, b): one variable per value the function returns, each copied from its return slot; an
+    // object or container variable takes the reference the call gives it
     void Lowerer::multi_decl(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
@@ -852,7 +929,9 @@ namespace
         for (size_t i = 0; i + 1 < kids.size(); i++)
         {
             uint32_t e = in.refs[kids[i]];
-            copy(declare(e), var_type_of(e), f.returns[i], f.returnTypes[i], line(n));
+            VarType t = var_type_of(e);
+            if (reference(t)) object_store(declare(e), f.returns[i], t, true, line(n));
+            else copy(declare(e), t, f.returns[i], f.returnTypes[i], line(n));
         }
         release_temporaries(args, slots, line(n));
     }
@@ -925,10 +1004,15 @@ namespace
         else copy(variables[e].slot, var_type_of(e), value, type, line);
     }
 
-    // x += e is x = x + e
+    // x += e is x = x + e, but the target's parts are worked out once, for the read and the store: v[f()] += 1 calls
+    // f once. A temporary part (self.items in self.items[i] += 1) is dropped once, after the store.
     void Lowerer::compound_assign(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);
+        NodeKind target = tree.kind(kids[0]);
+        vector<uint32_t> parts;
+        if (target == NodeKind::Index || target == NodeKind::Member) parts = tree.children(kids[0]);
+        for (uint32_t p : parts) evaluated[p] = expr(p);
         int left = expr(kids[0]);
         int right = expr(kids[1]);
         TokenType op;
@@ -942,6 +1026,12 @@ namespace
         VarType t;
         int v = arith(op, left, type_of(kids[0]), right, type_of(kids[1]), line(n), t);
         store(kids[0], v, t, line(n));
+        for (uint32_t p : parts)
+        {
+            int slot = evaluated[p];
+            evaluated.erase(p);
+            if (temporary(p)) release(slot, type_of(p), line(n));
+        }
     }
 
     // a = array(5) takes five slots here; a = array(n) is placed by ALLOC when it runs
@@ -1096,6 +1186,8 @@ namespace
     // The slot that holds an expression's value
     int Lowerer::expr(uint32_t n)
     {
+        auto done = evaluated.find(n);
+        if (done != evaluated.end()) return done->second;
         switch (tree.kind(n))
         {
             case NodeKind::IntLiteral:      return int_constant(stoi(text(n)));
@@ -1799,8 +1891,11 @@ namespace
         {
             if (tree.kind(m) == NodeKind::FieldDecl) fields.push_back({m, class_copy(cls)});
         }
+        uint32_t decl = in.entities[class_entity(cls)].decl;
+        int& id = classIds[class_copy(cls) == NoInstance ? text(decl) : copy_name(decl, class_copy(cls))];
+        if (id == 0) id = (int)classIds.size();
         Class& c = classes[cls];
-        c.id = (int)classes.size();
+        c.id = id;
         c.fields = fields;
         return c;
     }
@@ -1863,9 +1958,10 @@ namespace
 
     // Whether n is a temporary object or container: one reference that a store takes, or that release drops once it
     // is used. A new one, a call's result, and one read from a field or a container's element are; a variable, self
-    // and none keep their own.
+    // and none keep their own. A compound assignment's target's part is dropped by the assignment.
     bool Lowerer::temporary(uint32_t n) const
     {
+        if (evaluated.count(n)) return false;
         while (tree.kind(n) == NodeKind::Paren) n = tree.children(n)[0];
         NodeKind k = tree.kind(n);
         return reference(type_of(n)) && (k == NodeKind::Call || k == NodeKind::Member || k == NodeKind::Index);
@@ -2082,7 +2178,7 @@ namespace
 }  // namespace
 
 // Each definition's nodes; a generic function's or class's in each of its copies, with the copy's types
-bool lowers(const ParseTree& tree, const CheckResult& checked)
+uint32_t unlowered(const ParseTree& tree, const CheckResult& checked)
 {
     for (uint32_t d : tree.children(tree.root()))
     {
@@ -2090,14 +2186,14 @@ bool lowers(const ParseTree& tree, const CheckResult& checked)
         {
             for (uint32_t n = d + 1 - tree.nodes[d].size; n <= d; n++)
             {
-                if (!covered(tree, checked, n, c)) return false;
+                if (!covered(tree, checked, n, c)) return n;
             }
         }
     }
-    return covered(tree, checked, tree.root(), NoInstance);
+    return covered(tree, checked, tree.root(), NoInstance) ? NoNode : tree.root();
 }
 
-InstructionNode* lower_tree(const ParseTree& tree, const CheckResult& checked)
+InstructionNode* lower_tree(const ParseTree& tree, const CheckResult& checked, vector<ReplVariable>* session)
 {
-    return Lowerer(tree, checked).run();
+    return Lowerer(tree, checked, session).run();
 }

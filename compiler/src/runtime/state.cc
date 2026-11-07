@@ -29,11 +29,6 @@
 using namespace std;
 
 
-extern LexicalAnalyzer lexer;
-extern vector<string> errorList;
-struct InstructionNode* parse_repl_input(const string& input);
-extern map<string, InstructionNode*> functionTable;
-
 bool suppress_output = false;
 
 // Debug mode
@@ -41,10 +36,18 @@ bool debug_mode = false;
 bool debug_step = false;  // true = pause on every instruction, false = continue until breakpoint
 set<int> debug_breakpoints;  // set of line numbers with break points
 
-// forward declaration
-extern map<string, int> symbolTable;
-extern map<string, int> floatSymbolTable;
-extern map<string, int> doubleSymbolTable;
+// The ignite block's variables by name, which the debugger shows (lowering fills them)
+map<string, int> symbolTable;
+map<string, int> floatSymbolTable;
+map<string, int> doubleSymbolTable;
+
+// What lowering writes for the passes after it: each function's body, its parameter and return types and its
+// return slots, and the slots that hold tensor handles
+map<string, InstructionNode*> functionTable;
+map<string, VarType> functionReturnType;
+map<string, vector<VarType>> functionParamTypes;
+map<string, vector<int>> functionReturnSlots;
+set<int> g_tensorSlots;
 
 // Memoization for pure recursive functions
 unordered_set<InstructionNode*> pure_functions;
@@ -57,16 +60,9 @@ stack<CallFrame> callStack;
 map<string, pair<int, VarType>> debug_symbol_snapshot;  // name -> {slot, type}
 int import_line_offset = 0; // lines added by imports - used to skip imported code
 
-// Map Definitions for Class 
-map<string, ClassDef> classTable;
+// Classes: each class's methods by id, as virtual calls find them, and by name
 map<int, map<int, MethodTarget>> virtualTable;
-map<string, string> varClassType;
 map<string, map<string, InstructionNode*>> classMethodTable;
-map<string, map<string, vector<string>>> classMethodParams;
-map<string, map<string, vector<VarType>>> classMethodParamTypes;
-map<string, map<string, VarType>> classMethodReturnType;
-int currentSelfBase = -1;
-string currentSelfName = "";
 
 // Global memory vectors
 

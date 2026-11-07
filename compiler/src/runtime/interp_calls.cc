@@ -237,10 +237,20 @@ InstructionNode* exec_ret(InstructionNode* pc)
                 capturedRetVals.push_back(v);
             }
 
-            // The call's object references go; an object it returns is handed to the caller first
-            VarType rt = frame.dest_type;
-            bool reference = (rt == TYPE_CLASS || rt == TYPE_VECTOR || rt == TYPE_MAP);
-            objects_exit_call(reference ? (int)capturedRetVals[0] : 0, rt);
+            // The call's object references go; the objects and containers it returns are handed to the caller first
+            {
+                auto reference = [](VarType t) { return t == TYPE_CLASS || t == TYPE_VECTOR || t == TYPE_MAP; };
+                vector<pair<int, VarType>> returned;
+                if (frame.allRetSlots.empty())
+                {
+                    if (reference(frame.dest_type)) returned.push_back({(int)capturedRetVals[0], frame.dest_type});
+                }
+                for (int i = 0; i < (int)frame.allRetSlots.size() && i < (int)frame.allRetTypes.size(); i++)
+                {
+                    if (reference(frame.allRetTypes[i])) returned.push_back({(int)capturedRetVals[i], frame.allRetTypes[i]});
+                }
+                objects_exit_call(returned);
+            }
 
             // memo cache stays int-only (safe: edit 2 keeps non-int functions out)
             if (frame.is_memoizable && frame.memo_func)

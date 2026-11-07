@@ -3,11 +3,8 @@
 // The lexer. A Scanner reads one source buffer (source.h) a pointer at a time and writes compact tokens: a kind,
 // a location, a length and, for names and string literals, an interned Symbol (interner.h). Layout is decided while 
 // scanning, as Python's tokenizer does: the end of each logical line is a NEWLINE token, and a change of 
-// indentation is INDENT / DEDENT. A '(' or '[' that is still open continues the line.
-// 
-// The current parser still reads the braces-and-semicolons form ("if (x) { y = 1 ; }") as Tokens with a string
-// lexeme, so LexicalAnalyzer turns the scanner's tokens into that form for it. The new parser (roadmap phase 2)
-// reads the scanner's tokens directly.
+// indentation is INDENT / DEDENT. A '(' or '[' that is still open continues the line. The parser (parse_tree.h)
+// reads these tokens.
 
 #include <string>
 #include <vector>
@@ -95,46 +92,7 @@ class Scanner
     int headerLine = 0;
 };
 
-// The current parser's token: its kind, its text and its line.
-class Token {
-  public:
-    void Print() const;
-
-    std::string lexeme;
-    TokenType token_type;
-    int line_no;
-    SourceLoc loc = 0;
-};
-
-class LexicalAnalyzer {
-  public: 
-    LexicalAnalyzer();
-    void ReinitializeFromString(const std::string& s);  // scans s as the whole program
-    const Token& GetToken();
-    void UngetToken(int);
-    const Token& peek(int);
-    int GetPosition() const { return index; }  // where the next GetToken() reads ...
-    void SetPosition(int i) { index = i; }  // ... and going back there (to compile a generic function again)
-    const Token& TokenAt(int i) const { return tokenList[i]; }
-    // A generic class's copy is compiled from its tokens with each type parameter replaced, appended after the 
-    // program's tokens and removed again once compiled (an argument can be several tokens, e.g. vector<int>).
-    int AppendTokens(const std::vector<Token>& tokens)
-    {
-      int at = (int)tokenList.size();
-      tokenList.insert(tokenList.end(), tokens.begin(), tokens.end());
-      return at;
-    }
-    void TruncateTokens(int size) { tokenList.resize(size); }
-    const std::vector<LexToken>& Scanned() const { return scanned; }  // the scanner's tokens, for the parse tree
-
-  private:
-    std::vector<Token> tokenList;
-    std::vector<LexToken> scanned;
-    int index = 0;
-    Token eof;    // what GetToken() / peek() give past the end
-    void ToBracesForm(const std::vector<LexToken>& lexed);  // NEWLINE / INDENT / DEDENT -> ; { }
-    void DesugarCompoundAssignments();  // x += e -> x = x + (e)
-    void AddMainEntry();  // no ignite block but def main() -> ignite { main() ; }
-};
+// Scans a whole program into tokens: the source becomes one buffer of sourceManager ("<input>").
+std::vector<LexToken> scan_program(const std::string& source);
 
 #endif  // NOVA_LEXER_H

@@ -1,0 +1,5 @@
+Error at line 11: a struct's field cannot be an object or a container ('items' is vector<int>): use a class
+Error at line 12: a struct's field cannot be an object or a container ('owner' is a P): use a class
+Error at line 13: a struct's field cannot be an array ('counts'): use a class
+Error at line 16: a class's field cannot be a struct ('p' is a Point): make Point a class
+Error at line 17: an array field is written int weights[N], with N a number

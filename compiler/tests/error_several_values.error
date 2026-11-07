@@ -1,0 +1,3 @@
+Error at line 13: only a function call gives several values, and 'm.pair(...)' is not one
+Error at line 17: containers are compared with == and != only
+Error at line 19: cannot compare vector<int> with vector<double>

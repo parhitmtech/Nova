@@ -17,7 +17,7 @@
 using namespace std;
 
 extern const map<string, TensorOp> TENSOR_OP_MAP;  // the tensor built-ins, and the kinds of their results
-extern const set<TensorOp> TENSOR_VOID_OPS;        // (parser_state.cc)
+extern const set<TensorOp> TENSOR_VOID_OPS;        // (builtins.cc)
 extern const set<TensorOp> TENSOR_DOUBLE_OPS;
 extern const set<TensorOp> TENSOR_INT_OPS;
 
@@ -155,7 +155,7 @@ namespace {
             uint32_t make_copy(uint32_t decl, const vector<TypeId>& args);
             TypeId class_copy(uint32_t classEntity, const vector<TypeId>& args);
             string copy_name(const string& name, const vector<TypeId>& args) const;
-            void check_field(uint32_t n);
+            void check_field(uint32_t n, bool isClass);
             void set_variable(uint32_t declNode, TypeId t);
 
             void check_block(uint32_t n);
@@ -303,7 +303,7 @@ namespace {
                 {
                     for (uint32_t f : tree.children(n))
                     {
-                        if (tree.kind(f) == NodeKind::FieldDecl) check_field(f);
+                        if (tree.kind(f) == NodeKind::FieldDecl) check_field(f, false);
                     }
                     break;
                 }
@@ -314,7 +314,7 @@ namespace {
                     check_overrides(n);
                     for (uint32_t m : members)
                     {
-                        if (tree.kind(m) == NodeKind::FieldDecl) check_field(m);
+                        if (tree.kind(m) == NodeKind::FieldDecl) check_field(m, true);
                         else if (tree.kind(m) == NodeKind::FunctionDecl) check_function(m, text(n) + "." + text(m), true);
                     }
                     break;
@@ -515,16 +515,29 @@ namespace {
         context.instance = instance;
         vector<uint32_t> kids = tree.children(fn);
         size_t i = 0;
-        for (uint32_t p : tree.children(kids[0]))
+        for (uint32_t p : tree.children(kids[0]))  // a struct is neither passed nor returned
         {
             if (tree.token(p).kind == SELF) continue;
             vector<uint32_t> type = tree.children(p);
             if (!type.empty()) written(type[0], true);
+            if (kind(sig.params[i]) == TypeKind::Struct)
+            {
+                error(p, "'" + label + "' cannot take a struct ('" + text(p) + "' is a " + name(sig.params[i]) +
+                         "): pass its fields, or make " + name(sig.params[i]) + " a class");
+            }
             set_variable(p, sig.params[i++]);
         }
         if (kids.size() == 3)
         {
-            for (uint32_t t : tree.children(kids[1])) written(t, true);
+            for (uint32_t t : tree.children(kids[1]))
+            {
+                TypeId r = written(t, true);
+                if (kind(r) == TypeKind::Struct)
+                {
+                    error(t, "'" + label + "' cannot return a struct (" + name(r) + "): return its fields, or make " +
+                             name(r) + " a class");
+                }
+            }
         }
         check_block(kids.back());
         for (const auto& [e, t] : saved)
@@ -547,7 +560,7 @@ namespace {
     }
 
     // Box<int>: the class's copy for these type arguments. A new copy's fields and methods are checked with its types
-    // right away, as the old parser compiles each copy the first time it is written.
+    // right away.
     TypeId Typer::class_copy(uint32_t classEntity, const vector<TypeId>& args)
     {
         uint32_t decl = out.entities[classEntity].decl;
@@ -560,7 +573,7 @@ namespace {
         context.instance = instance;
         for (uint32_t m : tree.children(decl))
         {
-            if (tree.kind(m) == NodeKind::FieldDecl) check_field(m);
+            if (tree.kind(m) == NodeKind::FieldDecl) check_field(m, true);
             else if (tree.kind(m) == NodeKind::FunctionDecl) check_function(m, name(t) + "." + text(m), true, instance);
         }
         context = outer;
@@ -596,12 +609,31 @@ namespace {
         }
     }
 
-    // A field's type, and an array field's size
-    void Typer::check_field(uint32_t n)
+    // A field's type, and an array field's size. A struct's fields are numbers, bools, strings, Tensors and structs
+    // (a struct is copied field by field); a class's are of any type but a struct, and an array field is int f[N].
+    void Typer::check_field(uint32_t n, bool isClass)
     {
         vector<uint32_t> kids = tree.children(n);
-        written(kids[0], true);
-        if (kids.size() > 1) expr(kids[1]);
+        TypeId t = written(kids[0], true);
+        if (kids.size() > 1)
+        {
+            expr(kids[1]);
+            if (!isClass) error(n, "a struct's field cannot be an array ('" + text(n) + "'): use a class");
+            else if (t != Int || tree.kind(kids[1]) != NodeKind::IntLiteral)
+            {
+                error(n, "an array field is written int " + text(n) + "[N], with N a number");
+            }
+        }
+        else if (!isClass && (kind(t) == TypeKind::Class || is_container(t)))
+        {
+            error(n, "a struct's field cannot be an object or a container ('" + text(n) + "' is " + a_name(t) +
+                     "): use a class");
+        }
+        else if (isClass && kind(t) == TypeKind::Struct)
+        {
+            error(n, "a class's field cannot be a struct ('" + text(n) + "' is a " + name(t) + "): make " + name(t) +
+                     " a class");
+        }
     }
 
     void Typer::set_variable(uint32_t declNode, TypeId t)
@@ -647,8 +679,14 @@ namespace {
                 }
                 vector<uint32_t> call = tree.kind(value) == NodeKind::Call ? tree.children(value) : vector<uint32_t>();
                 uint32_t callee = call.empty() ? NoNode : call[0];
-                uint32_t e = callee != NoNode && tree.kind(callee) == NodeKind::Name ? out.refs[callee] : NoEntity;
-                if (e == NoEntity || out.entities[e].kind != EntityKind::Function) return;
+                bool named = callee != NoNode && tree.kind(callee) == NodeKind::Name;
+                uint32_t e = named ? out.refs[callee] : NoEntity;
+                if (named && e == NoEntity) return;  // reported with the names
+                if (e == NoEntity || out.entities[e].kind != EntityKind::Function)
+                {
+                    error(value, "only a function call gives several values, and '" + path(value) + "' is not one");
+                    return;
+                }
                 const Signature& sig = out.signatures[out.entities[e].decl];
                 string f = text(callee);
                 if (sig.generic)
@@ -727,13 +765,14 @@ namespace {
                 check_block(kids[3]);
                 return;                
             }
-            case NodeKind::Switch:
+            case NodeKind::Switch:  // on an int, with int case values
             {
-                expr(kids[0]);
+                TypeId value = expr(kids[0]);
+                if (value != Int && value != Unknown) error(kids[0], "switch takes an int, not " + a_name(value));
                 for (size_t i = 1; i < kids.size(); i++)
                 {
                     vector<uint32_t> part = tree.children(kids[i]);  // Case: value, Block; Default: Block
-                    if (part.size() == 2) expr(part[0]);
+                    if (part.size() == 2 && expr(part[0]) != Int) error(part[0], "a case value must be an int");
                     check_block(part.back());
                 }
                 return;
@@ -758,6 +797,15 @@ namespace {
         if (context.function == NoNode || values.empty()) return;  // outside a function (reported with the names)
         Signature& sig = signature(context.function, context.method, context.instance);
         const string& f = context.label;
+        for (size_t i = 0; i < types.size() && sig.inferred; i++)  // a written struct return is reported with the type
+        {
+            if (kind(types[i]) == TypeKind::Struct)
+            {
+                error(n, "'" + f + "' cannot return a struct (" + name(types[i]) + "): return its fields, or make " +
+                         name(types[i]) + " a class");
+                return;
+            }
+        }
         if (context.method && sig.inferred) return;  // a method without '-> types' returns Unknown
         if (sig.inferred && sig.returns.empty())
         {
@@ -966,6 +1014,20 @@ namespace {
             }
             case EQEQ: case NOTEQUAL: case LESS: case GREATER: case LESSEQ: case GREATEREQ:
             {
+                if (kind(lt) == TypeKind::Struct || kind(rt) == TypeKind::Struct)
+                {
+                    error(n, "structs cannot be compared: compare their fields");
+                    return Bool;
+                }
+                if (is_container(lt) || is_container(rt))  // v == w: the same container or not
+                {
+                    if (op != EQEQ && op != NOTEQUAL) error(n, "containers are compared with == and != only");
+                    else if (lt != rt && lt != Unknown && rt != Unknown)
+                    {
+                        error(n, "cannot compare " + name(lt) + " with " + name(rt));
+                    }
+                    return Bool;
+                }
                 if (is_object(lt) || is_object(rt))  // p == q, n.next != none: the same object or not (no order)
                 {
                     if (op != EQEQ && op != NOTEQUAL)
@@ -1083,17 +1145,24 @@ namespace {
                 TypeId t = written(callee, true);
                 vector<TypeId> types;
                 for (uint32_t a : args) types.push_back(expr(a));
-                switch (tree.token(callee).kind)
+                if (tree.kind(callee) == NodeKind::TypeName)  // one number in, of another number type
                 {
-                    case INT_TYPE:          return Int;
-                    case FLOAT_TYPE:        return Float;
-                    case DOUBLE_TYPE:       return Double;
-                    default:
+                    if (t != Int && t != Float && t != Double)
                     {
-                        if (kind(t) == TypeKind::Class) construct(n, t, types);
-                        return is_container(t) || kind(t) == TypeKind::Class ? t : Unknown;
+                        error(callee, "'" + text(callee) + "(...)' is not a conversion: only int(x), float(x) and "
+                                      "double(x) convert a value");
+                        return Unknown;
                     }
+                    if (types.size() != 1) error(n, "'" + text(callee) + "(...)' converts one value");
+                    else if (!is_number(types[0]) && types[0] != Unknown)
+                    {
+                        error(n, "'" + text(callee) + "(...)' converts a number, not " + a_name(types[0]));
+                    }
+                    return t;
                 }
+                if (is_container(t) && !args.empty()) error(n, "'" + spell(callee) + "()' takes no arguments");
+                if (kind(t) == TypeKind::Class) construct(n, t, types);
+                return is_container(t) || kind(t) == TypeKind::Class ? t : Unknown;
             }
             default:
             {

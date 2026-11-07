@@ -138,12 +138,15 @@ void objects_take_temp(int h)
     if (live(h)) call_refs.back().push_back({TEMP, h, REF_OBJECT});
 }
 
-void objects_exit_call(int returned, VarType type)
+void objects_exit_call(const vector<pair<int, VarType>>& returned)
 {
     if (call_refs.size() <= 1) return;
-    // An object or container returned by the call is the caller's temporary: count it before the call's
-    // references go.
-    if (returned) add_ref(call_refs[call_refs.size() - 2], TEMP, returned, kind_of(type));
+    // Each object or container returned by the call (one of several values too) is the caller's temporary: count it
+    // before the call's references go.
+    for (const auto& [h, type] : returned)
+    {
+        if (h) add_ref(call_refs[call_refs.size() - 2], TEMP, h, kind_of(type));
+    }
     vector<ObjectRef> refs = call_refs.back();
     call_refs.pop_back();
     for (const ObjectRef& r : refs) drop_ref(r);

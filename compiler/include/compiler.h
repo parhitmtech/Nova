@@ -38,7 +38,7 @@ enum VarType {
     TYPE_DOUBLE,         // double x = 3.14159265358979
     TYPE_CLASS,           // class instance
     TYPE_TENSOR,         // tensor handle (index into tensor_heap)
-    TYPE_VECTOR,         // vector<T> handle (index into container_heap); T is in the parser's containerTable
+    TYPE_VECTOR,         // vector<T> handle (index into container_heap)
     TYPE_MAP,            // map<K, V> handle
 };
 
@@ -194,11 +194,6 @@ struct InstructionNode
             int operand1_index;
             int operand2_index;
             ArithmeticOperatorType op;
-            // Object-field ownership, set by insert_tensor_releases():
-            // 0 = ordinary copy, 1 = field store (release the field's old 
-            // tensor, retain the new one), 2 = field move (method copy-in / 
-            // copy-back: ownership moves with the value , no refcount change).
-            int own_kind;
         } assign_inst;
 
         struct
@@ -372,20 +367,6 @@ extern std::map<int, std::map<int, MethodTarget>> virtualTable;
 
 void debug(const char* format, ...);
 
-struct ClassFieldInfo {
-    std::string name;  // dotted for nested: "a.x"
-    VarType type;
-    std::string struct_type;  // non-empty if field is a struct/class
-    int array_size;  // 0 = scalar field, N > 0 = fixed int array of size N
-};
-
-struct ClassDef {
-    std::string name;
-    std::string parent;
-    std::vector<ClassFieldInfo> fields;  // flattened: inherited first, then own
-    std::vector<std::string> methods;
-};
-
 struct Tensor {
     // 2-D view used by every existing op: cols = the last dimension, rows = the product of all the 
     // others (1 for a 1-D tensor). For a 2-D tensor this is exactly rows x cols, as before. Never set 
@@ -404,19 +385,11 @@ struct Tensor {
 // Set a tensor's N-D shape: recomputes strides and the rows/cols 2-D view.
 void tensor_set_shape(Tensor& t, const std::vector<int>& shape);
 
-extern std::map<std::string, ClassDef> classTable;
-extern std::map<std::string, std::string> varClassType;
+// class name (Box<int> for a copy) -> method name -> its body (lowering fills it; the tensor-free pass reads it)
 extern std::map<std::string, std::map<std::string, InstructionNode*>> classMethodTable;
-extern std::map<std::string, std::map<std::string, std::vector<std::string>>> classMethodParams;
-extern std::map<std::string, std::map<std::string, std::vector<VarType>>> classMethodParamTypes;
-extern std::map<std::string, std::map<std::string, VarType>> classMethodReturnType;
-extern int currentSelfBase;
-extern std::string currentSelfName;
 
 extern std::vector<Tensor> tensor_heap;
-extern std::set<int> g_fieldSlots;  //  instance int fields (parser.cc) 
-extern std::set<int> g_selfSlots;  //  method self copies of int fields (parser.cc)
-extern std::set<int> g_tensorSlots;  // mem[] slots know to hold a tensor handle (parser.cc)
+extern std::set<int> g_tensorSlots;  // mem[] slots known to hold a tensor handle (lowering lists them)
 int alloc_tensor(int rows, int cols);  // allocates and returns handle index; refcount starts at 1
 int alloc_tensor_nd(const std::vector<int>& shape);  // same, for any number of dimensions
 int alloc_tensor_like(int src);  // new tensor with src's N-D shape (contents zero)
@@ -425,13 +398,14 @@ void tensor_retain(int h);  // a second mem[] slot now also holds this handle
 void tensor_release(int h);  // one fewer slot holds this handle; frees data at refcount 0
 bool tensor_is_live(int h);  // false if h is out of range or already freed
 
+// The tables lowering fills for the passes after it, by function name (scale<int, int> for a copy)
 extern std::map<std::string, InstructionNode*> functionTable;
 // funcName -> return type / param types. Used to keep float, double and tensor functions out of the
 // int-only memo cache.
 extern std::map<std::string, VarType> functionReturnType;
 extern std::map<std::string, std::vector<VarType>> functionParamTypes;
- 
-struct InstructionNode* parse_generate_intermediate_representation();
+extern std::map<std::string, std::vector<int>> functionReturnSlots;  // all of a function's return slots
+
 void execute_program(struct InstructionNode* head);
 
 #endif /* _COMPILER_H_ */

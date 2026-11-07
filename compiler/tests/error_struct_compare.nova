@@ -1,0 +1,10 @@
+# Structs are not compared: compare their fields.
+struct Point:
+    int x
+    int y
+
+def main():
+    Point p = Point(1, 2)
+    Point q = Point(1, 2)
+    if (p == q):
+        print(1)

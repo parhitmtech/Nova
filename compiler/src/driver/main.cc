@@ -114,7 +114,6 @@ int main(int argc, char* argv[])
         base_dir = (last_slash != string::npos) ? base_dir.substr(0, last_slash) : ".";
         set<string> already_imported;
         processed = preprocess_import(raw_source, base_dir, already_imported);
-        lexer.ReinitializeFromString(processed);
     }
     else
     {
@@ -124,16 +123,14 @@ int main(int argc, char* argv[])
         string raw_source = raw_stream.str();
         set<string> already_imported;
         processed = preprocess_import(raw_source, ".", already_imported);
-        lexer.ReinitializeFromString(processed);
     }
 
-    // The new front end: the parse tree, the check pass, then lowering to the instructions the interpreter runs.
-    // Until lowering covers the whole language (roadmap phase 2c), the old parser compiles a program it does not
-    // cover; NOVA_LOWER_ONLY=1 stops with an error instead, to show which programs lowering covers. --dump-tree
-    // prints the tree without checking it.
+    // The front end: the scanner's tokens, the parse tree, the check pass, then lowering to the instructions the
+    // interpreter runs. --dump-tree prints the tree without checking it, and --check stops after the check pass.
     struct InstructionNode* program = nullptr;
     {
-        ParseTree tree = build_parse_tree(lexer.Scanned());
+        vector<LexToken> tokens = scan_program(processed);
+        ParseTree tree = build_parse_tree(tokens);
         vector<string> errors = tree.errors;
         CheckResult checked;
         if (errors.empty() && !flag_dump_tree)
@@ -148,15 +145,14 @@ int main(int argc, char* argv[])
             tree.print(cout);
             return 0;
         }
-        if (lowers(tree, checked))
+        if (flag_check) return 0;
+        uint32_t n = unlowered(tree, checked);
+        if (n != NoNode)
         {
-            program = lower_tree(tree, checked);
-        }
-        else if (getenv("NOVA_LOWER_ONLY"))
-        {
-            fprintf(stderr, "lowering does not cover this program yet\n");
+            fprintf(stderr, "Error at line %d: the compiler cannot lower this yet\n", tree.token(n).line);
             return 1;
         }
+        program = lower_tree(tree, checked);
     }
 
     //Calculate how many lines were added by imports
@@ -171,10 +167,6 @@ int main(int argc, char* argv[])
         }
         import_line_offset = std::max(0, processed_lines - raw_lines);
     }
-
-    // parse what lowering does not cover yet
-    if (program == nullptr) program = parse_generate_intermediate_representation();
-    if (flag_check) return 0;  // parsing exits with status 1 after printing any errors
 
     if (debug_mode)
     {

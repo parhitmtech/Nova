@@ -136,35 +136,7 @@ InstructionNode* exec_assign(InstructionNode* pc)
 
             //mem[pc->assign_inst.left_hand_side_index] = result;
 
-            {
-                int lhsIdx = pc->assign_inst.left_hand_side_index;
-                int srcIdx = pc->assign_inst.operand1_index;
-                int oldVal = mem[lhsIdx];
-                mem[lhsIdx] = result;
-                if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 1)
-                {
-                    // Field store: the field gives up its old tensor and takes its own reference
-                    // to the new one, if the value is a tensor. The source slot keeps its reference
-                    // (and is released by liveness), so the field must retain. Retain before
-                    // releasing so storing the same handle back into the field cannot free it.
-                    bool isTensor = g_tensorSlots.count(srcIdx) > 0;
-                    if (isTensor) tensor_retain(result);
-                    if (slot_owns(lhsIdx)) tensor_release(oldVal);
-                    set_owns(lhsIdx, isTensor);
-                    pc = pc->next;
-                    break;
-                }
-                if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 2)
-                {
-                    // Field move (method copy-in / copy-back): the reference
-                    // moves with the value; the refcount does not change
-                    if (slot_owns(lhsIdx) && oldVal != result) tensor_release(oldVal);
-                    set_owns(lhsIdx, slot_owns(srcIdx));
-                    set_owns(srcIdx, false);
-                    pc = pc->next;
-                    break;
-                }
-            }
+            mem[pc->assign_inst.left_hand_side_index] = result;
 
             // A plain copy ("op == OPERATOR_NONE") of a tensor-tainted slot creates a second,
             // simultaneously-live alias of the same tensor_heap entry -- the source slot keeps

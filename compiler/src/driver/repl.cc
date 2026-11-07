@@ -1,37 +1,71 @@
-// Interactive REPL (--repl). Split out of compiler.cc.
-#include <iostream>
+// The REPL (--repl). Each entry is compiled as a program of its own: the definitions entered so far (def, class,
+// struct, orbit), then an ignite block that declares again the variables earlier entries made, followed by the
+// entry's statements. Lowering gives those variables the slots they already have (lower.h's ReplVariable), and
+// memory and the object, container and tensor heaps live on between entries, so each entry sees what the ones before
+// it left.
 #include <cstdio>
 #include <cstdlib>
-#include <cstdarg>
-#include <cctype>
-#include <cstring>
-#include <string>
-#include <stack>
-#include <chrono>
-#include <map>
+#include <iostream>
 #include <set>
-#include <vector>
-#include <algorithm>
-#include <fstream>
 #include <sstream>
-#include <cmath>
-#include <random>
-#include <unordered_map>
-#include <unordered_set>
-#ifndef _WIN32
-#include <unistd.h>
-#endif
+#include <string>
+#include <vector>
+#include "check.h"
 #include "lexer.h"
-#include "compiler.h"
-#include "autograd.h"
-#include "optimizer.h"
-#include "regalloc.h"
-#include "codegen.h"
-#include "integrations.h"
+#include "lower.h"
+#include "parse_tree.h"
 #include "runtime.h"
-#include "tensor_ops.h"
 
 using namespace std;
+
+namespace
+{
+    int lines_in(const string& s)
+    {
+        int n = 0;
+        for (char c : s) n += c == '\n';
+        return n;
+    }
+
+    // "Error at line N: ..." with N counted from the entry's first line (first: the program's line it starts on)
+    string from_entry(const string& error, int first)
+    {
+        const string at = "Error at line ";
+        size_t colon = error.find(':');
+        if (error.compare(0, at.size(), at) != 0 || colon == string::npos) return error;
+        int line = atoi(error.c_str() + at.size());
+        if (line < first) return error;
+        return at + to_string(line - first + 1) + error.substr(colon);
+    }
+
+    // Compiles and runs one program. On an error (printed) nothing runs and the session is as it was.
+    bool run(const string& source, int first, vector<ReplVariable>* session)
+    {
+        set<string> imported;
+        string processed = preprocess_import(source, ".", imported);
+        vector<LexToken> tokens = scan_program(processed);
+        ParseTree tree = build_parse_tree(tokens);
+        vector<string> errors = tree.errors;
+        CheckResult checked;
+        if (errors.empty())
+        {
+            checked = check_tree(tree);
+            errors = checked.errors;
+        }
+        if (errors.empty())
+        {
+            uint32_t n = unlowered(tree, checked);
+            if (n != NoNode) errors.push_back("Error at line " + to_string(tree.token(n).line) +
+                                              ": the compiler cannot lower this yet");
+        }
+        for (const string& e : errors) fprintf(stderr, "%s\n", from_entry(e, first).c_str());
+        if (!errors.empty()) return false;
+        InstructionNode* program = lower_tree(tree, checked, session);
+        input_replay_index = -1;  // live stdin
+        execute_program(program);
+        return true;
+    }
+}
 
 void run_repl()
 {
@@ -42,31 +76,24 @@ void run_repl()
     printf("\n");
     fflush(stdout);
 
-    string accumulated = "";  // full input collected so far
-    bool in_block = false;    // a line ended with ':': keep reading until a blank line (like Python)
+    string definitions;             // the def, class, struct and orbit entries so far
+    vector<ReplVariable> session;   // the variables entries have declared
+    string accumulated = "";        // the entry being read
+    bool in_block = false;          // a line ended with ':': keep reading until a blank line (like Python)
 
     while (true)
     {
-        // show prompt
-        if (!in_block)
-            printf(">>> ");
-        else
-            printf("... ");
+        printf(in_block ? "... " : ">>> ");
         fflush(stdout);
 
-        // read a line
         string line;
-        if (!getline(cin, line))
-            break;  // EOF
+        if (!getline(cin, line)) break;  // EOF
 
-        // check for exit
         string trimmed = line;
         size_t start = trimmed.find_first_not_of(" \t");
         if (start != string::npos) trimmed = trimmed.substr(start);
-        // trim trailing whitespace
         size_t end = trimmed.find_last_not_of(" \t\r\n");
         if (end != string::npos) trimmed = trimmed.substr(0, end + 1);
-
 
         if (trimmed == "exit" || trimmed == "quit")
         {
@@ -74,7 +101,6 @@ void run_repl()
             break;
         }
 
-        // accumulated line
         accumulated += line + "\n";
 
         // A line ending in ':' opens a block: keep reading until an empty line ends it.
@@ -86,61 +112,41 @@ void run_repl()
             if (!trimmed.empty()) continue;
             in_block = false;
         }
-
-        // we have a complete input - parse and execute
         if (accumulated.find_first_not_of(" \t\r\n") == string::npos)
         {
-            // blank input - reset and continue
             accumulated = "";
             continue;
         }
 
-        // clear errors from previous iterations
-        errorList.clear();
+        // The ignite block's start: the session's variables, declared again
+        string restore = "ignite:\n";
+        for (const ReplVariable& v : session) restore += "    " + v.declaration + "\n";
 
-        // parse
-        string wrapped = accumulated;
         bool hasIgnite = accumulated.find("ignite") != string::npos;
-        bool hasTopLevel = (hasIgnite ||
-                           accumulated.find("def ") != string::npos ||
-                           accumulated.find("class ") != string::npos ||
-                           accumulated.find("struct ") != string::npos ||
-                           accumulated.find("orbit ") != string::npos);
-        if (!hasTopLevel)
+        bool hasTopLevel = hasIgnite || accumulated.find("def ") != string::npos ||
+                           accumulated.find("class ") != string::npos || accumulated.find("struct ") != string::npos ||
+                           accumulated.find("orbit ") != string::npos;
+        if (!hasTopLevel)  // statements: they run in the ignite block, after the session's variables
         {
-            // Pure statements - indent them into an ignite block
-            wrapped = "ignite:\n";
+            string source = definitions + restore;
+            int first = lines_in(source) + 1;
             istringstream lines(accumulated);
             string l;
-            while (getline(lines, l)) wrapped += "    " + l + "\n";
+            while (getline(lines, l)) source += "    " + l + "\n";
+            run(source, first, &session);
         }
-        else if (!hasIgnite)
+        else if (!hasIgnite)  // definitions: kept for later entries once they compile
         {
-            // Top-level def/class/import without an ignite block - append an empty one
-            wrapped = accumulated + "\nignite:\n    pass\n";
+            string source = definitions + accumulated;
+            int first = lines_in(definitions) + 1;
+            source += "\n" + restore + "    pass\n";
+            if (run(source, first, &session)) definitions += accumulated + "\n";
         }
-        set<string> already_imported;
-        string processed = preprocess_import(wrapped, ".", already_imported);
-        lexer.ReinitializeFromString(processed);
-        struct InstructionNode* program = parse_generate_intermediate_representation();
-
-        if (!errorList.empty())
+        else  // a whole program with its own ignite block: the definitions so far, but not the session's variables
         {
-            for (const string& err : errorList)
-                fprintf(stderr, "%s\n", err.c_str());
-            errorList.clear();
-            accumulated = "";
-            in_block = false;
-            continue; // recover insterad of crashing
-        }
-        else if (program != nullptr)
-        {
-            // execute
-            input_replay_index = -1;  // live stdin mode
-            execute_program(program);
+            run(definitions + accumulated, lines_in(definitions) + 1, nullptr);
         }
 
-        // reset for next input
         accumulated = "";
         in_block = false;
     }

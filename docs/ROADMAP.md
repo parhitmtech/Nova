@@ -43,9 +43,9 @@ first: they could not keep up with the language, and native code will come from 
    location in one space over all buffers, a length, an interned symbol); names and keywords share one
    interned table (a keyword is recognised by the same lookup); NEWLINE / INDENT / DEDENT are made while
    scanning. `#@line` markers from imports become line directives in the SourceManager, which works out lines
-   and columns only when asked. The current parser reads these tokens through a small compatibility pass that
-   rebuilds the braces-and-semicolons form; phase 2's parser reads them directly.
-2. **Parse tree and check pass.** The parser builds a flat tree (Carbon / Zig style) and a separate pass
+   and columns only when asked. (Until 2c-6, a small compatibility pass rebuilt the braces-and-semicolons form
+   for the old parser; the parse tree reads the tokens directly.)
+2. **Parse tree and check pass** (done). The parser builds a flat tree (Carbon / Zig style) and a separate pass
    resolves names and types and lowers to IR, replacing the one-pass parser's global state (`lastExprType`
    etc.) and the token re-reading for generics. One interned symbol table with scopes as a stack replaces the
    ten name-keyed maps. `+=` and friends become real operators (today `v[f()] += 1` evaluates `f()` twice).
@@ -111,8 +111,22 @@ first: they could not keep up with the language, and native code will come from 
      them. A copy never made is never lowered. Lowering now covers every run test in the suite. Not covered yet: a
      class whose parent is a generic class (`class C extends Box`, which the check pass lets through), struct
      parameters and return values, container values in a multiple declaration, container comparisons, and container
-     fields of structs. 2c-6: the REPL and debugger move to the new front end, and the old parser, the braces-form pass
-     and the fallback are deleted.
+     fields of structs. 2c-6 (done): the old parser (ten files, about 5,800 lines), the braces-form pass and the
+     fallback are deleted; every program goes through the parse tree, the check pass and lowering, and `--check`
+     stops after the check pass. The gaps above are closed: container `==` / `!=` (by identity) and objects and
+     containers in a multiple declaration are lowered, and the rest, which the old parser could not compile either,
+     are check-pass errors: struct parameters and return values, struct comparisons, array / object / container
+     fields of a struct, a struct field of a class, a parent class that is generic, a switch on anything but an int,
+     `string(x)` / `bool(x)`, and several values from a method call. `unlowered()` remains as a last check, so a
+     program the check pass lets through by mistake stops with "cannot lower this yet" instead of being lowered
+     wrongly. `x += e` works its target's parts out once (`v[f()] += 1` calls `f` once; a temporary part is dropped
+     once). The runtime now hands every object or container a call returns back to the caller (it handed back only
+     the first, so a second returned container was freed). The REPL lowers each entry as a program of its own: the
+     definitions so far, then an ignite block that declares again the variables earlier entries made, which lowering
+     binds to the slots they already have (`ReplVariable`); class and method ids are kept by name across entries, so
+     earlier objects still dispatch. The debugger needed no change. The old parser's dead state (`own_kind`, the
+     field / self slot sets, `classTable` and the other name-keyed tables) is removed, and the tensor built-in tables
+     move to `builtins.cc`.
 3. **Error recovery.** Error nodes and resynchronisation at statement and block boundaries, so one mistake gives
    one error; messages give the column as well as the line (from the token locations phase 1 records).
 

@@ -208,18 +208,6 @@ void tensor_release(int h)
     }
 }
 
-// Which mem[] object slots (instance fields, method self copies) currently own a reference to the
-// tensor they hold. Only used for ASSIGNs with own_kind 1 or 2 (see compiler.h). Starts all false, so
-// a field's initial 0 is never mistaken for an owned handle 0.
-static std::vector<char> g_memOwns;
-bool slot_owns(int i) { return i >= 0 && i < (int)g_memOwns.size() && g_memOwns[i]; }
-void set_owns(int i, bool v)
-{
-    if (i < 0) return;
-    if (i >= (int)g_memOwns.size()) g_memOwns.resize(i + 1, 0);
-    g_memOwns[i] = v ? 1 : 0;
-}
-
 std::mt19937 rng(42);
 
 struct ProgressBar {

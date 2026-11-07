@@ -5,7 +5,7 @@
 
 using namespace std;
 
-extern const map<string, TensorOp> TENSOR_OP_MAP;  // the tensor built-ins (parser_state.cc)
+extern const map<string, TensorOp> TENSOR_OP_MAP;  // the tensor built-ins (builtins.cc)
 
 namespace {
     // Every name in scope, in one table. visible[name] is the innermost binding of that name, and each binding 
@@ -282,6 +282,10 @@ namespace {
                     if (e == NoEntity || out.entities[e].kind != EntityKind::Class)
                     {
                         error(t, "unknown parent class '" + text(t) + "'");
+                    }
+                    else if (tree.kind(tree.children(out.entities[e].decl)[0]) == NodeKind::TypeParams)
+                    {
+                        error(t, "a class cannot extend the generic class '" + text(t) + "'");
                     }
                     else
                     {
