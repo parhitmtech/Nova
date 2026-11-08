@@ -1,0 +1,63 @@
+# Batched matmul gradient: finite-difference check of dL/dA and dL/dB for every element,
+# L = mse_loss(A @ B, T) with A (2,2,3), B (2,3,4): non-square, so a swapped loop bound shows up.
+def dabs(double x) -> double:
+    if (x < 0.0): return 0.0 - x
+    return x
+
+ignite:
+    double eps = 0.0001
+    double tol = 0.0001
+    Tensor A = tensor_randn(2, 2, 3)
+    Tensor B = tensor_randn(2, 3, 4)
+    Tensor T = tensor_randn(2, 2, 4)
+
+    requires_grad(A)
+    requires_grad(B)
+    Tensor L = mse_loss(matmul(A, B), T)
+    backward(L)
+    Tensor gA = tensor_grad(A)
+    Tensor gB = tensor_grad(B)
+
+    # dL/dA
+    double maxdiff = 0.0
+    int p = 0
+    while (p < 2):
+        int i = 0
+        while (i < 2):
+            int k = 0
+            while (k < 3):
+                double orig = tensor_get(A, p, i, k)
+                tensor_set(A, p, i, k, orig + eps)
+                double lossP = tensor_get(mse_loss(matmul(A, B), T), 0, 0)
+                tensor_set(A, p, i, k, orig - eps)
+                double lossM = tensor_get(mse_loss(matmul(A, B), T), 0, 0)
+                tensor_set(A, p, i, k, orig)
+                double d = dabs((lossP - lossM) / (2.0 * eps) - tensor_get(gA, p, i, k))
+                if (d > maxdiff): maxdiff = d
+                k = k + 1
+            i = i + 1
+        p = p + 1
+    if (maxdiff < tol): print("PASS bmm dA")
+    else: print("FAIL bmm dA")
+
+    # dL/dB
+    maxdiff = 0.0
+    p = 0
+    while (p < 2):
+        int kb = 0
+        while (kb < 3):
+            int jb = 0
+            while (jb < 4):
+                double origB = tensor_get(B, p, kb, jb)
+                tensor_set(B, p, kb, jb, origB + eps)
+                double lossPB = tensor_get(mse_loss(matmul(A, B), T), 0, 0)
+                tensor_set(B, p, kb, jb, origB - eps)
+                double lossMB = tensor_get(mse_loss(matmul(A, B), T), 0, 0)
+                tensor_set(B, p, kb, jb, origB)
+                double dB = dabs((lossPB - lossMB) / (2.0 * eps) - tensor_get(gB, p, kb, jb))
+                if (dB > maxdiff): maxdiff = dB
+                jb = jb + 1
+            kb = kb + 1
+        p = p + 1
+    if (maxdiff < tol): print("PASS bmm dB")
+    else: print("FAIL bmm dB")

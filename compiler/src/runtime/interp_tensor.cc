@@ -196,15 +196,10 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_MATMUL: 
                 {
-                    // (..., n) @ (n, m): an N-D left side is treated as a stack of rows and keep its
-                    // leading dimensions in the result. An N-D right side (batched matmul) comes in M1 stage 3.
-                    require_2d(mem[a[1]], "matmul (right operand)", pc->line_no);
-                    if (tensor_heap[mem[a[0]]].cols != tensor_heap[mem[a[1]]].rows)
-                    {
-                        tensor_shape_error(pc->line_no, "matmul: inner dimensions differ (" + 
-                            std::to_string(tensor_heap[mem[a[0]]].cols) + " vs " + 
-                            std::to_string(tensor_heap[mem[a[1]]].rows) + ")");
-                    }
+                    // (..., n, k) @ (k, m): an N-D left side is a stack of rows. (b..., n, k) @ (b..., k, m):
+                    // a batched matmul, one matrix product per batch index. Either way the result keeps the left
+                    // side's leading dimensions, with m last.
+                    require_matmul(mem[a[0]], mem[a[1]], pc->line_no);
                     if (grad_mode)
                     {
                         res = ag_matmul(mem[a[0]], mem[a[1]]);

@@ -146,9 +146,20 @@ first: they could not keep up with the language, and native code will come from 
 
 ## After phase 7: the ML work
 
-Planned in detail once phase 7 is done. It starts with **batched matmul (`bmm`)**, with its tests (`tensor_bmm`,
-`grad_bmm`, `error_bmm_batch_mismatch`), and then the tensor compiler below, custom CUDA / cuBLAS kernels,
-memory (out-of-memory) work, and FlashAttention / Triton-style inference.
+Planned in detail once phase 7 is done: the tensor compiler below, custom CUDA / cuBLAS kernels, memory
+(out-of-memory) work, and FlashAttention / Triton-style inference.
+
+**Batched matmul (`bmm`)** (done, ahead of phase 3, since it is runtime-only and phase 7 carries `matmul` as one op
+either way). A right side of rank 3 or more makes `matmul` batched: `(b..., n, k) @ (b..., k, m)` gives
+`(b..., n, m)`, one matrix product per batch index, forward and backward. Both sides need the same rank and batch
+dimensions (`error_bmm_batch_mismatch`, `error_bmm_rank_mismatch`); broadcasting a matrix over a batch
+(`(n, k) @ (b, k, m)`) is the follow-up. Both kinds of matmul are one loop over batches of matrix pairs
+(`matmul_sizes`): a 2-D right side is one batch, so 2-D programs compute exactly what they did. `grad_bmm` checks
+every gradient element against finite differences. `tensor_bmm` was also the first program to make loop-invariant
+code motion move anything, and the move linked the instruction list into a cycle (`--optimize` never finished).
+LICM is rewritten: it moves an int `+` / `-` / `*` whose operands the loop never writes, and only when the moved
+value is not read before it is written, not read after the loop, and the loop is entered only through its header
+(`licm_loops`).
 
 ## 3. Tensors on GPUs: MLIR and IREE
 
