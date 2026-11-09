@@ -11,7 +11,7 @@ SourceLoc SourceManager::add_buffer(const string& name, string text)
 {
     unique_ptr<Buffer> b(new Buffer());
     b->name = name;
-    b->text = move(text);
+    b->text = std::move(text);
     b->start = next;
     b->lineStarts.push_back(0);
     for (const char* p = b->text.c_str(); (p = strchr(p, '\n')) != nullptr; p++)
@@ -19,7 +19,7 @@ SourceLoc SourceManager::add_buffer(const string& name, string text)
         b->lineStarts.push_back((uint32_t)(p - b->text.c_str()) + 1);
     }
     next += (SourceLoc)b->text.size() + 1;  // +1: the '\0' after the text has a location too (end of file)
-    buffers.push_back(move(b));
+    buffers.push_back(std::move(b));
     return buffers.back()->start;
 }
 
