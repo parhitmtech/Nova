@@ -6,9 +6,9 @@ Where NovaComp is heading after the syntax redesign (steps 1–9, stages A and B
 ## 0. Fix first
 
 These issues turned up in the like-for-like benchmarks. Each has a minimal reproduction in
-[BENCHMARKS.md](BENCHMARKS.md#issues-found), and each fix should land with a golden test:
+[BENCHMARKS.md](BENCHMARKS.md#issues-found), and each fix should land with a golden test (the first one,
+`--optimize` never finishing on a loop, is fixed):
 
-- `--optimize` never finishes on a loop that does arithmetic on a vector element.
 - `int` is 32-bit and overflows silently.
 - Memoization treats a function as pure without checking the functions it calls, so their side effects are
   skipped.

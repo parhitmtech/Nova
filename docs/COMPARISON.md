@@ -11,7 +11,7 @@ to compete. Performance numbers are in [BENCHMARKS.md](BENCHMARKS.md).
 | Typing | Static, checked before running | Dynamic | Dynamic; shapes fixed when traced | Optional static | Dynamic, inferred by the JIT |
 | Tensors | Built-in language type | Library | Library | Library | Arrays built in; ML in libraries |
 | Autodiff | Built in, at the tensor-op level | Library (eager tape) | Library (program transformation) | Library | Libraries (Zygote, Enzyme) |
-| Compilation | One-pass parser → linked-list IR → interpreter, bytecode VM or x86 assembly | Eager; `torch.compile` → Triton kernels | Traced to XLA (StableHLO) | MLIR → LLVM | LLVM JIT |
+| Compilation | Parse tree → check pass → linked-list IR → interpreter (LLVM and IREE planned) | Eager; `torch.compile` → Triton kernels | Traced to XLA (StableHLO) | MLIR → LLVM | LLVM JIT |
 | Platform | IDE, sandboxed runs, GPU cluster in one | Language and libraries | Language and libraries | Language and toolchain | Language and toolchain |
 | Maturity | Research and teaching project | Industry standard | Industry standard | Young, commercial | Mature, scientific |
 
@@ -36,8 +36,8 @@ as a compile error. A staged path:
    unified at each call site the way generic types already are.
 3. Fall back to a runtime check only where a shape depends on data (for example, `tensor_load_csv`).
 
-This would be the feature no mainstream ML tool offers. The planned `error_bmm_batch_mismatch` test is the
-first step.
+This would be the feature no mainstream ML tool offers. Batched matmul's shape rules
+(`error_bmm_batch_mismatch`) are checked at run time today; the check pass is where they would move.
 
 ### 2. Whole-program tensor compilation *(roadmap step 3: MLIR / IREE)*
 
@@ -57,14 +57,14 @@ differentiates at the LLVM IR level and would fit roadmap step 4.
 ### 4. A fast reference interpreter *(before and alongside roadmap step 4: LLVM)*
 
 The roadmap keeps the interpreter as the reference implementation for the REPL, the debugger and tests, so
-its speed matters even after LLVM arrives. Function calls cost about 9× what they cost in CPython. CPython
+its speed matters even after LLVM arrives. Function calls cost about 7.5× what they cost in CPython. CPython
 3.11 and Lua 5 show how far careful interpreter design goes:
 - register-based instructions;
 - contiguous frames instead of copying slots in and out;
 - per-call-site decisions made at compile time;
 - specialized ("quickened") instructions.
 
-Most of this fits naturally once the typed SSA IR from roadmap step 2 exists.
+Most of this lands with roadmap phases 6 and 7: frames on a value stack, and the typed Nova IR.
 
 ### 5. Well-defined integer semantics
 
@@ -75,7 +75,7 @@ traps on overflow in debug runs fits a language for numeric work best.
 ### 6. Tooling that comes with the language
 
 Mojo, Julia and Rust ship a language server. A Nova language server (diagnostics, hover types, go to
-definition), built on the parser's existing type checker, would:
+definition), built on the check pass, which already resolves every name and type, would:
 - serve the Monaco editor and VS Code alike;
 - give NovaBot structured compiler errors instead of text to interpret.
 
@@ -83,11 +83,11 @@ A formatter is the other tool these languages ship.
 
 ### 7. Differential testing and fuzzing
 
-Nova has four back ends and an optimizer, and each one is a chance to miscompile. Production compilers catch
-these bugs by running one program through every configuration and comparing outputs; this is how Csmith and
-YARPGen find bugs in GCC and LLVM. Nova's golden tests already run with and without `--optimize`. Two
-extensions:
-- Run the same tests through the bytecode VM.
+Nova has an optimizer and will gain back ends (LLVM, IREE), and each one is a chance to miscompile.
+Production compilers catch these bugs by running one program through every configuration and comparing
+outputs; this is how Csmith and YARPGen find bugs in GCC and LLVM. Nova's golden tests already run with and
+without `--optimize`. Two extensions:
+- Run the same tests through each new back end as it arrives.
 - Fuzz the lexer and parser with libFuzzer in the existing ASan + UBSan CI job.
 
 Issues 1 and 3 in BENCHMARKS.md are the kind of bug this catches.

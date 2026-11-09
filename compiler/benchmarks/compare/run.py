@@ -19,7 +19,8 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 COMPILER_ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-NOVA = os.environ.get("NOVA_COMPILER_PATH", os.path.join(COMPILER_ROOT, "build", "nova"))
+NOVA = os.environ.get("NOVA_COMPILER_PATH",
+                      os.path.join(COMPILER_ROOT, "build", "nova.exe" if os.name == "nt" else "nova"))
 BENCHMARKS = ["calls", "int_loop", "vector_sum"]
 
 
@@ -61,8 +62,9 @@ def main():
     columns = [("Nova", lambda b: [NOVA, src(b, "nova")])]
     if args.optimize:
         columns.append(("Nova --optimize", lambda b: [NOVA, src(b, "nova"), "--optimize"]))
-    if shutil.which("python3"):
-        columns.append(("CPython", lambda b: ["python3", src(b, "py")]))
+    python = shutil.which("python3") or sys.executable  # Windows has no python3 command
+    if python:
+        columns.append(("CPython", lambda b: [python, src(b, "py")]))
     if shutil.which("node"):
         columns.append(("Node", lambda b: ["node", src(b, "js")]))
     if cc:

@@ -26,22 +26,26 @@ output differs from the other languages.
 
 ## Results
 
-Measured on an Apple M4 Pro (macOS, arm64) with Python 3.11.9, Node 24.3.0 and Apple clang 17. The compiler
-was built from `main` at `e2d63e6`. Times are best of 7. Nova's startup is about 3 ms.
+Measured on an Intel Core Ultra 7 155H (Windows 11) with Python 3.13.6, Node 22.18.0 and gcc 15.2 (MSYS2).
+The compiler was built from `main` at `c5f25a8`. Times are best of 7. Starting a process costs about 15 ms
+here, so the C column is almost all startup.
 
 | Benchmark | Nova | Nova `--optimize` | CPython | Node | C `-O2` |
 |---|---|---|---|---|---|
-| `calls` | 1,048 ms | 1,001 ms | 117 ms | 42 ms | 5 ms |
-| `int_loop` | 104 ms ⚠️ | 104 ms ⚠️ | 404 ms | 48 ms | 5 ms |
-| `vector_sum` | 73 ms | timed out (issue 1) | 145 ms | 48 ms | 4 ms |
+| `calls` | 1,004 ms | 1,005 ms | 134 ms | 56 ms | 17 ms |
+| `int_loop` | 134 ms ⚠️ | 135 ms ⚠️ | 486 ms | 54 ms | 17 ms |
+| `vector_sum` | 93 ms | 97 ms | 192 ms | 64 ms | 17 ms |
+
+The first measurement (Apple M4 Pro, `main` at `e2d63e6`) gave the same picture, except that `vector_sum` with
+`--optimize` timed out (issue 1, since fixed).
 
 ⚠️ Nova prints `-562863104` here; the correct answer is `2250000000000` (issue 2).
 
 What the numbers say:
 
-- **Loops and vectors:** the interpreter runs straight-line integer code 2–4× faster than CPython, close to
+- **Loops and vectors:** the interpreter runs straight-line integer code 2–3.5× faster than CPython, close to
   Node.
-- **Function calls are the bottleneck:** about 9× slower than CPython. Each call in
+- **Function calls are the bottleneck:** about 7.5× slower than CPython. Each call in
   `runtime/interp_calls.cc`:
   - builds a `CallFrame` that heap-allocates several `std::vector`s (`savedSlots`, `allRetSlots`,
     `memo_key`);
@@ -50,13 +54,11 @@ What the numbers say:
     every parameter;
   - converts every argument through `double`.
 
-  Moving the per-call-site decisions into the parser, and using a contiguous frame stack instead of copying
-  slots in and out, should remove most of this cost. The typed SSA IR on the [roadmap](ROADMAP.md) is the
-  natural place to make that change.
+  Moving the per-call-site decisions into lowering, and using a contiguous frame stack instead of copying
+  slots in and out, should remove most of this cost: that is phase 6 of the [roadmap](ROADMAP.md) (frames on
+  a value stack), with phase 7's Nova IR.
 - **`--optimize` doesn't change these timings.** Its passes simplify the IR, but none of them reduce
   per-instruction interpreter overhead.
-- **The x86 JIT and assembly back ends aren't measured.** The JIT is off by default, and neither runs on
-  arm64.
 
 ### Caveats about the older benchmarks
 
@@ -73,9 +75,14 @@ don't measure the same work in each language:
 
 ## Issues found
 
-Each issue reproduces on `main` at `e2d63e6`.
+Found on `main` at `e2d63e6`, and rechecked at `c5f25a8`: issue 1 is fixed, and issues 2–5 still reproduce.
 
-### 1. `--optimize` never finishes on a loop that does arithmetic on a vector element
+### 1. `--optimize` never finishes on a loop that does arithmetic on a vector element (fixed)
+
+Fixed in #8. Loop-invariant code motion linked the instruction list into a cycle whenever it moved an
+instruction out of a loop (`v[i] * 7`'s multiplier was the first invariant it found here), so the passes after
+it never finished. The pass was rewritten; `licm_loops` covers it, and the golden tests run with `--optimize` in
+CI. The original report:
 
 ```python
 ignite:
@@ -147,7 +154,7 @@ support yet:
 
 | Documented | Today |
 |---|---|
-| `10_000` digit separators | Parse error (`missing ')' after the condition of 'while'`) |
+| `10_000` digit separators | Parse error (`expected the end of the statement, got '_000'`) |
 | `layer1.W.grad` | `a Tensor has no member 'grad'`; use `tensor_grad(t)` |
 | `print(pred)` for a tensor | Prints the handle number; use `tensor_print(t)` |
 | `"\n"`, `"\t"` escapes | Printed literally (`compiler/tests/grad_stress_loop.expected` currently expects `\n`) |
