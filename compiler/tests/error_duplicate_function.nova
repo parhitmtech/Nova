@@ -1,0 +1,9 @@
+# A function is defined once.
+def f() -> int:
+    return 1
+
+def f() -> int:
+    return 2
+
+ignite:
+    print(f())

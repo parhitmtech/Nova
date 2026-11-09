@@ -1,0 +1,10 @@
+# A field is read from the object's class (or a parent class); a name it does not have is an error.
+class Point:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    Point p = Point(1)
+    print(p.y)

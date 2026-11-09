@@ -1,0 +1,5 @@
+Error at line 3: 'string(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
+Error at line 4: 'bool(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
+Error at line 5: 'int(...)' converts a number, not string
+Error at line 6: 'int(...)' converts one value
+Error at line 7: 'vector<int>()' takes no arguments

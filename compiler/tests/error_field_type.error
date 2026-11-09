@@ -1,0 +1,1 @@
+Error at line 10: cannot assign string to int field 'size' of class 'Box'

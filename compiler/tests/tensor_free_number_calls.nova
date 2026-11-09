@@ -1,0 +1,28 @@
+# A call to a function that takes or returns a float or double, while tensors are alive. Those values live in
+# fmem[] / dmem[], numbered apart from the mem[] slots that hold tensors: a parameter or return slot that has a
+# tensor slot's number must not retain or release that tensor.
+def half(double x) -> double:
+    return x / 2.0
+
+def shrink(float f) -> float:
+    return f * 0.5
+
+def total(Tensor t, double k) -> double:
+    return tensor_sum(t) * k
+
+ignite:
+    Tensor t = ones(2, 2)
+    Tensor u = ones(2, 2)
+    Tensor v = ones(2, 2)
+    double h = half(3.0)
+    float s = shrink(1.0)
+    print(h)
+    print(s)
+    int i = 0
+    double acc = 0.0
+    while (i < 5):
+        acc = acc + half(total(t, 1.0)) + total(u, 2.0)
+        i += 1
+    print(acc)
+    print(t[0, 0] + u[0, 0] + v[0, 0])
+    print(tensor_live_count())

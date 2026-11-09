@@ -114,6 +114,52 @@ void require_2d(int h, const char* op, int line)
     }
 }
 
+// matmul's shapes. A right side of rank 1 or 2 is one (k x m) matrix, and the left side's last dimension is k:
+// (..., n, k) @ (k, m). A right side of rank 3 or more is a batch of matrices (batched matmul): the left side has the
+// same rank and the same batch dimensions (all but the last two), (b..., n, k) @ (b..., k, m).
+void require_matmul(int a, int b, int line)
+{
+    const Tensor& A = tensor_heap[a];
+    const Tensor& B = tensor_heap[b];
+    int inner = B.rows;
+    if (B.ndim() > 2)
+    {
+        int nd = B.ndim();
+        if (A.ndim() != nd)
+        {
+            tensor_shape_error(line, "matmul: a batched matmul needs both sides of the same rank (got " +
+                               std::to_string(A.ndim()) + " and " + std::to_string(nd) + ")");
+        }
+        for (int d = 0; d < nd - 2; d++)
+        {
+            if (A.shape[d] != B.shape[d])
+            {
+                tensor_shape_error(line, "matmul: batch dimension " + std::to_string(d) + " differs (" +
+                                   std::to_string(A.shape[d]) + " vs " + std::to_string(B.shape[d]) + ")");
+            }
+        }
+        inner = B.shape[nd - 2];
+    }
+    if (A.cols != inner)
+    {
+        tensor_shape_error(line, "matmul: inner dimensions differ (" + std::to_string(A.cols) + " vs " +
+                           std::to_string(inner) + ")");
+    }
+}
+
+// A 2-D right side is one matrix that every row of the left side meets: one batch, with n all of A's rows. A batched
+// one is matched with the left side's matrices by batch index.
+MatmulSizes matmul_sizes(int a, int b)
+{
+    const Tensor& A = tensor_heap[a];
+    const Tensor& B = tensor_heap[b];
+    if (B.ndim() <= 2) return {1, A.rows, A.cols, B.cols};
+    int nd = B.ndim();
+    int batches = 1;
+    for (int d = 0; d < nd - 2; d++) batches *= B.shape[d];
+    return {batches, A.shape[nd - 2], A.cols, B.cols};
+}
+
 // Element-wise ops need equal shapes; + and - also accept an MxN matrix with a 1xN row on the right (a bias).
 void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast)
 {
@@ -208,18 +254,6 @@ void tensor_release(int h)
     }
 }
 
-// Which mem[] object slots (instance fields, method self copies) currently own a reference to the
-// tensor they hold. Only used for ASSIGNs with own_kind 1 or 2 (see compiler.h). Starts all false, so
-// a field's initial 0 is never mistaken for an owned handle 0.
-static std::vector<char> g_memOwns;
-bool slot_owns(int i) { return i >= 0 && i < (int)g_memOwns.size() && g_memOwns[i]; }
-void set_owns(int i, bool v)
-{
-    if (i < 0) return;
-    if (i >= (int)g_memOwns.size()) g_memOwns.resize(i + 1, 0);
-    g_memOwns[i] = v ? 1 : 0;
-}
-
 std::mt19937 rng(42);
 
 struct ProgressBar {
@@ -294,15 +328,30 @@ int ten_xavier(int r, int c)
     return h;
 }
 
+// C = A @ B, one batch at a time (matmul_sizes); the caller gives C its N-D shape
 int ten_matmul(int a, int b)
 {
-    int aRows = tensor_heap[a].rows, aCols = tensor_heap[a].cols;
-    int bCols = tensor_heap[b].cols;
-    int h = alloc_tensor(aRows, bCols);
-    for (int i = 0; i < aRows; i++)
-        for (int k = 0; k < aCols; k++)
-            for (int j = 0; j < bCols; j++)
-                tensor_heap[h].at(i, j) += tensor_heap[a].at(i, k) * tensor_heap[b].at(k, j);
+    MatmulSizes s = matmul_sizes(a, b);
+    int h = alloc_tensor(s.batches * s.n, s.m);  // before taking the data: allocating can move tensor_heap
+    const double* A = tensor_heap[a].data.data();
+    const double* B = tensor_heap[b].data.data();
+    double* C = tensor_heap[h].data.data();
+    for (int p = 0; p < s.batches; p++)
+    {
+        const double* Ap = A + (size_t)p * s.n * s.k;
+        const double* Bp = B + (size_t)p * s.k * s.m;
+        double* Cp = C + (size_t)p * s.n * s.m;
+        for (int i = 0; i < s.n; i++)
+        {
+            for (int t = 0; t < s.k; t++)
+            {
+                for (int j = 0; j < s.m; j++)
+                {
+                    Cp[i * s.m + j] += Ap[i * s.k + t] * Bp[t * s.m + j];
+                }
+            }
+        }
+    }
     return h;
 }
 

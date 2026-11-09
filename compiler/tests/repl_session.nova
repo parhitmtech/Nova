@@ -1,0 +1,2 @@
+# The REPL (--repl; repl_session.input is what is typed): each entry is compiled with the new front end as a
+# program of its own, and the variables and definitions earlier entries made live on.

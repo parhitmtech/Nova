@@ -1,0 +1,26 @@
+# Lowering: fixed and dynamic arrays, element compound assignment, and an array made on every call.
+def fill(int n) -> int:
+    data = array(n)
+    for (i = 0 ; i < n ; i += 1):
+        data[i] = i * i
+    int s = 0
+    for (i = 0 ; i < n ; i += 1):
+        s += data[i]
+    return s
+
+ignite:
+    arr = array(4)
+    arr[0] = 3
+    arr[1] = arr[0] * 2
+    arr[2] = arr[1] + arr[0]
+    arr[3] += 10
+    arr[0] *= 5
+    for (i = 0 ; i < 4 ; i += 1):
+        print(arr[i])
+    print(fill(5))
+    print(fill(3))
+    n = 6
+    dyn = array(n + 1)
+    dyn[n] = 42
+    print(dyn[n])
+    print(arr[1 + 1])

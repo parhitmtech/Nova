@@ -1,0 +1,4 @@
+# push() changes the vector and gives no value, so it is a statement on its own.
+def main():
+    vector<int> v = vector<int>()
+    int n = v.push(1)

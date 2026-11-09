@@ -1,0 +1,7 @@
+# int(x), float(x) and double(x) convert one number; vector<T>() and map<K, V>() take no arguments.
+def main():
+    string s = string(5)
+    bool b = bool(1)
+    int n = int("7")
+    int m = int(1, 2)
+    vector<int> v = vector<int>(3)

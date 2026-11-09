@@ -1,0 +1,50 @@
+# Containers local to functions and methods, recursion, and container fields of objects made in a loop
+class Stack2:
+    vector<int> xs
+
+    def init():
+        pass
+
+    def push(int x):
+        self.xs.push(x)
+
+    def pop() -> int:
+        return self.xs.pop()
+
+    def size() -> int:
+        return self.xs.size()
+
+def fill(int n) -> int:
+    vector<int> v = vector<int>()
+    int i = 0
+    while (i < n):
+        v.push(i)
+        i += 1
+    return v.size()
+
+def build(int depth) -> vector<int>:
+    if (depth == 0):
+        vector<int> base = vector<int>()
+        base.push(0)
+        return base
+    vector<int> r = build(depth - 1)
+    r.push(depth)
+    return r
+
+def main():
+    print(fill(4))
+    print(fill(6))
+    vector<int> b = build(4)
+    print(b.size())
+    print(b[4])
+    Stack2 s = Stack2()
+    s.push(1)
+    s.push(2)
+    print(s.pop())
+    print(s.size())
+    int i = 0
+    while (i < 5):
+        Stack2 t = Stack2()
+        t.push(i)
+        i += 1
+    print(build(2).sum())

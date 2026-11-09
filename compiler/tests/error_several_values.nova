@@ -1,0 +1,20 @@
+# Only a function call gives several values; containers are compared with == and != only, and with their own type.
+class M:
+    int v
+
+    def init():
+        self.v = 1
+
+    def pair() -> int, int:
+        return self.v, self.v * 10
+
+def main():
+    M m = M()
+    int a, int b = m.pair()
+    vector<int> v = vector<int>()
+    vector<int> w = vector<int>()
+    vector<double> d = vector<double>()
+    if (v < w):
+        print(1)
+    if (v == d):
+        print(2)

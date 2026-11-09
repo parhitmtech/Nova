@@ -1,0 +1,44 @@
+# Lowering: and / or / not as values and conditions (each stops at the operand that decides), comparisons
+# across number types, string comparisons, and any number as a condition.
+def noisy(int v) -> int:
+    print(v)
+    return v
+
+def is_even(int n) -> bool:
+    return n % 2 == 0
+
+ignite:
+    bool t = true
+    bool f = false
+    print(t and f)
+    print(t or f)
+    print(not t)
+    print(not (1 > 2))
+    print(noisy(0) and noisy(1) and noisy(2))
+    print(noisy(1) and noisy(2) and noisy(0))
+    print(noisy(0) or noisy(0) or noisy(3))
+    print(noisy(4) or noisy(5))
+    print((noisy(1) or noisy(2)) and noisy(0))
+    print(1 < 2 and 2 < 3 or 5 < 4)
+    print(2.5 > 2)
+    print(3 == 3.0)
+    print(1.5 <= 1.5)
+    x = 0
+    if (x):
+        print(100)
+    elif (is_even(4) and not is_even(3)):
+        print(200)
+    else:
+        print(300)
+    if (2.0):
+        print(400)
+    if (not 0.0):
+        print(500)
+    string s = "abc"
+    if (s == "abc"):
+        print(600)
+    if (s != "abd" and s < "abd"):
+        print(700)
+    bool c = s == "x"
+    print(c)
+    print(is_even(10))

@@ -1,0 +1,21 @@
+# Types the check pass works out without being written: a variable set without a declaration takes its first
+# value's type, a function without '-> type' returns its first return's type, a float widens to a double, and
+# a number combines with a Tensor on either side of + - *.
+def average(double a, double b):
+    return (a + b) / 2.0
+
+def total(int n) -> int:
+    int s = 0
+    for (i = 1; i <= n; i += 1):
+        s += i
+    return s
+
+ignite:
+    count = total(4)
+    print(count)
+    double mid = average(1.0, 2.0)
+    print(mid)
+    Tensor t = ones(2, 2)
+    Tensor u = 2.0 * t + 1.0 - t
+    print(tensor_sum(u))
+    print(t.rows + t.cols)

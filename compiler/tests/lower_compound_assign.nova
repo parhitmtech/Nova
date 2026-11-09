@@ -1,0 +1,50 @@
+# x += e works out its target's parts once, for the read and the store: v[f()] += 1 calls f once. A temporary part
+# (holder().n, self.items in self.items[i] += 1) is dropped once, after the store.
+def pick() -> int:
+    print(100)
+    return 1
+
+class Bag:
+    int n
+    int data[4]
+    vector<int> items
+
+    def init():
+        self.items.push(1)
+        self.items.push(2)
+
+    def grow(int by):
+        self.items[pick()] += by
+        self.n += by
+
+def holder() -> Bag:
+    return Bag()
+
+def main():
+    vector<int> v = vector<int>()
+    v.push(1)
+    v.push(2)
+    v[pick()] += 5
+    print(v[1])
+    a = array(3)
+    a[pick()] += 2
+    print(a[1])
+    Bag b = Bag()
+    b.n += 4
+    b.data[pick()] += 7
+    print(b.n + b.data[1])
+    b.grow(10)
+    print(b.items[1] + b.n)
+    holder().n += 1
+    holder().items[pick()] -= 1
+    map<string, double> m = map<string, double>()
+    m["k"] = 1.5
+    m["k"] *= 4.0
+    print(m["k"])
+    Tensor t = ones(2, 2)
+    t[pick(), 0] += 2.0
+    print(t[1, 0])
+    string s = "a"
+    s += "b"
+    print(s)
+    print(tensor_live_count())

@@ -1,0 +1,6 @@
+# self only means something inside a class method.
+def area() -> int:
+    return self.w
+
+ignite:
+    print(area())

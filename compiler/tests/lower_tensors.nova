@@ -1,0 +1,79 @@
+# Lowering tensors (2c-2a): every operator between tensors and numbers, compound assignment on tensors and on
+# elements, indexing with expressions, members, and the built-ins that return a number.
+ignite:
+    Tensor a = ones(2, 3)
+    Tensor b = randn(2, 3)
+    int k = 3
+    float f = 1.5
+    double d = 2.25
+    Tensor c = a + k
+    print(c[0, 0])
+    c = k + a
+    print(c[1, 2])
+    c = a - f
+    print(c[0, 1])
+    c = f - a
+    print(c[1, 1])
+    c = d - a
+    print(c[0, 2])
+    c = a - 2
+    print(c[0, 0])
+    c = 2 - a
+    print(c[0, 0])
+    c = a / k
+    print(c[1, 0])
+    c = a / f
+    print(c[1, 0])
+    c = a / 4
+    print(c[0, 0])
+    c = a * k
+    print(c[0, 0])
+    c = d * a
+    print(c[0, 0])
+    c = -a
+    print(c[1, 1])
+    c = a * b - b
+    print(c[0, 0] - 0.0)
+    c = a / (a + a)
+    print(c[1, 2])
+    Tensor m = ones(3, 2)
+    Tensor p = a @ m
+    print(p.rows)
+    print(p.cols)
+    print(p[0, 0])
+    p = p.T @ p
+    print(p.rank)
+    print(p[1, 1])
+
+    # compound assignment on tensors and on elements
+    Tensor w = ones(2, 2)
+    w += ones(2, 2)
+    print(w[0, 0])
+    w -= 1
+    print(w[0, 0])
+    w *= 3.0
+    print(w[1, 1])
+    w /= 2
+    print(w[1, 0])
+    w[0, 1] += 10.0
+    w[0, 1] -= 0.5
+    w[1, 0] *= 4.0
+    w[1, 1] /= 3.0
+    print(w[0, 1])
+    print(w[1, 0])
+    print(w[1, 1])
+    int i = 1
+    w[i, i - 1] = w[i - 1, i] + w[i, i]
+    print(w[1, 0])
+    print(-w[0, 1])
+    print(w.T[1, 0])
+
+    # whole tensors, members and calls in one expression
+    Tensor cube = zeros(2, 3, 4)
+    cube[1, 2, 3] = 9.0
+    print(cube.rank + cube.rows * 10)
+    print(tensor_dim(cube, 2))
+    print(reshape(cube, 4, 6).cols)
+    print(tensor_sum(cube) + tensor_mean(a) + tensor_max(b - b))
+    tensor_print(w)
+    print(tensor_live_count())

@@ -1,0 +1,23 @@
+# A function can call one defined after it, and two functions can call each other: the check pass knows every
+# definition before it checks a body, and lowering lowers a callee the first time a call needs it.
+def is_even(int n) -> bool:
+    if (n == 0):
+        return true
+    return is_odd(n - 1)
+
+def is_odd(int n) -> bool:
+    if (n == 0):
+        return false
+    return is_even(n - 1)
+
+def main():
+    print(twice(21))
+    print(is_even(10))
+    print(is_odd(7))
+    print(is_even(7))
+
+def twice(int x) -> int:
+    return helper(x) * 2
+
+def helper(int x) -> int:
+    return x

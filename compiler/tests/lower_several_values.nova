@@ -1,0 +1,34 @@
+# Several values from one call into objects and containers, each variable taking the reference the call gives it
+# (the second and later values too), and containers compared by identity: the same container or not.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def two() -> P, vector<int>:
+    vector<int> v = vector<int>()
+    v.push(7)
+    return P(5), v
+
+def pair() -> map<string, int>, P:
+    map<string, int> m = map<string, int>()
+    m["a"] = 1
+    return m, P(2)
+
+def fresh() -> vector<int>:
+    return vector<int>()
+
+def main():
+    int i = 0
+    while (i < 3):
+        P a, vector<int> b = two()
+        print(a.x + b[0])
+        map<string, int> m, P q = pair()
+        print(m["a"] + q.x)
+        vector<int> c = b
+        if (c == b):
+            print(1)
+        if (fresh() != b):
+            print(2)
+        i += 1

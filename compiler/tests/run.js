@@ -9,6 +9,7 @@
 //   foo.expected      — expected stdout, one value per line
 //   foo.input         — (optional) stdin inputs, one value per line
 //   foo.error         — instead of .expected: the program must fail, and stderr must contain each line
+//   foo.args          — (optional) compiler flags for this test, e.g. --dump-tree
 //
 
 const { spawn }   = require("child_process");
@@ -37,12 +38,12 @@ function cleanup(_tmpFile, tmpDir) {
   try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch (_) {}
 }
 
-function runCompiler(source, inputs) {
+function runCompiler(source, inputs, args = []) {
   return new Promise((resolve) => {
     const { tmpDir, tmpFile } = writeTempFile(source);
     let stdout = "", stderr = "";
 
-    const child = spawn(BINARY, [...EXTRA_ARGS, tmpFile], {
+    const child = spawn(BINARY, [...EXTRA_ARGS, ...args, tmpFile], {
       stdio: ["pipe", "pipe", "pipe"],
       env: { ...process.env, NOVA_HOME: COMPILER_ROOT },
     });
@@ -114,12 +115,14 @@ let passed = 0, failed = 0, skipped = 0;
     const expPath  = path.join(TESTS_DIR, base + ".expected");
     const inpPath  = path.join(TESTS_DIR, base + ".input");
     const errPath  = path.join(TESTS_DIR, base + ".error");
+    const argPath  = path.join(TESTS_DIR, base + ".args");
+    const args     = fs.existsSync(argPath) ? fs.readFileSync(argPath, "utf8").split(/\s+/).filter(Boolean) : [];
 
     // Error test: the program must fail (non-zero exit) and stderr must contain every line of .error.
     if (fs.existsSync(errPath)) {
       const wanted = fs.readFileSync(errPath, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
       const inputs = fs.existsSync(inpPath) ? fs.readFileSync(inpPath, "utf8") : "";
-      const result = await runCompiler(fs.readFileSync(srcPath, "utf8"), inputs);
+      const result = await runCompiler(fs.readFileSync(srcPath, "utf8"), inputs, args);
       const missing = result.reason === "TIMEOUT" ? ["(timed out)"]
         : result.code === 0 ? ["(exited with status 0)"]
         : wanted.filter(w => !(result.stderr || "").includes(w));
@@ -144,7 +147,7 @@ let passed = 0, failed = 0, skipped = 0;
     const expected = fs.readFileSync(expPath,  "utf8");
     const inputs   = fs.existsSync(inpPath) ? fs.readFileSync(inpPath, "utf8") : "";
 
-    const result = await runCompiler(source, inputs);
+    const result = await runCompiler(source, inputs, args);
 
     if (!result.ok) {
       const detail = result.reason === "TIMEOUT"

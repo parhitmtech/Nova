@@ -1,0 +1,12 @@
+# switch takes an int, and each case value is an int.
+def main():
+    string s = "b"
+    switch (s):
+        case "a":
+            print(1)
+        default:
+            print(3)
+    int n = 2
+    switch (n):
+        case 2.5:
+            print(2)

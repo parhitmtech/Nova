@@ -277,14 +277,19 @@ a worker container (or as an interactive `--repl` session).
 Nova source
    │
    ▼
-Lexer (frontend/lexer.cc)          tokens, then layout passes:
-   │                               indentation → blocks, x += e → x = x + (e), def main() → entry point
-   ▼
 Modules (frontend/imports.cc)      orbit a.b → a/b.nova next to the file, else the standard library
    │
    ▼
-Parser (frontend/parser*.cc)       one pass, type-checked, emits a linked-list IR (InstructionNode)
-   │                               generic functions/classes are compiled once per type used
+Lexer (frontend/lexer.cc)          compact tokens; indentation becomes INDENT / DEDENT while scanning
+   │
+   ▼
+Parser (frontend/parse.cc)         a flat parse tree (parse_tree.h)
+   │
+   ▼
+Check pass (frontend/check*.cc)    names, scopes and types; generic functions/classes checked once per copy
+   │
+   ▼
+Lowering (frontend/lower.cc)       the checked tree → a linked-list IR (InstructionNode)
    ├── with --optimize: constant folding, copy propagation, dead-code elimination,
    │                    loop-invariant code motion, inlining   (opt/)
    ├── tensor-free pass: frees each tensor after its last use   (opt/tensor_release.cc)
@@ -504,8 +509,8 @@ NovaComp/
 │   │                           # regalloc.h, codegen.h, integrations.h …
 │   ├── src/
 │   │   ├── driver/             # main.cc (CLI), repl.cc, debugger.cc
-│   │   ├── frontend/           # lexer, inputbuf, imports (orbit); parser.cc (functions, generics) +
-│   │   │                       # parser_{state,util,classes,builtins,statements,expressions,containers,objects}.cc
+│   │   ├── frontend/           # source, interner, lexer, imports (orbit); parse.cc + parse_tree.cc (the tree);
+│   │   │                       # check.cc + check_types.cc (the check pass); lower.cc (to IR); builtins.cc
 │   │   ├── runtime/            # interpreter.cc (dispatch) + interp_{core,calls,tensor,containers,objects,integrations}.cc,
 │   │   │                       # state.cc, memory.cc, tensor.cc, autograd.cc, memoize.cc
 │   │   ├── opt/                # constant_fold, copy_propagation, dead_code, licm, inline, tensor_release

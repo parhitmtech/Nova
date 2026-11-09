@@ -1,0 +1,37 @@
+# Lowering: switch with case and default (a break inside leaves the enclosing loop), return from inside a
+# switch, and string concatenation.
+def name(int d) -> string:
+    switch (d):
+        case 0:
+            return "zero"
+        case 1:
+            return "one"
+        default:
+            return "many"
+    return "never"
+
+ignite:
+    for (i = 0 ; i < 4 ; i += 1):
+        switch (i * 2):
+            case 2:
+                print("two")
+            case 4:
+                print("four")
+            default:
+                print("other")
+    print(name(0))
+    print(name(1))
+    print(name(7))
+    string s = "a"
+    s = s + "b"
+    s = s + s
+    print(s)
+    string t = s + "y" + "z"
+    print(t)
+    for (i = 0 ; i < 5 ; i += 1):
+        switch (i):
+            case 3:
+                break
+            default:
+                print(i)
+    print("done")

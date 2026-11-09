@@ -23,7 +23,7 @@ using namespace std;
 // ── Liveness Analysis ─────────────────────────────────────────────────────────
 
 // mem[], fmem[], and dmem[] are the three independent, seperately-numbered slot spaces. A TENSOR_CALL's 
-// result_slot is NOT always a mem[] index: ops in TENSOR_DOUBLE_OPS (parser.cc) allocate their result from
+// result_slot is NOT always a mem[] index: ops in TENSOR_DOUBLE_OPS (builtins.cc) allocate their result from
 // dmem[] via alloc_double_slot() instead of alloc_slot, e.g. tensor_get()'s result is a scalar double,
 // not a tensor handle. Treating that dmem[] index as a mem[] "def" here is wrong on its own terms 
 // (register allocation only colors mem[] slots) and actively dangerous for the tensor-free pass
@@ -73,12 +73,15 @@ void get_defs(struct InstructionNode* n, std::unordered_set<int>& defs)
             // also defaults to mem[] -- see its pt == TYPE_UNKNOWN fallback). A float or double one lives
             // in fmem[]/dmem[] instead, a seperately-numbered space, so including it here risks the same
             // kind of cross-space slot-number collision described in tensor_call_result_is_mem_slot() above.
-            defs.insert(n->call_inst.ret_val_index);
+            VarType rt = n->call_inst.ret_type;
+            if (rt != TYPE_FLOAT && rt != TYPE_DOUBLE) defs.insert(n->call_inst.ret_val_index);
             if (n->call_inst.all_ret_slots)
             {
                 for (int i = 0;i < n->call_inst.num_ret_slots;i++)
                 {
-                    defs.insert(n->call_inst.all_ret_slots[i]);    
+                    VarType st = n->call_inst.ret_slot_types ? n->call_inst.ret_slot_types[i] : TYPE_UNKNOWN;
+                    if (st == TYPE_FLOAT || st == TYPE_DOUBLE) continue;
+                    defs.insert(n->call_inst.all_ret_slots[i]);
                 }
             }
             // param slots are written by CALL

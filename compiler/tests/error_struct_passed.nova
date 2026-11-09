@@ -1,0 +1,18 @@
+# A struct is copied field by field; it is neither passed to nor returned from a function: use a class.
+struct Point:
+    int x
+    int y
+
+def shift(Point p, int d):
+    print(p.x + d)
+
+def make(int v) -> Point:
+    Point p = Point(v, v)
+    return p
+
+def made(int v):
+    Point p = Point(v, v)
+    return p
+
+def main():
+    print(1)

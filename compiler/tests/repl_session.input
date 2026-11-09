@@ -1,0 +1,43 @@
+int x = 5
+print(x * 2)
+x = x + 1
+string s = "hi"
+s = s + " there"
+print(s)
+def sq(n):
+    return n * n
+
+print(sq(x))
+class Counter:
+    int n
+
+    def init():
+        self.n = 0
+
+    def bump() -> int:
+        self.n += 1
+        return self.n
+
+Counter c = Counter()
+c.bump()
+print(c.bump())
+vector<int> v = vector<int>()
+v.push(x)
+v.push(sq(3))
+print(v[1] + v.size())
+Tensor t = ones(2, 2)
+double d = 2.5
+print(t[1, 1] + d)
+a = array(3)
+a[2] = 7
+struct Point:
+    int x
+    int y
+
+Point p = Point(1, 2)
+p.y = 9
+print(p.y + p.x + a[2] + c.n)
+if (x > 3):
+    print(x)
+
+exit

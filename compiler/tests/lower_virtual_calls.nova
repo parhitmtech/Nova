@@ -1,0 +1,57 @@
+# Methods, lowered: a call through a parent's type runs the override of the object's own class (virtualTable),
+# also from inside an inherited method (describe calls self.area()), and a subclass without an init runs its
+# parent's. Objects are passed to and returned from functions.
+class Shape:
+    double scale
+
+    def init(double s):
+        self.scale = s
+
+    def area() -> double:
+        return 0.0
+
+    def describe() -> double:
+        return self.area() * self.scale
+
+class Square extends Shape:
+    double side
+
+    def init(double s, double side):
+        self.scale = s
+        self.side = side
+
+    def area() -> double:
+        return self.side * self.side
+
+class Unit extends Square:
+    def area() -> double:
+        return 1.0
+
+def total(Shape a, Shape b) -> double:
+    return a.describe() + b.area()
+
+def pick(bool first, Shape a, Shape b) -> Shape:
+    if (first):
+        return a
+    return b
+
+ignite:
+    Shape s = Shape(2.0)
+    Square q = Square(3.0, 2.0)
+    Unit u = Unit(5.0, 9.0)
+    print(s.describe())
+    print(q.describe())
+    print(u.describe())
+    print(total(q, u))
+    Shape p = pick(false, s, q)
+    print(p.area())
+    p = u
+    print(p.describe())
+    print(pick(true, u, s).area())
+    int i = 0
+    double acc = 0.0
+    while (i < 30):
+        Shape t = Square(1.0, double(i))
+        acc = acc + t.area()
+        i += 1
+    print(acc)

@@ -56,12 +56,9 @@ void detect_memoizable_functions();
 // src/driver/repl.cc
 void run_repl();
 
-// Parser state (src/frontend/parser.cc)
-extern LexicalAnalyzer lexer;
-extern std::vector<std::string> errorList;
+// The ignite block's variables by name, which the debugger shows (src/runtime/state.cc; lowering fills them)
 extern std::map<std::string, int> symbolTable;
 extern std::map<std::string, int> floatSymbolTable;
 extern std::map<std::string, int> doubleSymbolTable;
-struct InstructionNode* parse_repl_input(const std::string& input);
 
 #endif

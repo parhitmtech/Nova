@@ -1,0 +1,6 @@
+# Each argument must fit its parameter's type.
+def square(int x) -> int:
+    return x * x
+
+ignite:
+    print(square("four"))

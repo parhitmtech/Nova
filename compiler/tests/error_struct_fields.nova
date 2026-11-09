@@ -1,0 +1,20 @@
+# A struct's fields are numbers, bools, strings, Tensors and structs; a class's are of any type but a struct, and an
+# array field is int f[N].
+struct Point:
+    int x
+    int y
+
+class P:
+    int v
+
+struct Bag:
+    vector<int> items
+    P owner
+    int counts[3]
+
+class Holder:
+    Point p
+    double weights[4]
+
+def main():
+    print(1)

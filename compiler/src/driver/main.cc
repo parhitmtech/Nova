@@ -22,6 +22,9 @@
 #include <unistd.h>
 #endif
 #include "lexer.h"
+#include "parse_tree.h"
+#include "check.h"
+#include "lower.h"
 #include "compiler.h"
 #include "autograd.h"
 #include "optimizer.h"
@@ -43,6 +46,7 @@ int main(int argc, char* argv[])
     string inputFile       = "";
     bool flag_dump_ir      = false;
     bool flag_check        = false;  // --check: parse and type-check only, do not run
+    bool flag_dump_tree    = false;  // --dump-tree: print the new parser's tree (and stop)
     bool flag_optimize     = false;
     bool flag_benchmark    = false;
     bool flag_repl         = false;
@@ -55,6 +59,7 @@ int main(int argc, char* argv[])
         string arg = argv[i];
         if (arg == "--dump-ir")        { flag_dump_ir        = true; continue; }
         if (arg == "--check")          { flag_check          = true; continue; }
+        if (arg == "--dump-tree")      { flag_dump_tree      = true; continue; }
         if (arg == "--optimize")       { flag_optimize       = true; continue; }
         if (arg == "--benchmark")      { flag_benchmark      = true; continue; }
         if (arg == "--repl")           { flag_repl           = true; continue; }
@@ -69,7 +74,7 @@ int main(int argc, char* argv[])
         }
 
         fprintf(stderr, "Unknown flag: %s\n", arg.c_str());
-        fprintf(stderr, "Usage: %s [file.csl] [--check] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--repl] [--debug]\n",
+        fprintf(stderr, "Usage: %s [file.csl] [--check] [--dump-tree] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--repl] [--debug]\n",
                 argv[0]);
         return 1;
     }
@@ -109,7 +114,6 @@ int main(int argc, char* argv[])
         base_dir = (last_slash != string::npos) ? base_dir.substr(0, last_slash) : ".";
         set<string> already_imported;
         processed = preprocess_import(raw_source, base_dir, already_imported);
-        lexer.ReinitializeFromString(processed);
     }
     else
     {
@@ -119,7 +123,36 @@ int main(int argc, char* argv[])
         string raw_source = raw_stream.str();
         set<string> already_imported;
         processed = preprocess_import(raw_source, ".", already_imported);
-        lexer.ReinitializeFromString(processed);
+    }
+
+    // The front end: the scanner's tokens, the parse tree, the check pass, then lowering to the instructions the
+    // interpreter runs. --dump-tree prints the tree without checking it, and --check stops after the check pass.
+    struct InstructionNode* program = nullptr;
+    {
+        vector<LexToken> tokens = scan_program(processed);
+        ParseTree tree = build_parse_tree(tokens);
+        vector<string> errors = tree.errors;
+        CheckResult checked;
+        if (errors.empty() && !flag_dump_tree)
+        {
+            checked = check_tree(tree);
+            errors = checked.errors;
+        }
+        for (const string& err : errors) fprintf(stderr, "%s\n", err.c_str());
+        if (!errors.empty()) return 1;
+        if (flag_dump_tree)
+        {
+            tree.print(cout);
+            return 0;
+        }
+        if (flag_check) return 0;
+        uint32_t n = unlowered(tree, checked);
+        if (n != NoNode)
+        {
+            fprintf(stderr, "Error at line %d: the compiler cannot lower this yet\n", tree.token(n).line);
+            return 1;
+        }
+        program = lower_tree(tree, checked);
     }
 
     //Calculate how many lines were added by imports
@@ -134,10 +167,6 @@ int main(int argc, char* argv[])
         }
         import_line_offset = std::max(0, processed_lines - raw_lines);
     }
-
-    // parse 
-    struct InstructionNode* program = parse_generate_intermediate_representation();
-    if (flag_check) return 0;  // parsing exits with status 1 after printing any errors
 
     if (debug_mode)
     {

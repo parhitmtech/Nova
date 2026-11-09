@@ -1,0 +1,5 @@
+# A string is not true or false: compare it.
+ignite:
+    string answer = "yes"
+    if (answer):
+        print(1)
