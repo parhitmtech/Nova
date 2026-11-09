@@ -7,7 +7,7 @@ Base: `main` at `45c96e1`, which contains v14.0 (`404a5ee`) plus a README-only c
 ## Changes to review
 
 - Redesigned responsive IDE, login, shared-code view, and assistant with consistent typography, colors, spacing, and accessible controls.
-- Searchable explorer, starter programs, keyboard command palette, persistent editor preferences, standard input, run cancellation, and source/bytecode exports.
+- Searchable explorer, starter programs, keyboard command palette, persistent editor preferences, standard input, run cancellation, and source export.
 - Serialized saves, visible save failures, draft preservation, accessible confirmation dialogs, and safeguards against overwriting binary artifacts.
 - Authenticated API execution, validated session tokens, per-user workspace boundaries, rate limits, restricted origins, and bounded execution through isolated Docker workers.
 - Reproducible compiler builds, container targets, GitHub Actions, and removal of tracked dependencies, environment files, and compiler binaries. Installed dependencies remain available locally.

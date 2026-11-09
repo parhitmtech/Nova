@@ -1,0 +1,16 @@
+# A method is looked up in the object's class, then its parents.
+class Animal:
+    def init():
+        pass
+
+    def speak() -> int:
+        return 0
+
+class Dog extends Animal:
+    def fetch() -> int:
+        return 1
+
+def main():
+    Dog d = Dog()
+    print(d.speak())
+    print(d.fly())

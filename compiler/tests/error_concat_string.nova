@@ -1,0 +1,5 @@
+# + joins two strings; a number has to be turned into a string some other way.
+ignite:
+    string s = "n = "
+    int n = 3
+    print(s + n)

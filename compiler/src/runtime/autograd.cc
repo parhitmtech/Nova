@@ -135,64 +135,65 @@ void backward(int loss_handle)
 
 // Differentiable forward ops
 
-// matmul: C = A @ B
+// matmul: C = A @ B, one batch at a time (matmul_sizes: a 2-D B is one batch, a batched B one per batch index)
 // dL/dA = dL/dC @ B^T
 // dL/dB = A^T @ dL/dC
+// each worked out per batch: batch p of A and B only meets batch p of C
 int ag_matmul(int a, int b)
 {
     // Forward
-    int aR = tensor_heap[a].rows;
-    int aC = tensor_heap[a].cols;
-    int bC = tensor_heap[b].cols;
-    int h = alloc_tensor(aR, bC);
-    for (int i = 0;i < aR;i++)
-    {
-        for (int k = 0;k < aC; k++)  // inner dimension (was bC: wrong unless aC == bC)
-        {
-            for (int j = 0;j < bC;j++)
-            {
-                tensor_heap[h].at(i, j) += tensor_heap[a].at(i, k) * tensor_heap[b].at(k, j);
-            }
-        }
-    }
+    int h = ten_matmul(a, b);
 
     grad_heap_ensure(h);
     if (grad_mode && (grad_heap[a].requires_grad || grad_heap[b].requires_grad))
     {
         grad_heap[h].requires_grad = true;
-        grad_tape.push_back({"matmul", h, {a, b}, [a, b](int out){
-            vector<double>& gOut = grad_heap[out].data;
-            Tensor& A = tensor_heap[a];
-            Tensor& B = tensor_heap[b];
-            int aR = A.rows, aC = A.cols, bC = B.cols;
+        MatmulSizes s = matmul_sizes(a, b);
+        grad_tape.push_back({"matmul", h, {a, b}, [a, b, s](int out){
+            const double* gOut = grad_heap[out].data.data();
+            const double* A = tensor_heap[a].data.data();
+            const double* B = tensor_heap[b].data.data();
+            int n = s.n, k = s.k, m = s.m;
 
             // dA = gOut @ B^T
             if (grad_heap[a].requires_grad)
             {
-                vector<double> dA(aR * aC, 0.0);
-                for (int i = 0;i < aR;i++)
+                vector<double> dA((size_t)s.batches * n * k, 0.0);
+                for (int p = 0; p < s.batches; p++)
                 {
-                    for (int j = 0;j < bC;j++)
+                    const double* G = gOut + (size_t)p * n * m;
+                    const double* Bp = B + (size_t)p * k * m;
+                    double* D = dA.data() + (size_t)p * n * k;
+                    for (int i = 0; i < n; i++)
                     {
-                        for (int k = 0;k < aC;k++)
+                        for (int j = 0; j < m; j++)
                         {
-                            dA[i * aC + k] += gOut[i * bC + j] * B.at(k, j);
+                            for (int t = 0; t < k; t++)
+                            {
+                                D[i * k + t] += G[i * m + j] * Bp[t * m + j];
+                            }
                         }
                     }
                 }
                 accum_grad(a, dA);
             }
-            // dB = A^T @ gOut;
+            // dB = A^T @ gOut
             if (grad_heap[b].requires_grad)
             {
-                vector<double> dB(aC * bC, 0.0);
-                for (int k = 0;k < aC;k++)
+                vector<double> dB((size_t)s.batches * k * m, 0.0);
+                for (int p = 0; p < s.batches; p++)
                 {
-                    for (int i = 0;i < aR;i++)
+                    const double* G = gOut + (size_t)p * n * m;
+                    const double* Ap = A + (size_t)p * n * k;
+                    double* D = dB.data() + (size_t)p * k * m;
+                    for (int t = 0; t < k; t++)
                     {
-                        for (int j = 0;j < bC;j++)
+                        for (int i = 0; i < n; i++)
                         {
-                            dB[k * bC + j] += A.at(i, k) * gOut[i * bC + j];
+                            for (int j = 0; j < m; j++)
+                            {
+                                D[t * m + j] += Ap[i * k + t] * G[i * m + j];
+                            }
                         }
                     }
                 }

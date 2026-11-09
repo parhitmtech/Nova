@@ -1,0 +1,9 @@
+# A function written with two return types returns two values every time.
+def split(int n) -> int, int:
+    if (n > 10):
+        return n / 10
+    return n / 10, n % 10
+
+ignite:
+    int a, int b = split(42)
+    print(a)

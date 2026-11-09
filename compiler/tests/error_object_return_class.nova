@@ -1,0 +1,19 @@
+# A function that returns a class returns an object of that class.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Q:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def make() -> P:
+    return Q(1)
+
+def main():
+    P p = make()
+    print(p.x)

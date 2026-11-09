@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 #ifndef _COMPILER_H_
 #define _COMPILER_H_
 
@@ -43,7 +38,7 @@ enum VarType {
     TYPE_DOUBLE,         // double x = 3.14159265358979
     TYPE_CLASS,           // class instance
     TYPE_TENSOR,         // tensor handle (index into tensor_heap)
-    TYPE_VECTOR,         // vector<T> handle (index into container_heap); T is in the parser's containerTable
+    TYPE_VECTOR,         // vector<T> handle (index into container_heap)
     TYPE_MAP,            // map<K, V> handle
 };
 
@@ -144,6 +139,14 @@ enum TensorOp {
     CON_MAX_D,    // (dmem[])
     CON_SUM,      // v.sum() of an int vector (mem[])
     CON_SUM_D,    // of a float / double vector (dmem[])
+    // Class instances (src/runtime/interp_objects.cc). Argument 0 is the object's handle (except for OBJ_NEW).
+    OBJ_NEW,      // a new object: args field count -> handle
+    OBJ_GET,      // a field: args handle, field index -> its value (mem[])
+    OBJ_GET_D,    // the same for a float / double field (dmem[])
+    OBJ_SET,      // args handle, field index, value
+    OBJ_STORE,    // args slot, value: the variable in slot refers to the value's object (one more reference)
+    OBJ_MOVE,     // the same for a temporary value: its reference becomes the variable's
+    OBJ_RELEASE,  // args value: drops a temporary nothing took (an argument after its call, a discarded result)
 };
 
 // ── IR instruction types ──────────────────────────────────────────────────────
@@ -191,11 +194,6 @@ struct InstructionNode
             int operand1_index;
             int operand2_index;
             ArithmeticOperatorType op;
-            // Object-field ownership, set by insert_tensor_releases():
-            // 0 = ordinary copy, 1 = field store (release the field's old 
-            // tensor, retain the new one), 2 = field move (method copy-in / 
-            // copy-back: ownership moves with the value , no refcount change).
-            int own_kind;
         } assign_inst;
 
         struct
@@ -249,6 +247,10 @@ struct InstructionNode
             VarType ret_type;
             // Type of each slot in all_ret_slots (null when it is null).
             VarType* ret_slot_types;
+            // 0: a direct call. Otherwise a method call on the object in arg_val_slots[0], and this is the method's
+            // id: the call runs the method of that name the object's own class has (virtualTable), so a subclass's
+            // override runs when the object is one.
+            int virtual_method;
         } call_inst;
 
         struct {
@@ -349,21 +351,21 @@ struct InstructionNode
     struct InstructionNode* next;
 };
 
+// A class's method as a virtual call runs it: its body, its parameter slots (0 is the object), its slot range.
+struct MethodTarget
+{
+    InstructionNode* head;
+    int* param_slots;
+    VarType* param_types;
+    int num_params;
+    int slot_base;
+    int slot_count;
+};
+
+// class id -> method id -> the method that class runs (its own, or the one it inherits); filled as classes compile
+extern std::map<int, std::map<int, MethodTarget>> virtualTable;
+
 void debug(const char* format, ...);
-
-struct ClassFieldInfo {
-    std::string name;  // dotted for nested: "a.x"
-    VarType type;
-    std::string struct_type;  // non-empty if field is a struct/class
-    int array_size;  // 0 = scalar field, N > 0 = fixed int array of size N
-};
-
-struct ClassDef {
-    std::string name;
-    std::string parent;
-    std::vector<ClassFieldInfo> fields;  // flattened: inherited first, then own
-    std::vector<std::string> methods;
-};
 
 struct Tensor {
     // 2-D view used by every existing op: cols = the last dimension, rows = the product of all the 
@@ -383,23 +385,11 @@ struct Tensor {
 // Set a tensor's N-D shape: recomputes strides and the rows/cols 2-D view.
 void tensor_set_shape(Tensor& t, const std::vector<int>& shape);
 
-extern std::map<std::string, ClassDef> classTable;
-extern std::map<std::string, std::string> varClassType;
-extern std::map<std::string, std::map<std::string, int>> classFieldSlots;
-extern std::map<std::string, std::map<std::string, VarType>> classFieldTypes;
+// class name (Box<int> for a copy) -> method name -> its body (lowering fills it; the tensor-free pass reads it)
 extern std::map<std::string, std::map<std::string, InstructionNode*>> classMethodTable;
-extern std::map<std::string, std::map<std::string, std::vector<std::string>>> classMethodParams;
-extern std::map<std::string, std::map<std::string, std::vector<VarType>>> classMethodParamTypes;
-extern std::map<std::string, std::map<std::string, VarType>> classMethodReturnType;
-extern int currentSelfBase;
-extern std::string currentSelfName;
-extern std::map<std::string, std::map<std::string, std::map<std::string, int>>> classMethodSelfSlots;
-extern std::map<std::string, std::map<std::string, std::map<std::string, VarType>>> classMethodSelfTypes;
 
 extern std::vector<Tensor> tensor_heap;
-extern std::set<int> g_fieldSlots;  //  instance int fields (parser.cc) 
-extern std::set<int> g_selfSlots;  //  method self copies of int fields (parser.cc)
-extern std::set<int> g_tensorSlots;  // mem[] slots know to hold a tensor handle (parser.cc)
+extern std::set<int> g_tensorSlots;  // mem[] slots known to hold a tensor handle (lowering lists them)
 int alloc_tensor(int rows, int cols);  // allocates and returns handle index; refcount starts at 1
 int alloc_tensor_nd(const std::vector<int>& shape);  // same, for any number of dimensions
 int alloc_tensor_like(int src);  // new tensor with src's N-D shape (contents zero)
@@ -408,13 +398,14 @@ void tensor_retain(int h);  // a second mem[] slot now also holds this handle
 void tensor_release(int h);  // one fewer slot holds this handle; frees data at refcount 0
 bool tensor_is_live(int h);  // false if h is out of range or already freed
 
+// The tables lowering fills for the passes after it, by function name (scale<int, int> for a copy)
 extern std::map<std::string, InstructionNode*> functionTable;
 // funcName -> return type / param types. Used to keep float, double and tensor functions out of the
 // int-only memo cache.
 extern std::map<std::string, VarType> functionReturnType;
 extern std::map<std::string, std::vector<VarType>> functionParamTypes;
- 
-struct InstructionNode* parse_generate_intermediate_representation();
+extern std::map<std::string, std::vector<int>> functionReturnSlots;  // all of a function's return slots
+
 void execute_program(struct InstructionNode* head);
 
 #endif /* _COMPILER_H_ */

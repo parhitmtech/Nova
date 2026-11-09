@@ -1,0 +1,70 @@
+# Objects in containers and as type arguments (stage B3): vector<P> and map<K, P> hold references to objects,
+# v[i] and pop() give them back, contains() and index_of() compare by identity, and a generic class takes a
+# class (Box<Layer>) or a container of one (Box<vector<Node>>). An element or field referred to by nothing else
+# is freed with what held it, so the loop at the end does not grow tensor_live_count().
+class Node:
+    int value
+
+    def init(int v):
+        self.value = v
+
+class Layer:
+    Tensor W
+
+    def init(int n):
+        self.W = ones(n, n)
+
+    def total() -> double:
+        return tensor_sum(self.W)
+
+class Pair:
+    Layer a
+    Layer b
+
+    def init():
+        self.a = Layer(2)
+        self.b = Layer(3)
+
+class Box<T>:
+    T value
+
+    def init(T v):
+        self.value = v
+
+    def get() -> T:
+        return self.value
+
+def main():
+    Box<Layer> bl = Box<Layer>(Layer(2))
+    print(bl.get().total())          # 4
+    Box<vector<Node>> bn = Box<vector<Node>>(vector<Node>())
+    bn.value.push(Node(7))
+    print(bn.value[0].value)         # 7
+
+    map<string, Layer> layers = map<string, Layer>()
+    layers["x"] = Layer(1)
+    layers["y"] = Layer(4)
+    print(layers["y"].total())       # 16
+
+    vector<Node> ns = vector<Node>()
+    ns.push(Node(1))
+    ns.push(Node(2))
+    Node two = ns[1]
+    print(ns.contains(two))          # 1
+    print(ns.index_of(two))          # 1
+    print(ns.contains(Node(2)))      # 0: another object with the same value
+    ns[0].value = 9
+    print(ns[0].value)               # 9
+    Node popped = ns.pop()
+    print(ns.size())                 # 1
+    print(popped.value)              # 2
+    print(tensor_live_count())       # 3: bl's layer, layers x and y
+
+    int i = 0
+    while (i < 20):
+        Pair p = Pair()
+        p.a = Layer(1)
+        Box<Layer> b = Box<Layer>(p.a)
+        Layer kept = b.get()
+        i += 1
+    print(tensor_live_count())       # 5: also the last p.a and p.b

@@ -23,15 +23,16 @@ const { createExecutor } = require('../src/services/execution');
     assert.equal(stdout.trim(), '42');
     console.log('Production worker compiled and ran a real Nova program.');
 
-    fs.writeFileSync(source, 'ignite:\n' + '    print(1)\n'.repeat(900));
-    const output = path.join(dir, 'large.nbc');
-    const compilation = executor.spawnCompiler([source, '--emit-bytecode', '-o', output], { cwd: dir, userId: 'worker-test' });
+    // --emit-cuda writes program.cu next to the source: the worker must be able to write into its job directory
+    fs.writeFileSync(source, 'ignite:\n    Tensor t = ones(2, 2)\n    print(tensor_sum(t))\n');
+    const output = path.join(dir, 'program.cu');
+    const compilation = executor.spawnCompiler([source, '--emit-cuda'], { cwd: dir, userId: 'worker-test' });
     let errors = '';
     compilation.stdout.resume(); compilation.stderr.on('data', data => { errors += data; });
     const [compiled] = await once(compilation, 'close');
     assert.equal(compiled, 0, errors);
-    assert.ok(fs.statSync(output).size > 16384, 'worker must write bytecode larger than 16 KiB');
-    console.log('Production worker wrote an artifact larger than 16 KiB.');
+    assert.ok(fs.statSync(output).size > 0, 'worker must write its output file into the job directory');
+    console.log('Production worker wrote an output file into its job directory.');
 
     // Launch directly in detached mode: no executor/Node timer can stop this job.
     // Detached -i keeps stdin open; input() blocks without hitting Nova's instruction cap.

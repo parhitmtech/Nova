@@ -1,0 +1,17 @@
+# An object variable refers to objects of its own class.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Q:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    P p = P(1)
+    Q q = Q(2)
+    p = q

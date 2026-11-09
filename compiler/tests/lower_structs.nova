@@ -1,0 +1,39 @@
+# Structs, lowered: one slot per field, a nested struct's in its place. A declaration without a value sets
+# every field to 0 (each time it runs), Point(3, 4) sets them in order, and q = p, l.b = q, m.a = m.b copy a struct
+# field by field.
+struct Point:
+    int x
+    double y
+
+struct Line:
+    Point a
+    Point b
+    string name
+
+ignite:
+    Point p = Point(3, 4.5)
+    Point q = p
+    q.x = 7
+    print(p.x)
+    print(q.x)
+    print(q.y)
+    Line l
+    print(l.a.x)
+    l.a.x = 2
+    l.b = q
+    l.name = "diag"
+    print(l.a.x + l.b.x)
+    print(l.b.y)
+    print(l.name)
+    Line m = Line(Point(1, 1.5), p, "m")
+    print(m.a.y + m.b.y)
+    m.a = m.b
+    m.b.x += 10
+    print(m.a.x)
+    print(m.b.x)
+    int i = 0
+    while (i < 3):
+        Point r
+        r.x += i
+        print(r.x)
+        i += 1

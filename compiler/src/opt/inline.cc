@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Optimizer: function inlining. Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>
@@ -28,7 +23,8 @@ using namespace std;
 // dmem[] (float/double), tensors, nested calls or multiple return slots is left as a real CALL.
 static bool is_int_like(VarType t)
 {
-    return t != TYPE_FLOAT && t != TYPE_DOUBLE && t != TYPE_TENSOR;
+    return t != TYPE_FLOAT && t != TYPE_DOUBLE && t != TYPE_TENSOR && t != TYPE_CLASS;  // a call passing or returning
+                                                                                    // an object counts references
 }
 
 static bool inlinable_call(struct InstructionNode* call, int bodyNodes)

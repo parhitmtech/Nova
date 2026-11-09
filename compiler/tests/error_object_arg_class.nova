@@ -1,0 +1,19 @@
+# An object parameter takes an object of its class only (a subclass is not accepted yet).
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Q:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def getx(P p) -> int:
+    return p.x
+
+def main():
+    Q q = Q(1)
+    print(getx(q))

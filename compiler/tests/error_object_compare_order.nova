@@ -1,0 +1,11 @@
+# Objects have no order: they are compared with == and != only.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    P a = P(1)
+    P b = P(2)
+    print(a < b)

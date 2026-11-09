@@ -1,0 +1,3 @@
+Error at line 6: 'shift' cannot take a struct ('p' is a Point): pass its fields, or make Point a class
+Error at line 9: 'make' cannot return a struct (Point): return its fields, or make Point a class
+Error at line 15: 'made' cannot return a struct (Point): return its fields, or make Point a class

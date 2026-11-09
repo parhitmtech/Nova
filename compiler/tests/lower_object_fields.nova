@@ -1,0 +1,53 @@
+# Fields of every kind, lowered: int, float, bool, string and an int array field; a default object (Counter c
+# runs its init); a method that returns self; == and != on objects; none.
+class Counter:
+    int n
+    float f
+    bool on
+    string tag
+    int log[4]
+
+    def init():
+        self.n = 0
+        self.f = 1.5
+        self.on = true
+        self.tag = "c"
+
+    def bump(int k) -> int:
+        self.log[self.n % 4] = k
+        self.n += 1
+        self.f = self.f * 2.0
+        if (self.n > 2):
+            self.on = false
+        return self.n
+
+    def again(int k) -> int:
+        if (k <= 0):
+            return self.n
+        self.bump(k)
+        return self.again(k - 1)
+
+    def self_ref() -> Counter:
+        return self
+
+ignite:
+    Counter c
+    c.bump(5)
+    print(c.n)
+    print(c.f)
+    print(c.on)
+    print(c.again(3))
+    print(c.log[0] + c.log[1] + c.log[2] + c.log[3])
+    print(c.on)
+    print(c.tag + "!")
+    Counter d = c.self_ref()
+    d.bump(1)
+    print(c.n)
+    print(c == d)
+    print(c.self_ref() == d)
+    Counter e = Counter()
+    print(c != e)
+    e = none
+    if (e == none):
+        print("gone")
+    print(c.self_ref().self_ref().n)

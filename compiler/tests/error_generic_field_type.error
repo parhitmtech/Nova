@@ -1,0 +1,1 @@
+Error at line 10: cannot assign float to int field 'value' of class 'Box<int>'

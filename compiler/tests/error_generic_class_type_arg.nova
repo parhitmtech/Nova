@@ -1,10 +1,4 @@
-# Only built-in types can be type arguments for now (an object is not a value yet).
-class P:
-    int a
-
-    def init():
-        self.a = 3
-
+# A type argument is a type: a built-in type, a class (Box<Point>), or a container of either.
 class Box<T>:
     T value
 
@@ -12,5 +6,5 @@ class Box<T>:
         self.value = v
 
 def main():
-    P p = P()
-    Box<P> b = Box<P>(p)
+    int n = 3
+    Box<n> b = Box<n>(n)

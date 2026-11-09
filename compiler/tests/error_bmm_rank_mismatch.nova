@@ -1,0 +1,5 @@
+# A batched matmul needs both sides of the same rank: a matrix does not broadcast over a batch (yet).
+ignite:
+    Tensor a = tensor_ones(3, 4)
+    Tensor b = tensor_ones(2, 4, 5)
+    Tensor c = matmul(a, b)

@@ -276,9 +276,8 @@ async function createShellSession(ws, userId) {
     if (!p)                { send('\x1b[31mnovacomp: permission denied\x1b[0m'); return; }
     if (!fs.existsSync(p)) { send(`\x1b[31mnovacomp: '${fileArg}': No such file\x1b[0m`); return; }
 
-    // Write the compiled artifact — a JSON metadata file the runtime uses.
-    // When x86 codegen lands (v9), this becomes a real binary in place.
-    // When JIT lands (v10), this becomes a bytecode (.nbc) file.
+    // Write the compiled artifact: a JSON metadata file the runtime uses (native binaries will come from LLVM;
+    // see docs/ROADMAP.md).
     const exePath = safe(outName);
     if (!exePath || exePath === userWorkspace || extraArgs.some(flag => !['--optimize', '--dump-ir'].includes(flag))) { send('novacomp: invalid output path or option'); return; }
     const meta = {

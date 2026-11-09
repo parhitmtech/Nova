@@ -13,7 +13,6 @@ export default defineConfig({
         '/run',
         '/run-stream',
         '/compare',
-        '/compile-bytecode',
         '/gpu',
         '/agent',
         '/api',

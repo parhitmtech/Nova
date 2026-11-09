@@ -1,0 +1,3 @@
+# A type must be a built-in type, a struct, a class or a type parameter.
+ignite:
+    Pointt p = Pointt(1, 2)

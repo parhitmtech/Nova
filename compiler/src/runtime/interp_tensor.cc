@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Interpreter: tensor built-ins (TENSOR_CALL) and compiler-inserted releases. Split out of execute_program (interpreter.cc).
 #include <iostream>
 #include <cstdio>
@@ -28,7 +23,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -44,6 +38,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
 {
     do {
             auto& tc = pc->tensor_call_inst;
+            if (tc.op >= OBJ_NEW) return exec_object_call(pc);  // class instances
             if (tc.op >= CON_VEC_NEW) return exec_container_call(pc);  // vector / map
             int* a = tc.arg_slots;
             int res = 0;
@@ -201,15 +196,10 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 }
                 case TEN_MATMUL: 
                 {
-                    // (..., n) @ (n, m): an N-D left side is treated as a stack of rows and keep its
-                    // leading dimensions in the result. An N-D right side (batched matmul) comes in M1 stage 3.
-                    require_2d(mem[a[1]], "matmul (right operand)", pc->line_no);
-                    if (tensor_heap[mem[a[0]]].cols != tensor_heap[mem[a[1]]].rows)
-                    {
-                        tensor_shape_error(pc->line_no, "matmul: inner dimensions differ (" + 
-                            std::to_string(tensor_heap[mem[a[0]]].cols) + " vs " + 
-                            std::to_string(tensor_heap[mem[a[1]]].rows) + ")");
-                    }
+                    // (..., n, k) @ (k, m): an N-D left side is a stack of rows. (b..., n, k) @ (b..., k, m):
+                    // a batched matmul, one matrix product per batch index. Either way the result keeps the left
+                    // side's leading dimensions, with m last.
+                    require_matmul(mem[a[0]], mem[a[1]], pc->line_no);
                     if (grad_mode)
                     {
                         res = ag_matmul(mem[a[0]], mem[a[1]]);
@@ -528,6 +518,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 case CON_VEC_NEW: case CON_MAP_NEW: case CON_PUSH: case CON_POP: case CON_POP_D: case CON_GET:
                 case CON_GET_D: case CON_SET: case CON_SIZE: case CON_HAS: case CON_REMOVE: case CON_CLEAR:
                 case CON_SORT: case CON_REVERSE: case CON_CONTAINS: case CON_INDEX_OF: case CON_BSEARCH: case CON_MIN: case CON_MIN_D: case CON_MAX: case CON_MAX_D: case CON_SUM: case CON_SUM_D:
+                case OBJ_NEW: case OBJ_GET: case OBJ_GET_D: case OBJ_SET: case OBJ_STORE: case OBJ_MOVE: case OBJ_RELEASE:
                     break;  // handled by exec_container_call above
                 case TEN_LIVE_COUNT:
                 {

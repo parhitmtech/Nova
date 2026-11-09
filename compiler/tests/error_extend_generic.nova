@@ -1,0 +1,9 @@
+# A class cannot extend a generic class.
+class Box<T>:
+    T value
+
+class Crate extends Box:
+    int k
+
+def main():
+    print(1)

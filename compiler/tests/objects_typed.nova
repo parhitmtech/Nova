@@ -1,0 +1,47 @@
+# Types through objects and containers: a field's type, a method's return type, an element's type, a subclass
+# where its parent is expected, and none where an object is.
+class Node:
+    int value
+    Node next
+
+    def init(int v):
+        self.value = v
+        self.next = none
+
+class Shape:
+    def area() -> double:
+        return 0.0
+
+class Square extends Shape:
+    double side
+
+    def init(double s):
+        self.side = s
+
+    def area() -> double:
+        return self.side * self.side
+
+def total(vector<Shape> shapes) -> double:
+    double sum = 0.0
+    int i = 0
+    while (i < shapes.size()):
+        sum = sum + shapes[i].area()
+        i = i + 1
+    return sum
+
+def main():
+    Node head = Node(1)
+    head.next = Node(2)
+    int second = head.next.value
+    print(second)
+    vector<Shape> shapes = vector<Shape>()
+    shapes.push(Square(2.0))
+    shapes.push(Square(3.0))
+    print(total(shapes))
+    map<string, int> counts = map<string, int>()
+    counts["a"] = second + 1
+    if (counts.has("a")):
+        print(counts["a"])
+    Shape s = Square(1.5)
+    if (head.next.next == none):
+        print(s.area())

@@ -1,0 +1,132 @@
+# Lowering generic classes (2c-5): one class per copy (Box<int>, Stack<P>, Table<string, int>), each with its own
+# methods and fields; a copy with a parent class, container and object fields, and methods calling generic functions.
+class Base:
+    int tag
+
+    def init():
+        self.tag = 1
+
+    def name() -> int:
+        return self.tag
+
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Box<T> extends Base:
+    T value
+
+    def init(T v):
+        self.value = v
+        self.tag = 5
+
+    def get() -> T:
+        return self.value
+
+    def set(T v):
+        self.value = v
+
+    def same() -> T:
+        return ident(self.value)
+
+class Stack<T>:
+    vector<T> items
+    int n
+
+    def init():
+        self.n = 0
+
+    def push(T v):
+        self.items.push(v)
+        self.n += 1
+
+    def pop() -> T:
+        self.n -= 1
+        return self.items.pop()
+
+    def top() -> T:
+        return self.items[self.items.size() - 1]
+
+    def size() -> int:
+        return self.items.size()
+
+class Table<K, V>:
+    map<K, V> m
+
+    def init():
+        self.m = map<K, V>()
+
+    def put(K k, V v):
+        self.m[k] = v
+
+    def get(K k) -> V:
+        return self.m[k]
+
+    def has(K k) -> bool:
+        return self.m.has(k)
+
+def dbl(x):
+    return x + x
+
+def ident(x):
+    return x
+
+def wrap(v):
+    Box<int> b = Box<int>(v)
+    return b.get() * 2
+
+def unwrap(Box<P> b) -> int:
+    return b.get().x
+
+def main():
+    Box<int> a = Box<int>(3)
+    print(a.get())
+    print(dbl(a.same()))
+    print(a.name())
+    Base base = a
+    print(base.name())
+    Box<double> d = Box<double>(1.25)
+    print(dbl(d.same()))
+    Box<string> s = Box<string>("x")
+    print(dbl(s.same()))
+    Box<P> bp = Box<P>(P(8))
+    print(unwrap(bp))
+    bp.set(P(9))
+    print(bp.value.x)
+    print(bp.get().x)
+    Box<Tensor> bt = Box<Tensor>(ones(2, 2))
+    Tensor t2 = dbl(bt.same())
+    print(t2[0, 0])
+    print(wrap(21))
+
+    Stack<int> si = Stack<int>()
+    si.push(1)
+    si.push(2)
+    si.push(3)
+    print(si.top())
+    print(si.pop())
+    print(si.size())
+    print(si.n)
+    Stack<P> sp = Stack<P>()
+    sp.push(P(1))
+    sp.push(P(2))
+    print(sp.top().x)
+    sp.pop()
+    print(sp.size())
+    Stack<double> sd = Stack<double>()
+    sd.push(0.5)
+    sd.push(1.5)
+    print(sd.pop() + sd.pop())
+
+    Table<string, int> tb = Table<string, int>()
+    tb.put("a", 1)
+    tb.put("b", 2)
+    print(tb.get("a") + tb.get("b"))
+    print(tb.has("c"))
+    Table<int, P> tp = Table<int, P>()
+    tp.put(1, P(11))
+    print(tp.get(1).x)
+    print(bp.same().x)
+    print(tensor_live_count())

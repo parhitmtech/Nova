@@ -12,7 +12,7 @@ compiler/build/
 compiler/_test_*/
 *.o
 *.nbc
-# Compiler output from --emit-asm (benchmarks/*.asm are kept as reference output)
+# Assembly files (benchmarks/*.asm are kept as reference output)
 /*.asm
 compiler/*.asm
 

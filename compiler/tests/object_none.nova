@@ -1,0 +1,66 @@
+# none: no object. It goes wherever an object of any class does (a variable, a field, an argument, a vector
+# element, a return value), an unset object field is none, and == / != compare objects by identity. A linked
+# list ends at none instead of keeping its own size.
+class Node:
+    int value
+    Node next
+
+    def init(int v):
+        self.value = v
+
+class List:
+    Node head
+
+    def init():
+        self.head = none
+
+    def push(int v):
+        Node n = Node(v)
+        n.next = self.head
+        self.head = n
+
+    def total() -> int:
+        int s = 0
+        Node cur = self.head
+        while (cur != none):
+            s = s + cur.value
+            cur = cur.next
+        return s
+
+    def find(int v) -> Node:
+        Node cur = self.head
+        while (cur != none):
+            if (cur.value == v):
+                return cur
+            cur = cur.next
+        return none
+
+def is_empty(Node n) -> bool:
+    return n == none
+
+def main():
+    List l = List()
+    print(l.head == none)           # 1
+    l.push(1)
+    l.push(2)
+    l.push(3)
+    print(l.total())                # 6
+    print(l.find(2).value)          # 2
+    print(l.find(9) == none)        # 1
+    Node a = l.find(3)
+    print(a == l.head)              # 1: the same object
+    print(a != l.head.next)         # 1
+    print(a == Node(3))             # 0: another object with the same value
+    print(is_empty(none))           # 1
+    print(is_empty(a))              # 0
+    Node fresh = Node(5)
+    print(fresh.next == none)       # 1: an unset field is none
+    a = none
+    print(a == none)                # 1
+    vector<Node> ns = vector<Node>()
+    ns.push(none)
+    ns.push(l.head)
+    print(ns[0] == none)            # 1
+    print(ns.index_of(l.head))      # 1
+    int none_count = 0
+    print(none_count)               # 0: names that start with none are ordinary names

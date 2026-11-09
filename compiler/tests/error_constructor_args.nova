@@ -1,0 +1,9 @@
+# P(...) runs init, so it takes init's arguments.
+class Point:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    Point p = Point()

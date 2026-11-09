@@ -1,0 +1,1 @@
+Error at line 9: 'b' is a Box<int>, not a Box<double>

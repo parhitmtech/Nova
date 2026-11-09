@@ -54,8 +54,8 @@ const agentLimiter = rateLimit({
 });
 
 app.use('/auth', rateLimit({ windowMs: 60000, max: 10, standardHeaders: true, legacyHeaders: false }));
-app.use(['/run', '/run-stream', '/compile-bytecode', '/compare', '/fs', '/gpu', '/git', '/agent'], requireAuth);
-app.use(['/run-stream', '/compile-bytecode', '/gpu/submit', '/api/share'], limiter);
+app.use(['/run', '/run-stream', '/compare', '/fs', '/gpu', '/git', '/agent'], requireAuth);
+app.use(['/run-stream', '/gpu/submit', '/api/share'], limiter);
 app.use('/api/share', (req, res, next) => req.method === 'POST' ? requireAuth(req, res, next) : next());
 app.use('/fs', rateLimit({ windowMs: 60000, max: 120, keyGenerator: req => req.user.userId, standardHeaders: true, legacyHeaders: false }));
 function gpuEnabled() { return process.env.NOVA_ENABLE_GPU === 'true' && process.env.NOVA_EXECUTION_MODE === 'local' && process.env.NODE_ENV !== 'production'; }

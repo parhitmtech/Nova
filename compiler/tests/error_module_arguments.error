@@ -1,0 +1,11 @@
+Error at line 5: 'hf.infer' takes 2 argument(s) but got 1
+Error at line 6: 'max_tokens' must be a whole number written out, e.g. max_tokens=3
+Error at line 7: 'max_tokens' is given twice
+Error at line 8: argument 2 of 'hf.classify' expects string but got int
+Error at line 9: 'sol.finetune' takes name=value arguments only
+Error at line 10: 'sol.finetune' has no argument named 'epoch'
+Error at line 10: 'sol.finetune' needs model="..." and task="..."
+Error at line 11: 'lr' must be a number written out, e.g. lr=0.00002
+Error at line 12: 'sol.wait' has no argument named 'job'
+Error at line 13: a keyword argument (x=...) is allowed only in an hf.* or sol.* call
+Error at line 14: unknown hf method: hf.fetch()

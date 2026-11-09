@@ -1,216 +1,108 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
-// Optimizer: loop-invariant code motion. Split out of compiler.cc.
-#include <iostream>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <string>
-#include <map>
-#include <set>
-#include <vector>
+// Optimizer: loop-invariant code motion. An int computation inside a loop whose operands the loop never writes
+// (i * 4 in a loop over j) moves to just before the loop, so it runs once instead of once per iteration. Inner loops
+// go first, so a computation can move out of several loops in turn.
 #include <algorithm>
-#include <fstream>
-#include <sstream>
 #include <unordered_map>
 #include <unordered_set>
-#include "lexer.h"
+#include <vector>
 #include "compiler.h"
 #include "optimizer.h"
+#include "regalloc.h"
 
 using namespace std;
 
-// Considers nested loop structures as well
+namespace
+{
+    vector<InstructionNode*> nodes_of(InstructionNode* program)
+    {
+        vector<InstructionNode*> nodes;
+        for (InstructionNode* n = program; n != nullptr; n = n->next) nodes.push_back(n);
+        return nodes;
+    }
+
+    // Whether n can move to just before the loop nodes[start..end] (start: the header, the back edge's target).
+    // It must compute the same value on every iteration, and moving it must not change what the program does:
+    // - an int + - or * (a division could stop the program on a path that never ran it), of operands the loop
+    //   never writes, into a slot the loop writes only here;
+    // - its slot is not live at the header, so nothing in the loop reads the slot before n writes it, and not read
+    //   outside the loop, so a loop that runs no times leaves the program as it was;
+    // - the header is reached from outside the loop only by falling through from the node before it, so the moved
+    //   node runs on every way in.
+    bool can_hoist(const vector<InstructionNode*>& nodes, int start, int end, InstructionNode* n,
+                   const LivenessResult& live)
+    {
+        if (n->type != ASSIGN) return false;
+        ArithmeticOperatorType op = n->assign_inst.op;
+        if (op != OPERATOR_PLUS && op != OPERATOR_MINUS && op != OPERATOR_MULT) return false;
+        int dst = n->assign_inst.left_hand_side_index;
+        int writes = 0;
+        for (int i = start; i <= end; i++)
+        {
+            unordered_set<int> defs;
+            get_defs(nodes[i], defs);
+            if (defs.count(n->assign_inst.operand1_index) || defs.count(n->assign_inst.operand2_index)) return false;
+            writes += (int)defs.count(dst);
+        }
+        if (writes != 1 || live.live_in.at(nodes[start]).count(dst)) return false;
+        if (start == 0 || nodes[start - 1]->type == JMP) return false;
+        for (int i = 0; i < (int)nodes.size(); i++)
+        {
+            InstructionNode* m = nodes[i];
+            // n is reached only by falling into it, so taking it out leaves no jump pointing at it
+            if ((m->type == JMP && m->jmp_inst.target == n) || (m->type == CJMP && m->cjmp_inst.target == n))
+            {
+                return false;
+            }
+            if (i >= start && i <= end) continue;
+            unordered_set<int> uses;
+            get_uses(m, uses);
+            if (uses.count(dst)) return false;
+            vector<InstructionNode*> succs;
+            get_successors(m, succs);
+            bool entersHeader = find(succs.begin(), succs.end(), nodes[start]) != succs.end();
+            if (entersHeader && i != start - 1) return false;
+        }
+        return true;
+    }
+}
+
 int loop_invariant_code_motion(struct InstructionNode* program)
 {
+    // The loops: each back edge, a JMP to an earlier node (the loop's header)
+    vector<InstructionNode*> nodes = nodes_of(program);
+    unordered_map<InstructionNode*, int> index;
+    for (int i = 0; i < (int)nodes.size(); i++) index[nodes[i]] = i;
+    vector<pair<InstructionNode*, InstructionNode*>> loops;  // header, back edge
+    for (int i = 0; i < (int)nodes.size(); i++)
+    {
+        InstructionNode* target = nodes[i]->type == JMP ? nodes[i]->jmp_inst.target : nullptr;
+        if (target != nullptr && index.count(target) && index[target] < i) loops.push_back({target, nodes[i]});
+    }
+    // innermost first: the latest header
+    sort(loops.begin(), loops.end(), [&](const auto& a, const auto& b) { return index[a.first] > index[b.first]; });
+
     int hoisted = 0;
-
-    // Step 1: number all nodes by position
-    map<struct InstructionNode*, int> nodeIndex;
-    vector<struct InstructionNode*> nodeList;
-    struct InstructionNode* pc = program;
-    int idx = 0;
-    while (pc != nullptr)
+    for (const auto& [header, backEdge] : loops)
     {
-        nodeIndex[pc] = idx++;
-        nodeList.push_back(pc);
-        pc = pc->next;
-    }
-    int total = idx;
-
-    // Step 2: find all back-edges (loops)
-    // Back edge: a jmp node whose whose target has a lower index than itself
-    // Process loops from inner most to outermost by sorting the header index descendant
-    struct LoopInfo {
-        int header_idx;  // index of loop header
-        int jmp_idx;  // index of the back-edge JMP node
-    };
-    vector<LoopInfo> loops;
-
-    for (int i = 0;i < total;i++)
-    {
-        struct InstructionNode* node = nodeList[i];
-        if (node->type == JMP)
+        bool moved = true;
+        while (moved)  // the positions change with each move: look again from the start
         {
-            struct InstructionNode* target = node->jmp_inst.target;
-            if (target != nullptr && nodeIndex.count(target))
+            moved = false;
+            nodes = nodes_of(program);
+            index.clear();
+            for (int i = 0; i < (int)nodes.size(); i++) index[nodes[i]] = i;
+            int start = index[header], end = index[backEdge];
+            LivenessResult live = compute_liveness(program);
+            for (int i = start + 1; i < end && !moved; i++)
             {
-                int target_idx = nodeIndex[target];
-                if (target_idx < i)  // back-edge 
-                {
-                    loops.push_back({target_idx, i});
-                }
+                InstructionNode* n = nodes[i];
+                if (!can_hoist(nodes, start, end, n, live)) continue;
+                nodes[i - 1]->next = n->next;      // out of the loop ...
+                n->next = header;                  // ... and in just before its header
+                nodes[start - 1]->next = n;
+                hoisted++;
+                moved = true;
             }
-        }
-    }
-
-    // sort innermost first (highest header index = deepest nesting)
-    sort(loops.begin(), loops.end(), [](const LoopInfo& a, const LoopInfo& b) {
-        return a.header_idx > b.header_idx;
-    });
-
-    // Step 3: process each loop
-    for (auto& loop : loops)
-    {
-        struct InstructionNode* header = nodeList[loop.header_idx];
-        struct InstructionNode* jmpNode = nodeList[loop.jmp_idx];
-
-        int body_start = loop.header_idx;
-        int body_end = loop.jmp_idx;
-
-        // collect set of slots written anywhere in the loop body
-        set<int> written_in_loop;
-        for (int i = body_start;i <= body_end;i++)
-        {
-            struct InstructionNode* n = nodeList[i];
-            if (n->type == ASSIGN)
-            {
-                written_in_loop.insert(n->assign_inst.left_hand_side_index);
-            }
-            if (n->type == IN)
-            {
-                written_in_loop.insert(n->input_inst.var_index);
-            }
-            if (n->type == ARRAY_READ)
-            {
-                written_in_loop.insert(n->array_inst.target_index);
-            }
-        }   
-
-        // count writes per slot within the loop body
-        map<int, int> loop_write_count;
-        for (int i = body_start;i <= body_end;i++)
-        {
-            struct InstructionNode* n = nodeList[i];
-            if (n->type == ASSIGN)
-            {
-                loop_write_count[n->assign_inst.left_hand_side_index]++;
-            }
-        }
-
-        // Step 4 - find and hoist invariant nodes
-        // iterate body_start+1 to body_end-1 (skip header and jump itself)
-        for (int i = body_start+1;i < body_end;i++)
-        {
-            struct InstructionNode* n = nodeList[i];
-            if (n->type != ASSIGN || n->assign_inst.op == OPERATOR_NONE)
-            {
-                continue;
-            }
-
-            int op1 = n->assign_inst.operand1_index;
-            int op2 = n->assign_inst.operand2_index;
-            int dst = n->assign_inst.left_hand_side_index;
-
-            // invariant condition: neither operand is written in loop and dst is written exactly once in loop 
-            bool op1_safe = (written_in_loop.find(op1) == written_in_loop.end());
-            bool op2_safe = (written_in_loop.find(op2) == written_in_loop.end());
-            bool dst_once = (loop_write_count[dst] == 1);
-
-            if (!op1_safe || !op2_safe || !dst_once) continue;
-
-            // hoist: remove from loop body, insert before header
-
-            // find the node just before n in the linked list
-            struct InstructionNode* prev = nullptr;
-            struct InstructionNode* curr = program;
-            while (curr != nullptr && curr->next != n)
-            {
-                prev = curr;
-                curr = curr->next;
-            }
-            if (prev == nullptr) continue;  // cannot hoist first node
-
-            // unlink n from its current position
-            prev->next = curr->next;
-
-            // find the node just before header
-            struct InstructionNode* beforeHeader = nullptr;
-            curr = program;
-
-            while (curr != nullptr && curr->next != nullptr)
-            {
-                beforeHeader = curr;
-                curr = curr->next;
-            }
-
-            if (beforeHeader == nullptr)
-            {
-                // header is the program start - insert at very beginning
-                n->next = program;
-                program = n;
-            }
-            else
-            {
-                // insert n between beforeHeader and header
-                n->next = header;
-                beforeHeader->next = n;
-            }
-
-            // update nodeIndex and nodeList to reflect new position
-            // rebuild from scratch to stay accurate for remaining iterations
-            nodeIndex.clear();
-            nodeList.clear();
-
-            curr = program;
-            idx = 0;
-
-            while (curr != nullptr) {nodeIndex[curr] = idx++; nodeList.push_back(curr); curr = curr->next;}
-            total = idx;
-
-            // update loop bounds since positions shifted
-            loop.header_idx = nodeIndex[header];
-            loop.jmp_idx = nodeIndex[jmpNode];
-            body_start = loop.header_idx;
-            body_end = loop.jmp_idx;
-
-            // recompute written_in_loop and loop_write_count for updated body
-            written_in_loop.clear();
-            loop_write_count.clear();
-            for (int j = body_start;j <= body_end;j++)
-            {
-                struct InstructionNode* m = nodeList[j];
-                if (m->type == ASSIGN)
-                {
-                    written_in_loop.insert(m->assign_inst.left_hand_side_index);
-                    loop_write_count[m->assign_inst.left_hand_side_index]++;
-                }
-                if (m->type == IN)
-                {
-                    written_in_loop.insert(m->input_inst.var_index);
-                }
-                if (m->type == ARRAY_READ)
-                {
-                    written_in_loop.insert(m->array_inst.target_index);
-                }
-            }
-
-            // restart body scan from the beginning since positions changed
-            i = body_start;
-            hoisted++;
         }
     }
     return hoisted;

@@ -1,0 +1,64 @@
+# Subclasses and virtual methods: a subclass goes wherever its parent is expected (a variable, a parameter, a
+# return value, a vector<Animal>), and a method call runs the version the object's own class has, also when the
+# call is in a function written for the parent (talk, defined before Dog and Cat) or in the parent's own method
+# (describe calls self.speak()). A subclass without init runs its parent's.
+class Animal:
+    int age
+
+    def init(int a):
+        self.age = a
+
+    def speak() -> int:
+        return 0
+
+    def describe() -> int:
+        return self.speak() * 100 + self.age
+
+def talk(Animal a) -> int:
+    return a.speak()
+
+class Dog extends Animal:
+    def speak() -> int:
+        return 1
+
+    def fetch() -> int:
+        return 7
+
+class Cat extends Animal:
+    def init(int a):
+        self.age = a + 10
+
+    def speak() -> int:
+        return 2
+
+def make(bool dog) -> Animal:
+    if (dog):
+        return Dog(1)
+    return Cat(1)
+
+def main():
+    Animal a = Dog(3)
+    print(a.speak())                 # 1: Dog's speak
+    print(talk(Cat(4)))              # 2
+    print(talk(Animal(5)))           # 0
+    print(a.describe())              # 103: describe calls Dog's speak
+    Cat c = Cat(2)
+    print(c.age)                     # 12: Cat's own init
+    print(c.describe())              # 212
+    vector<Animal> zoo = vector<Animal>()
+    zoo.push(Dog(1))
+    zoo.push(Cat(1))
+    zoo.push(Animal(1))
+    int i = 0
+    int s = 0
+    while (i < zoo.size()):
+        s = s * 10 + zoo[i].speak()
+        i += 1
+    print(s)                         # 120
+    print(make(true).speak())        # 1
+    print(make(false).speak())       # 2
+    Dog d = Dog(9)
+    print(d.fetch())                 # 7
+    print(d.age)                     # 9: Animal's init
+    Animal back = d
+    print(back == d)                 # 1: the same object

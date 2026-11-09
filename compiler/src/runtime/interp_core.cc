@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Interpreter: I/O, int/float/double arithmetic, jumps, arrays, strings, casts. Split out of execute_program (interpreter.cc).
 #include <iostream>
 #include <cstdio>
@@ -29,7 +24,6 @@
 #endif
 #include "lexer.h"
 #include "compiler.h"
-#include "bytecode.h"
 #include "autograd.h"
 #include "optimizer.h"
 #include "regalloc.h"
@@ -142,35 +136,7 @@ InstructionNode* exec_assign(InstructionNode* pc)
 
             //mem[pc->assign_inst.left_hand_side_index] = result;
 
-            {
-                int lhsIdx = pc->assign_inst.left_hand_side_index;
-                int srcIdx = pc->assign_inst.operand1_index;
-                int oldVal = mem[lhsIdx];
-                mem[lhsIdx] = result;
-                if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 1)
-                {
-                    // Field store: the field gives up its old tensor and takes its own reference
-                    // to the new one, if the value is a tensor. The source slot keeps its reference
-                    // (and is released by liveness), so the field must retain. Retain before
-                    // releasing so storing the same handle back into the field cannot free it.
-                    bool isTensor = g_tensorSlots.count(srcIdx) > 0;
-                    if (isTensor) tensor_retain(result);
-                    if (slot_owns(lhsIdx)) tensor_release(oldVal);
-                    set_owns(lhsIdx, isTensor);
-                    pc = pc->next;
-                    break;
-                }
-                if (pc->assign_inst.op == OPERATOR_NONE && pc->assign_inst.own_kind == 2)
-                {
-                    // Field move (method copy-in / copy-back): the reference
-                    // moves with the value; the refcount does not change
-                    if (slot_owns(lhsIdx) && oldVal != result) tensor_release(oldVal);
-                    set_owns(lhsIdx, slot_owns(srcIdx));
-                    set_owns(srcIdx, false);
-                    pc = pc->next;
-                    break;
-                }
-            }
+            mem[pc->assign_inst.left_hand_side_index] = result;
 
             // A plain copy ("op == OPERATOR_NONE") of a tensor-tainted slot creates a second,
             // simultaneously-live alias of the same tensor_heap entry -- the source slot keeps
@@ -330,11 +296,10 @@ InstructionNode* exec_alloc(InstructionNode* pc)
                 printf("Runtime error: array size must > 0, got %d\n", size);
                 exit(1);
             }
+            // size new slots in one block: an array is base..base+size-1 (alloc_slot could reuse a freed slot instead)
             int base = next_available;
-            for (int i = 0;i < size;i++)
-            {
-                alloc_slot();
-            }
+            mem.resize(mem.size() + size, 0);
+            next_available += size;
             mem[pc->alloc_inst.base_slot] = base;
             pc = pc->next;
             break;
@@ -347,8 +312,10 @@ InstructionNode* exec_strcat(InstructionNode* pc)
     do {
             int leftIdx = mem[pc->strcat_inst.left_slot];
             int rightIdx = mem[pc->strcat_inst.right_slot];
+            // the new string's index: hf and sol calls add strings to strMem too, so count from strMem itself
+            int dest = (int)strMem.size();
             strMem.push_back(strMem[leftIdx] + strMem[rightIdx]);
-            int dest = next_str_available++;
+            next_str_available = dest + 1;
             mem[pc->strcat_inst.dest_slot] = dest;
             pc = pc->next;
             break;

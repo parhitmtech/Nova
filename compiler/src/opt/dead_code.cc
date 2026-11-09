@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // Optimizer: dead code elimination. Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>
@@ -72,14 +67,13 @@ int dead_code_eliminate(struct InstructionNode* program)
         for (struct InstructionNode* node = body; node != nullptr; node = node->next)
             collect_reads(node, is_read);
 
-    // Pass 2 - eliminate OPERATOR_NONE assignments to unread slots. Copies of tensor handles and
-    // stores into object fields / self slots are not pure: the interpreter retains/releases tensor
-    // references on them, so removing one changes when tensors are freed. Keep those.
+    // Pass 2 - eliminate OPERATOR_NONE assignments to unread slots. Copies of tensor handles are not
+    // pure: the interpreter retains/releases tensor references on them, so removing one changes when
+    // tensors are freed. Keep those.
     mark_tensor_slots(program);
     auto has_side_effects = [](struct InstructionNode* a) {
         int dst = a->assign_inst.left_hand_side_index, src = a->assign_inst.operand1_index;
-        return g_tensorSlots.count(src) || g_tensorSlots.count(dst) || g_fieldSlots.count(dst) ||
-               g_selfSlots.count(dst);
+        return g_tensorSlots.count(src) || g_tensorSlots.count(dst);
     };
     int eliminated = 0;
     struct InstructionNode* pc = program;

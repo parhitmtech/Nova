@@ -1,0 +1,16 @@
+(File
+  (Ignite
+    (Block
+      (Assign (Name x) (Binary or (Name a) (Binary and (Name b) (Unary not (Binary == (Name c) (Name d))))))
+      (Assign (Name x) (Binary and (Unary not (Name a)) (Name b)))
+      (Assign (Name x) (Binary - (Binary + (Name a) (Binary * (Name b) (Name c))) (Binary % (Binary / (Name d) (Name e)) (Name f))))
+      (Assign (Name x) (Binary + (Binary @ (Unary - (Name a)) (Name b)) (Unary - (IntLiteral 2))))
+      (Assign (Name x) (Binary * (Paren (Binary + (Name a) (Name b))) (Name c)))
+      (Assign (Name x) (Binary < (Name i) (Name n)))
+      (Assign (Name x) (Binary == (Call (GenericType Box (TypeName int)) (IntLiteral 5)) (Name v)))
+      (Assign (Name y) (Member T (Index (Index (Member ws (Name l)) (IntLiteral 1)) (IntLiteral 0) (IntLiteral 0))))
+      (Assign (Name y) (Member x (Call (Name make))))
+      (ExprStatement (Call (Member add (Call (Member add (Name t)) (Name a))) (Name b)))
+      (Assign (Name z) (Binary + (Call (TypeName float) (Name n)) (Call (TypeName int) (Name m))))
+      (Assign (Name w) (Call (GenericType map (TypeName string) (GenericType vector (TypeName int)))))
+      (ExprStatement (Call (Member load (Name hf)) (StringLiteral "gpt2"))))))

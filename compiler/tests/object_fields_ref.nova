@@ -1,0 +1,114 @@
+# Object fields (stage B3): a class-typed field refers to an object (it starts unset), and a class can name
+# itself in its own fields. Covers a linked list, a tree with a vector<Tree> of children and a recursive method,
+# a model whose fields are layers, chains of fields and calls (l.head.next.value, make_list().head.value,
+# t.kids[2].kids[0].value), self.total() and `return self`, and statements on a chain (l.head.next.value = 20,
+# t.add(a).add(b), t.kids[0].value = 10).
+class Node:
+    int value
+    Node next
+
+    def init(int v):
+        self.value = v
+
+class List:
+    Node head
+    int size
+
+    def init():
+        self.size = 0
+
+    def push(int v):
+        Node n = Node(v)
+        if (self.size > 0):
+            n.next = self.head
+        self.head = n
+        self.size += 1
+
+    def total() -> int:
+        int s = 0
+        Node cur = self.head
+        int i = 0
+        while (i < self.size):
+            s = s + cur.value
+            cur = cur.next
+            i += 1
+        return s
+
+    def second() -> int:
+        return self.head.next.value
+
+class Tree:
+    int value
+    vector<Tree> kids
+
+    def init(int v):
+        self.value = v
+
+    def add(Tree t) -> Tree:
+        self.kids.push(t)
+        return self
+
+    def sum() -> int:
+        int s = self.value
+        int i = 0
+        while (i < self.kids.size()):
+            Tree k = self.kids[i]
+            s = s + k.sum()
+            i += 1
+        return s
+
+class Layer:
+    Tensor W
+
+    def init(int n):
+        self.W = ones(n, n)
+
+    def total() -> double:
+        return tensor_sum(self.W)
+
+    def twice() -> double:
+        return self.total() * 2.0
+
+class Model:
+    Layer a
+    Layer b
+
+    def init():
+        self.a = Layer(2)
+        self.b = Layer(3)
+
+    def total() -> double:
+        return self.a.total() + self.b.total()
+
+def make_list() -> List:
+    List l = List()
+    l.push(1)
+    l.push(2)
+    l.push(3)
+    return l
+
+def main():
+    List l = make_list()
+    print(l.total())                 # 6
+    print(l.second())                # 2
+    print(l.head.next.next.value)    # 1
+    l.head.next.value = 20
+    print(l.total())                 # 24
+    print(make_list().head.value)    # 3
+
+    Tree t = Tree(1)
+    t.add(Tree(2)).add(Tree(3))
+    Tree c = Tree(4)
+    c.add(Tree(5))
+    t.add(c)
+    print(t.sum())                   # 15
+    print(t.kids[2].kids[0].value)   # 5
+    t.kids[0].value = 10
+    print(t.sum())                   # 23
+
+    Model m = Model()
+    print(m.total())                 # 13
+    print(m.a.twice())               # 8
+    m.a = Layer(1)
+    print(m.total())                 # 10
+    print(tensor_live_count())       # 2: m.a and m.b

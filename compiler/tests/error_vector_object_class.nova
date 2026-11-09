@@ -1,0 +1,16 @@
+# A vector<P> holds objects of class P only.
+class P:
+    int x
+
+    def init(int a):
+        self.x = a
+
+class Q:
+    int x
+
+    def init(int a):
+        self.x = a
+
+def main():
+    vector<P> v = vector<P>()
+    v.push(Q(1))

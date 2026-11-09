@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // HuggingFace Inference API helpers (JSON escaping, response parsing). Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>

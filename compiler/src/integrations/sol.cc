@@ -1,8 +1,3 @@
-/*
- * Copyright (C) Rida Bazzi, 2017
- *
- * Do not share this file with anyone
- */
 // SOL HPC cluster: SSH/SFTP (libssh2) and Slurm/training script generation. Split out of compiler.cc.
 #include <iostream>
 #include <cstdio>

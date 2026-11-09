@@ -1,0 +1,7 @@
+# Variables set from one call must have the types the function returns, in order.
+def halves(Tensor t) -> Tensor, int:
+    return t, t.rows
+
+ignite:
+    Tensor a, Tensor b = halves(ones(2, 2))
+    print(a.rows)

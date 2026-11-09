@@ -1,0 +1,5 @@
+# Batched matmul needs the same leading (batch) dimensions on both sides.
+ignite:
+    Tensor a = tensor_ones(2, 3, 4)
+    Tensor b = tensor_ones(3, 4, 5)
+    Tensor c = matmul(a, b)

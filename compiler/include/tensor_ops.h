@@ -12,10 +12,16 @@ using std::string;
 size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int line);
 void require_2d(int h, const char* op, int line);
 void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast);
+void require_matmul(int a, int b, int line);  // (..., n, k) @ (k, m), or batched with the same batch dimensions
+
+// A @ B as `batches` pairs of an (n x k) matrix of A and a (k x m) matrix of B, each stored one after another
+struct MatmulSizes
+{
+    int batches, n, k, m;
+};
+MatmulSizes matmul_sizes(int a, int b);
 [[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
-bool slot_owns(int i);
-void set_owns(int i, bool v);
 int ten_zeros(const std::vector<int>& shape);
 int ten_ones(const std::vector<int>& shape);
 int ten_randn(const std::vector<int>& shape);
