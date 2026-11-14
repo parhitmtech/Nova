@@ -197,8 +197,8 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 case TEN_MATMUL: 
                 {
                     // (..., n, k) @ (k, m): an N-D left side is a stack of rows. (b..., n, k) @ (b..., k, m):
-                    // a batched matmul, one matrix product per batch index. Either way the result keeps the left
-                    // side's leading dimensions, with m last.
+                    // a batched matmul, one matrix product per batch index, with the batch dimensions broadcast.
+                    // ten_matmul gives the result its shape (matmul_plan).
                     require_matmul(mem[a[0]], mem[a[1]], pc->line_no);
                     if (grad_mode)
                     {
@@ -207,12 +207,6 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     else
                     {
                         res = ten_matmul(mem[a[0]], mem[a[1]]);
-                    }
-                    if (tensor_heap[mem[a[0]]].ndim() > 2)
-                    {
-                        std::vector<int> outShape = tensor_heap[mem[a[0]]].shape;
-                        outShape.back() = tensor_heap[mem[a[1]]].cols;
-                        tensor_set_shape(tensor_heap[res], outShape);
                     }
                     break;
                 }

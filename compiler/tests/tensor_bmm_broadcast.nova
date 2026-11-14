@@ -1,0 +1,69 @@
+# Batched matmul with broadcast batch dimensions (as NumPy's matmul): lined up from the right, a missing dimension or
+# a 1 stretches to the other side's. Each result is checked element by element against loops over the inputs.
+def dabs(double x) -> double:
+    if (x < 0.0): return 0.0 - x
+    return x
+
+ignite:
+    double tol = 0.000001
+
+    # (3, 4) @ (2, 4, 5) -> (2, 3, 5): the one matrix meets each of B's
+    Tensor A = tensor_randn(3, 4)
+    Tensor B = tensor_randn(2, 4, 5)
+    Tensor C = matmul(A, B)
+    print(tensor_rank(C))
+    print(tensor_dim(C, 0))
+    double worst = 0.0
+    int p = 0
+    while (p < 2):
+        int i = 0
+        while (i < 3):
+            int j = 0
+            while (j < 5):
+                double want = 0.0
+                int t = 0
+                while (t < 4):
+                    want = want + tensor_get(A, i, t) * tensor_get(B, p, t, j)
+                    t = t + 1
+                double d = dabs(tensor_get(C, p, i, j) - want)
+                if (d > worst): worst = d
+                j = j + 1
+            i = i + 1
+        p = p + 1
+    if (worst < tol): print("PASS matrix over a batch")
+    else: print("FAIL matrix over a batch")
+
+    # (2, 1, 3, 4) @ (5, 4, 2) -> (2, 5, 3, 2): a 1 stretches, and B's missing dimension stretches
+    Tensor X = tensor_randn(2, 1, 3, 4)
+    Tensor Y = tensor_randn(5, 4, 2)
+    Tensor Z = matmul(X, Y)
+    print(tensor_rank(Z))
+    print(tensor_dim(Z, 0))
+    print(tensor_dim(Z, 1))
+    worst = 0.0
+    int x = 0
+    while (x < 2):
+        int y = 0
+        while (y < 5):
+            int r = 0
+            while (r < 3):
+                int c = 0
+                while (c < 2):
+                    double expect = 0.0
+                    int u = 0
+                    while (u < 4):
+                        expect = expect + tensor_get(X, x, 0, r, u) * tensor_get(Y, y, u, c)
+                        u = u + 1
+                    double e = dabs(tensor_get(Z, x, y, r, c) - expect)
+                    if (e > worst): worst = e
+                    c = c + 1
+                r = r + 1
+            y = y + 1
+        x = x + 1
+    if (worst < tol): print("PASS stretched batch dimensions")
+    else: print("FAIL stretched batch dimensions")
+
+    # (1, 2, 2) @ (3, 2, 2) of ones: every entry is 2, in 3 batches
+    Tensor O = matmul(tensor_ones(1, 2, 2), tensor_ones(3, 2, 2))
+    print(tensor_dim(O, 0))
+    print(tensor_sum(O))

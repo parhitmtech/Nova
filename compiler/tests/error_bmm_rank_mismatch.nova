@@ -1,5 +1,5 @@
-# A batched matmul needs both sides of the same rank: a matrix does not broadcast over a batch (yet).
+# A batched matmul needs a left side of rank 2 or more: a vector is not a matrix here.
 ignite:
-    Tensor a = tensor_ones(3, 4)
+    Tensor v = tensor_ones(4)
     Tensor b = tensor_ones(2, 4, 5)
-    Tensor c = matmul(a, b)
+    Tensor c = matmul(v, b)

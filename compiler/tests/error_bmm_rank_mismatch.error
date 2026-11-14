@@ -1,1 +1,1 @@
-Runtime error at line 5: matmul: a batched matmul needs both sides of the same rank (got 2 and 3)
+Runtime error at line 5: matmul: a batched matmul needs a left side of rank 2 or more (got rank 1)

@@ -12,14 +12,17 @@ using std::string;
 size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int line);
 void require_2d(int h, const char* op, int line);
 void require_elementwise(int a, int b, const char* op, int line, bool rowBroadcast);
-void require_matmul(int a, int b, int line);  // (..., n, k) @ (k, m), or batched with the same batch dimensions
+void require_matmul(int a, int b, int line);  // (..., n, k) @ (k, m), or batched with broadcast batch dimensions
 
-// A @ B as `batches` pairs of an (n x k) matrix of A and a (k x m) matrix of B, each stored one after another
-struct MatmulSizes
+// A @ B as `batches` products C[p] = A[aMatrix[p]] @ B[bMatrix[p]] of an (n x k) matrix of A and a (k x m) matrix of
+// B, the matrices of each stored one after another
+struct MatmulPlan
 {
-    int batches, n, k, m;
+    int batches = 1, n = 0, k = 0, m = 0;
+    std::vector<int> aMatrix, bMatrix;  // per product, the matrix of A and of B it takes
+    std::vector<int> shape;             // the result's shape
 };
-MatmulSizes matmul_sizes(int a, int b);
+std::string matmul_plan(int a, int b, MatmulPlan& plan);  // "" if the shapes fit, or why they do not
 [[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
 int ten_zeros(const std::vector<int>& shape);

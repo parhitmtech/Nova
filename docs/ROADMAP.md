@@ -151,10 +151,14 @@ Planned in detail once phase 7 is done: the tensor compiler below, custom CUDA /
 
 **Batched matmul (`bmm`)** (done, ahead of phase 3, since it is runtime-only and phase 7 carries `matmul` as one op
 either way). A right side of rank 3 or more makes `matmul` batched: `(b..., n, k) @ (b..., k, m)` gives
-`(b..., n, m)`, one matrix product per batch index, forward and backward. Both sides need the same rank and batch
-dimensions (`error_bmm_batch_mismatch`, `error_bmm_rank_mismatch`); broadcasting a matrix over a batch
-(`(n, k) @ (b, k, m)`) is the follow-up. Both kinds of matmul are one loop over batches of matrix pairs
-(`matmul_sizes`): a 2-D right side is one batch, so 2-D programs compute exactly what they did. `grad_bmm` checks
+`(b..., n, m)`, one matrix product per batch index, forward and backward. The batch dimensions broadcast as
+NumPy's do: lined up from the right, a missing dimension or a 1 stretches to the other side's, so
+`(n, k) @ (b, k, m)` multiplies the one matrix with each of B's, and a matrix used by several products gets the
+sum of their gradients (`tensor_bmm_broadcast`, `grad_bmm_broadcast`). Other batch dimensions must match
+(`error_bmm_batch_mismatch`), and a batched matmul needs a left side of rank 2 or more
+(`error_bmm_rank_mismatch`). Both kinds of matmul are one loop over matrix products (`matmul_plan`, which
+records the matrices of A and B each product takes): a 2-D right side is one product, so 2-D programs compute
+exactly what they did. `grad_bmm` checks
 every gradient element against finite differences. `tensor_bmm` was also the first program to make loop-invariant
 code motion move anything, and the move linked the instruction list into a cycle (`--optimize` never finished).
 LICM is rewritten: it moves an int `+` / `-` / `*` whose operands the loop never writes, and only when the moved
