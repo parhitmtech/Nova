@@ -135,10 +135,10 @@ void backward(int loss_handle)
 
 // Differentiable forward ops
 
-// matmul: C = A @ B, one batch at a time (matmul_sizes: a 2-D B is one batch, a batched B one per batch index)
+// matmul: C = A @ B, one product at a time (matmul_plan: C[p] = A[aMatrix[p]] @ B[bMatrix[p]])
 // dL/dA = dL/dC @ B^T
 // dL/dB = A^T @ dL/dC
-// each worked out per batch: batch p of A and B only meets batch p of C
+// each worked out per product, into the matrices it took: a matrix broadcast over a batch gets the sum
 int ag_matmul(int a, int b)
 {
     // Forward
@@ -148,7 +148,8 @@ int ag_matmul(int a, int b)
     if (grad_mode && (grad_heap[a].requires_grad || grad_heap[b].requires_grad))
     {
         grad_heap[h].requires_grad = true;
-        MatmulSizes s = matmul_sizes(a, b);
+        MatmulPlan s;
+        matmul_plan(a, b, s);
         grad_tape.push_back({"matmul", h, {a, b}, [a, b, s](int out){
             const double* gOut = grad_heap[out].data.data();
             const double* A = tensor_heap[a].data.data();
@@ -158,12 +159,12 @@ int ag_matmul(int a, int b)
             // dA = gOut @ B^T
             if (grad_heap[a].requires_grad)
             {
-                vector<double> dA((size_t)s.batches * n * k, 0.0);
+                vector<double> dA(tensor_heap[a].data.size(), 0.0);
                 for (int p = 0; p < s.batches; p++)
                 {
                     const double* G = gOut + (size_t)p * n * m;
-                    const double* Bp = B + (size_t)p * k * m;
-                    double* D = dA.data() + (size_t)p * n * k;
+                    const double* Bp = B + (size_t)s.bMatrix[p] * k * m;
+                    double* D = dA.data() + (size_t)s.aMatrix[p] * n * k;
                     for (int i = 0; i < n; i++)
                     {
                         for (int j = 0; j < m; j++)
@@ -180,12 +181,12 @@ int ag_matmul(int a, int b)
             // dB = A^T @ gOut
             if (grad_heap[b].requires_grad)
             {
-                vector<double> dB((size_t)s.batches * k * m, 0.0);
+                vector<double> dB(tensor_heap[b].data.size(), 0.0);
                 for (int p = 0; p < s.batches; p++)
                 {
                     const double* G = gOut + (size_t)p * n * m;
-                    const double* Ap = A + (size_t)p * n * k;
-                    double* D = dB.data() + (size_t)p * k * m;
+                    const double* Ap = A + (size_t)s.aMatrix[p] * n * k;
+                    double* D = dB.data() + (size_t)s.bMatrix[p] * k * m;
                     for (int t = 0; t < k; t++)
                     {
                         for (int i = 0; i < n; i++)

@@ -114,50 +114,83 @@ void require_2d(int h, const char* op, int line)
     }
 }
 
-// matmul's shapes. A right side of rank 1 or 2 is one (k x m) matrix, and the left side's last dimension is k:
-// (..., n, k) @ (k, m). A right side of rank 3 or more is a batch of matrices (batched matmul): the left side has the
-// same rank and the same batch dimensions (all but the last two), (b..., n, k) @ (b..., k, m).
-void require_matmul(int a, int b, int line)
+// matmul's shapes. A right side of rank 1 or 2 is one (k x m) matrix that every row of the left side meets:
+// (..., n, k) @ (k, m) is one product, with n all of A's rows, and the result keeps A's leading dimensions.
+// A right side of rank 3 or more makes a batched matmul, (b..., n, k) @ (b..., k, m), one product per batch index.
+// The batch dimensions (all but the last two) broadcast as NumPy's do: lined up from the right, a missing dimension
+// or a 1 stretches to the other side's, so (n, k) @ (b, k, m) multiplies the one matrix with each of B's.
+std::string matmul_plan(int a, int b, MatmulPlan& plan)
 {
     const Tensor& A = tensor_heap[a];
     const Tensor& B = tensor_heap[b];
-    int inner = B.rows;
-    if (B.ndim() > 2)
+    plan = MatmulPlan();
+    if (B.ndim() <= 2)
     {
-        int nd = B.ndim();
-        if (A.ndim() != nd)
+        if (A.cols != B.rows)
         {
-            tensor_shape_error(line, "matmul: a batched matmul needs both sides of the same rank (got " +
-                               std::to_string(A.ndim()) + " and " + std::to_string(nd) + ")");
+            return "inner dimensions differ (" + std::to_string(A.cols) + " vs " + std::to_string(B.rows) + ")";
         }
-        for (int d = 0; d < nd - 2; d++)
-        {
-            if (A.shape[d] != B.shape[d])
-            {
-                tensor_shape_error(line, "matmul: batch dimension " + std::to_string(d) + " differs (" +
-                                   std::to_string(A.shape[d]) + " vs " + std::to_string(B.shape[d]) + ")");
-            }
-        }
-        inner = B.shape[nd - 2];
+        plan.n = A.rows;
+        plan.k = A.cols;
+        plan.m = B.cols;
+        plan.aMatrix = {0};
+        plan.bMatrix = {0};
+        plan.shape = A.ndim() > 2 ? A.shape : std::vector<int>{A.rows, B.cols};
+        plan.shape.back() = B.cols;
+        return "";
     }
+    if (A.ndim() < 2) return "a batched matmul needs a left side of rank 2 or more (got rank 1)";
+    int aBatch = A.ndim() - 2, bBatch = B.ndim() - 2;
+    int batch = std::max(aBatch, bBatch);
+    std::vector<int> aDims(batch, 1), bDims(batch, 1), out(batch);  // lined up from the right
+    for (int d = 0; d < aBatch; d++) aDims[batch - aBatch + d] = A.shape[d];
+    for (int d = 0; d < bBatch; d++) bDims[batch - bBatch + d] = B.shape[d];
+    for (int d = 0; d < batch; d++)
+    {
+        if (aDims[d] != bDims[d] && aDims[d] != 1 && bDims[d] != 1)
+        {
+            return "batch dimension " + std::to_string(d) + " differs (" + std::to_string(aDims[d]) + " vs " +
+                   std::to_string(bDims[d]) + ")";
+        }
+        out[d] = std::max(aDims[d], bDims[d]);
+    }
+    int inner = B.shape[B.ndim() - 2];
     if (A.cols != inner)
     {
-        tensor_shape_error(line, "matmul: inner dimensions differ (" + std::to_string(A.cols) + " vs " +
-                           std::to_string(inner) + ")");
+        return "inner dimensions differ (" + std::to_string(A.cols) + " vs " + std::to_string(inner) + ")";
     }
+    plan.n = A.shape[A.ndim() - 2];
+    plan.k = A.cols;
+    plan.m = B.cols;
+    plan.batches = 1;
+    for (int d : out) plan.batches *= d;
+    // Product p is the batch index p counts to (the last dimension fastest); a stretched dimension stays at 0
+    for (int p = 0; p < plan.batches; p++)
+    {
+        int rest = p, ai = 0, bi = 0, aStride = 1, bStride = 1;
+        for (int d = batch - 1; d >= 0; d--)
+        {
+            int idx = rest % out[d];
+            rest /= out[d];
+            if (aDims[d] > 1) ai += idx * aStride;
+            if (bDims[d] > 1) bi += idx * bStride;
+            aStride *= aDims[d];
+            bStride *= bDims[d];
+        }
+        plan.aMatrix.push_back(ai);
+        plan.bMatrix.push_back(bi);
+    }
+    plan.shape = out;
+    plan.shape.push_back(plan.n);
+    plan.shape.push_back(plan.m);
+    return "";
 }
 
-// A 2-D right side is one matrix that every row of the left side meets: one batch, with n all of A's rows. A batched
-// one is matched with the left side's matrices by batch index.
-MatmulSizes matmul_sizes(int a, int b)
+void require_matmul(int a, int b, int line)
 {
-    const Tensor& A = tensor_heap[a];
-    const Tensor& B = tensor_heap[b];
-    if (B.ndim() <= 2) return {1, A.rows, A.cols, B.cols};
-    int nd = B.ndim();
-    int batches = 1;
-    for (int d = 0; d < nd - 2; d++) batches *= B.shape[d];
-    return {batches, A.shape[nd - 2], A.cols, B.cols};
+    MatmulPlan plan;
+    std::string error = matmul_plan(a, b, plan);
+    if (!error.empty()) tensor_shape_error(line, "matmul: " + error);
 }
 
 // Element-wise ops need equal shapes; + and - also accept an MxN matrix with a 1xN row on the right (a bias).
@@ -328,18 +361,19 @@ int ten_xavier(int r, int c)
     return h;
 }
 
-// C = A @ B, one batch at a time (matmul_sizes); the caller gives C its N-D shape
+// C = A @ B, one product at a time (matmul_plan); require_matmul has checked the shapes
 int ten_matmul(int a, int b)
 {
-    MatmulSizes s = matmul_sizes(a, b);
-    int h = alloc_tensor(s.batches * s.n, s.m);  // before taking the data: allocating can move tensor_heap
+    MatmulPlan s;
+    matmul_plan(a, b, s);
+    int h = alloc_tensor_nd(s.shape);  // before taking the data: allocating can move tensor_heap
     const double* A = tensor_heap[a].data.data();
     const double* B = tensor_heap[b].data.data();
     double* C = tensor_heap[h].data.data();
     for (int p = 0; p < s.batches; p++)
     {
-        const double* Ap = A + (size_t)p * s.n * s.k;
-        const double* Bp = B + (size_t)p * s.k * s.m;
+        const double* Ap = A + (size_t)s.aMatrix[p] * s.n * s.k;
+        const double* Bp = B + (size_t)s.bMatrix[p] * s.k * s.m;
         double* Cp = C + (size_t)p * s.n * s.m;
         for (int i = 0; i < s.n; i++)
         {

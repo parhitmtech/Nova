@@ -1,0 +1,59 @@
+# Batched matmul gradients with broadcasting: a matrix used by every product of a batch gets the sum of their
+# gradients. Finite-difference check of dL/dW for L = mse_loss(W @ X, T), W (3, 2) over X (4, 2, 5), and of dL/dB
+# for L = mse_loss(Q @ B, S) with Q (4, 3, 2) and B (1, 2, 5).
+def dabs(double x) -> double:
+    if (x < 0.0): return 0.0 - x
+    return x
+
+ignite:
+    double eps = 0.0001
+    double tol = 0.0001
+    Tensor W = tensor_randn(3, 2)
+    Tensor X = tensor_randn(4, 2, 5)
+    Tensor T = tensor_randn(4, 3, 5)
+    requires_grad(W)
+    requires_grad(X)
+    backward(mse_loss(matmul(W, X), T))
+    Tensor gW = tensor_grad(W)
+    double worst = 0.0
+    int i = 0
+    while (i < 3):
+        int k = 0
+        while (k < 2):
+            double orig = tensor_get(W, i, k)
+            tensor_set(W, i, k, orig + eps)
+            double up = tensor_get(mse_loss(matmul(W, X), T), 0, 0)
+            tensor_set(W, i, k, orig - eps)
+            double down = tensor_get(mse_loss(matmul(W, X), T), 0, 0)
+            tensor_set(W, i, k, orig)
+            double d = dabs((up - down) / (2.0 * eps) - tensor_get(gW, i, k))
+            if (d > worst): worst = d
+            k = k + 1
+        i = i + 1
+    if (worst < tol): print("PASS broadcast dW")
+    else: print("FAIL broadcast dW")
+
+    Tensor Q = tensor_randn(4, 3, 2)
+    Tensor B = tensor_randn(1, 2, 5)
+    Tensor S = tensor_randn(4, 3, 5)
+    requires_grad(Q)
+    requires_grad(B)
+    backward(mse_loss(matmul(Q, B), S))
+    Tensor gB = tensor_grad(B)
+    worst = 0.0
+    int r = 0
+    while (r < 2):
+        int c = 0
+        while (c < 5):
+            double before = tensor_get(B, 0, r, c)
+            tensor_set(B, 0, r, c, before + eps)
+            double hi = tensor_get(mse_loss(matmul(Q, B), S), 0, 0)
+            tensor_set(B, 0, r, c, before - eps)
+            double lo = tensor_get(mse_loss(matmul(Q, B), S), 0, 0)
+            tensor_set(B, 0, r, c, before)
+            double e = dabs((hi - lo) / (2.0 * eps) - tensor_get(gB, 0, r, c))
+            if (e > worst): worst = e
+            c = c + 1
+        r = r + 1
+    if (worst < tol): print("PASS broadcast dB")
+    else: print("FAIL broadcast dB")
