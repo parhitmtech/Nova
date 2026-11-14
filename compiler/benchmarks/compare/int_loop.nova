@@ -1,0 +1,10 @@
+# Integer arithmetic in a while loop (3M iterations).
+# The exact sum is 2250000000000, which does not fit in 32 bits.
+ignite:
+    int i = 0
+    int s = 0
+    while (i < 3000000):
+        s = s + i
+        s = s - i / 2
+        i = i + 1
+    print(s)
