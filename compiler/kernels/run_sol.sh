@@ -2,7 +2,7 @@
 # The matmul benchmark as a SOL batch job: from this directory on SOL, `sbatch run_sol.sh` (any arguments go to
 # ./bench, e.g. `sbatch run_sol.sh 2048 2048 2048 8`). The output lands in matmul-<job id>.out here.
 #SBATCH --job-name=nova-matmul
-#SBATCH --partition=general
+#SBATCH --partition=public
 #SBATCH --qos=public
 #SBATCH --gres=gpu:a100:1
 #SBATCH --time=0-00:15:00
