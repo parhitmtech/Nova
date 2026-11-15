@@ -72,6 +72,21 @@ void launch_blocked(const Problem& p)
     matmul_blocked<BM, BN, BK, TM, TN><<<grid, block>>>(p.A, p.B, p.C, p.c.M, p.c.N, p.c.K, p.sA, p.sB, p.sC);
 }
 
+void launch_pipelined(const Problem& p)
+{
+    dim3 block(256);
+    dim3 grid((p.c.N + 127) / 128, (p.c.M + 127) / 128, p.c.batch);
+    // 16-byte copies need every row of A and B to start on a 16-byte boundary: K and N multiples of 4
+    if (p.c.K % 4 == 0 && p.c.N % 4 == 0)
+    {
+        matmul_pipelined<true><<<grid, block>>>(p.A, p.B, p.C, p.c.M, p.c.N, p.c.K, p.sA, p.sB, p.sC);
+    }
+    else
+    {
+        matmul_pipelined<false><<<grid, block>>>(p.A, p.B, p.C, p.c.M, p.c.N, p.c.K, p.sA, p.sB, p.sC);
+    }
+}
+
 // cuBLAS is column-major: a row-major C = A @ B is the column-major C^T = B^T @ A^T, so B goes first
 cublasHandle_t handle;
 void launch_cublas(const Problem& p)
@@ -133,14 +148,15 @@ void run_case(const Case& c)
     int iters = flops > 1e10 ? 5 : 20;
     printf("\nM=%d N=%d K=%d batch=%d%s\n", c.M, c.N, c.K, c.batch, c.broadcastA ? " (one A for the batch)" : "");
     float cublasMs = time_ms([&] { launch_cublas(ref); }, iters);
-    printf("  %-8s %9.3f ms %9.1f GFLOP/s\n", "cuBLAS", cublasMs, flops / cublasMs / 1e6);
+    printf("  %-9s %9.3f ms %9.1f GFLOP/s\n", "cuBLAS", cublasMs, flops / cublasMs / 1e6);
 
     struct Kernel
     {
         const char* name;
         void (*launch)(const Problem&);
     };
-    for (Kernel k : {Kernel{"naive", launch_naive}, Kernel{"tiled", launch_tiled}, Kernel{"blocked", launch_blocked}})
+    for (Kernel k : {Kernel{"naive", launch_naive}, Kernel{"tiled", launch_tiled}, Kernel{"blocked", launch_blocked},
+                     Kernel{"pipelined", launch_pipelined}})
     {
         Problem p{c, A, B, C, sA, sB, sC};
         CUDA_CHECK(cudaMemset(C, 0, cCount * sizeof(float)));
@@ -153,7 +169,7 @@ void run_case(const Case& c)
         bool ok = relative < 1e-4;
         failures += !ok;
         float ms = time_ms([&] { k.launch(p); }, iters);
-        printf("  %-8s %9.3f ms %9.1f GFLOP/s %6.1f%% of cuBLAS   error %.1e %s\n", k.name, ms, flops / ms / 1e6,
+        printf("  %-9s %9.3f ms %9.1f GFLOP/s %6.1f%% of cuBLAS   error %.1e %s\n", k.name, ms, flops / ms / 1e6,
                100.0 * cublasMs / ms, relative, ok ? "ok" : "WRONG");
     }
     CUDA_CHECK(cudaFree(A));

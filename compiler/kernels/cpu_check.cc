@@ -18,8 +18,16 @@ thread_local dim3 threadIdx, blockIdx;
 dim3 blockDim, gridDim;
 std::barrier<>* emuBarrier = nullptr;
 #define __global__
+#define __device__
+#define __forceinline__ inline
+#define __launch_bounds__(n)
+#define __align__(n) __attribute__((aligned(n)))
 #define __shared__ static
 inline void __syncthreads() { emuBarrier->arrive_and_wait(); }
+struct alignas(16) float4
+{
+    float x, y, z, w;
+};
 
 #include "matmul_kernels.cuh"
 
@@ -75,25 +83,32 @@ void check(const char* kernel, int M, int N, int K, int batch, bool broadcastA)
     else if (name == "tiled")
         launch(dim3((N + 31) / 32, (M + 31) / 32, batch), dim3(32, 32),
                [&] { matmul_tiled<32>(a, b, c, M, N, K, sA, sB, sC); });
-    else
+    else if (name == "blocked")
         launch(dim3((N + 63) / 64, (M + 63) / 64, batch), dim3(256),
                [&] { matmul_blocked<64, 64, 8, 4, 4>(a, b, c, M, N, K, sA, sB, sC); });
+    else if (K % 4 == 0 && N % 4 == 0)  // pipelined, with 16-byte copies where the sizes allow them (as bench.cu)
+        launch(dim3((N + 127) / 128, (M + 127) / 128, batch), dim3(256),
+               [&] { matmul_pipelined<true>(a, b, c, M, N, K, sA, sB, sC); });
+    else
+        launch(dim3((N + 127) / 128, (M + 127) / 128, batch), dim3(256),
+               [&] { matmul_pipelined<false>(a, b, c, M, N, K, sA, sB, sC); });
     double worst = 0;
     for (size_t i = 0; i < C.size(); i++) worst = std::fmax(worst, std::fabs(C[i] - R[i]));
     bool ok = worst < 1e-3;
     failures += !ok;
-    printf("%-8s M=%-4d N=%-4d K=%-4d batch=%d%s  max diff %.2e  %s\n", kernel, M, N, K, batch,
+    printf("%-9s M=%-4d N=%-4d K=%-4d batch=%d%s  max diff %.2e  %s\n", kernel, M, N, K, batch,
            broadcastA ? " (A broadcast)" : "", worst, ok ? "ok" : "FAIL");
 }
 
 int main()
 {
-    for (const char* k : {"naive", "tiled", "blocked"})
+    for (const char* k : {"naive", "tiled", "blocked", "pipelined"})
     {
         check(k, 64, 64, 64, 1, false);
         check(k, 37, 45, 29, 3, false);
         check(k, 70, 130, 17, 2, true);
         check(k, 1, 65, 9, 1, false);
+        check(k, 136, 260, 44, 2, true);  // sizes that are multiples of 4 but not of a tile (16-byte copies)
     }
     printf(failures ? "FAILURES: %d\n" : "all ok\n", failures);
     return failures != 0;
