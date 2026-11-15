@@ -1,17 +1,17 @@
 # Matmul kernels
 
 CUDA kernels for Nova's `matmul` and batched `matmul` (bmm), written by hand to learn what makes a GPU matmul fast
-before the tensor compiler work (docs/ROADMAP.md). Nothing in the compiler calls them yet: after phase 7, Nova IR's
-tensor ops either call kernels like these or are compiled by IREE, and this benchmark is what either is measured
-against.
+before the tensor compiler work (docs/ROADMAP.md, section 4, step A). Nothing in the compiler calls them yet: they
+are the baseline that Triton's kernels, and later Nova's own compiled kernels, are measured against.
 
 | Kernel | What it adds |
 |---|---|
 | `matmul_naive` | One thread per element of C, every read from global memory |
 | `matmul_tiled` | 32 x 32 tiles of A and B in shared memory: each value read from global memory is used 32 times |
 | `matmul_blocked` | Register blocking: each thread computes a 4 x 4 piece of a 64 x 64 tile from registers |
+| `matmul_pipelined` | 128 x 128 tiles, 8 x 8 per thread, 16-byte loads, and two copies of each tile in shared memory: `cp.async` loads the next step's tiles while the current ones are used |
 
-All three take a batch along the grid's z with a stride per matrix; a stride of 0 uses one matrix for the whole
+All four take a batch along the grid's z with a stride per matrix; a stride of 0 uses one matrix for the whole
 batch, which is Nova's `(n, k) @ (b, k, m)`. `bench` checks each kernel's result against cuBLAS
 (`cublasSgemmStridedBatched`) and then times it.
 
@@ -39,9 +39,29 @@ cat matmul-<job id>.out
 and `ARCH=sm_90 sbatch run_sol.sh`. If its CUDA module is not found, set `CUDA_MODULE` to one listed by
 `module avail cuda`.
 
-## What to expect
+## Results
 
-On an A100, cuBLAS reaches most of the FP32 peak (about 19.5 TFLOP/s) on 4096 x 4096. The naive kernel is far
-below it, the tiled one a few times faster, and the register-blocked one a good share of cuBLAS. The next steps
-along the same path are vectorised `float4` loads, double-buffered shared memory, warp tiling, and tensor cores
-(TF32 / FP16 through WMMA), which is where cuBLAS gets the rest.
+Measured on SOL's NVIDIA A100-SXM4-80GB (108 SMs; FP32 peak 19.5 TFLOP/s), CUDA 12, share of cuBLAS's speed. Every
+kernel's result matches cuBLAS on every case.
+
+| Case | cuBLAS | naive | tiled | blocked | pipelined |
+|---|---|---|---|---|---|
+| 4096 x 4096 x 4096 | 19.0 TFLOP/s | 13% | 27% | 50% | 82% |
+| 32 x 512³, one A for the batch | 17.7 TFLOP/s | 17% | 29% | 55% | 79% |
+| 64 x 256³ (batched) | 14.0 TFLOP/s | 21% | 35% | 55% | 77% |
+| 1024 x 1024 x 1024 | 16.6 TFLOP/s | 18% | 30% | 41% | 48% |
+| 1000 x 999 x 1001 | 15.6 TFLOP/s | 22% | 30% | 42% | 43% |
+
+What limits each step:
+- **naive:** memory. Two loads per multiply-add, each value used once; at 4096 the matrices (192 MB) no longer fit
+  in the 40 MB L2 cache.
+- **tiled:** shared-memory bandwidth. Two shared reads per multiply-add caps it near 4.9 TFLOP/s, which it reaches
+  on every case.
+- **blocked:** 0.5 shared reads per multiply-add, but each step loads, waits at a barrier, then computes, so the
+  arithmetic units idle while tiles load.
+- **pipelined:** 0.25 shared reads per multiply-add and loads overlapped with the arithmetic. On small problems its
+  128 x 128 tiles make too few blocks: 1024 x 1024 is 64 blocks for 108 SMs, so 44 SMs idle. Libraries pick the
+  tile size per problem (or split K across blocks); Triton's autotuner does the same.
+
+The next steps on this path are a deeper pipeline (3 or 4 stages), larger K steps, warp-level tiling and
+16-byte stores; past the FP32 peak, tensor cores (TF32 peaks near 156 TFLOP/s on an A100).

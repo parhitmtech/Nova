@@ -169,8 +169,10 @@ driven by that hardware's memory hierarchy. Each step comes with its design deci
 ([DESIGN.md](DESIGN.md)): what was chosen, what was not, and why. In order:
 
 **A. GPU kernels by hand, then in Triton.** `compiler/kernels/` holds matmul and batched-matmul kernels in CUDA,
-in the classic steps: one thread per element, shared-memory tiles, and register blocking. A benchmark checks
-each against cuBLAS and times it on SOL's GPUs, and a CPU checker runs the kernels' own code without a GPU. Then
+in the classic steps (done): one thread per element, shared-memory tiles, register blocking, and a pipelined
+kernel (128 x 128 tiles, `cp.async` double buffering) that reaches 82% of cuBLAS on a 4096³ matmul on SOL's A100s
+([results](../compiler/kernels/README.md#results)). A benchmark checks each against cuBLAS and times it, and a CPU
+checker runs the kernels' own code without a GPU. Then
 the same kernels in Triton, next to the CUDA ones and cuBLAS, with Triton's IR dumped at each stage (Triton IR,
 Triton GPU IR, LLVM IR, PTX) to study what its passes do: layouts (`#blocked`, `#mma`, `#shared`), coalescing,
 software pipelining (`num_stages`) and the mapping to tensor cores. Later kernels on the same path: vectorized
