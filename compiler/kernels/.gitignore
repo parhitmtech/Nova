@@ -1,0 +1,6 @@
+bench
+cpu_check
+cpu_check.exe
+matmul-*.out
+triton/ir/
+triton/triton-*.out
