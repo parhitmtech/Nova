@@ -172,11 +172,12 @@ driven by that hardware's memory hierarchy. Each step comes with its design deci
 in the classic steps (done): one thread per element, shared-memory tiles, register blocking, and a pipelined
 kernel (128 x 128 tiles, `cp.async` double buffering) that reaches 82% of cuBLAS on a 4096³ matmul on SOL's A100s
 ([results](../compiler/kernels/README.md#results)). A benchmark checks each against cuBLAS and times it, and a CPU
-checker runs the kernels' own code without a GPU. Then
-the same kernels in Triton, next to the CUDA ones and cuBLAS, with Triton's IR dumped at each stage (Triton IR,
-Triton GPU IR, LLVM IR, PTX) to study what its passes do: layouts (`#blocked`, `#mma`, `#shared`), coalescing,
-software pipelining (`num_stages`) and the mapping to tensor cores. Later kernels on the same path: vectorized
-loads, double-buffered shared memory, warp tiling, tensor cores (WMMA / MMA), and FlashAttention.
+checker runs the kernels' own code without a GPU. The same matmul in Triton (done) reaches 95% of cuBLAS in FP32
+and 84–100% in TF32 on tensor cores, its autotuner finding the deeper pipeline and smaller tiles the pipelined
+kernel lacks. Next, a study of Triton's IR at each stage (Triton IR, Triton GPU IR,
+LLVM IR, PTX) to see what its passes do: layouts (`#blocked`, `#mma`, `#shared`), coalescing, software pipelining
+(`num_stages`) and the mapping to tensor cores. Later kernels on the same path: warp tiling, tensor cores by hand
+(WMMA / MMA), and FlashAttention.
 
 **B. The design record.** [DESIGN.md](DESIGN.md) records the decisions made so far, each with its alternatives
 and trade-offs: the flat postorder parse tree, a check pass separate from lowering, lowering into the existing IR

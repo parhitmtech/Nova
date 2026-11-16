@@ -144,8 +144,8 @@ def benchmark():
             ok = err < (1e-2 if tf32 else 1e-4)  # TF32 rounds inputs to 10-bit mantissas
             ms = triton.testing.do_bench(lambda: matmul(a, b, tf32))
             best = matmul_tuned.best_config
-            print(f"  cuBLAS {kind}  {ms_cublas:8.3f} ms {flops / ms_cublas / 1e9:9.1f} GFLOP/s")
-            print(f"  Triton {kind}  {ms:8.3f} ms {flops / ms / 1e9:9.1f} GFLOP/s {100 * ms_cublas / ms:6.1f}% of cuBLAS"
+            print(f"  cuBLAS {kind}  {ms_cublas:8.3f} ms {flops / ms_cublas / 1e12:7.1f} TFLOP/s")
+            print(f"  Triton {kind}  {ms:8.3f} ms {flops / ms / 1e12:7.1f} TFLOP/s {100 * ms_cublas / ms:6.1f}% of cuBLAS"
                   f"   error {err:.1e} {'ok' if ok else 'WRONG'}   [{best.kwargs['BLOCK_M']}x{best.kwargs['BLOCK_N']}"
                   f"x{best.kwargs['BLOCK_K']}, {best.num_warps} warps, {best.num_stages} stages]")
     torch.backends.cuda.matmul.allow_tf32 = False
