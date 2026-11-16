@@ -19,6 +19,26 @@ Without a GPU, `make cpu-check` runs the kernels' own code on the CPU (each CUDA
 `__syncthreads` a barrier) and checks their results against a plain loop, including odd sizes and a broadcast A.
 It catches indexing mistakes before a SOL job does; only `bench` says anything about speed.
 
+## Triton
+
+`triton/matmul.py` is the same matmul in Triton. A Triton kernel is written per tile: a program owns one tile of C,
+loads blocks of A and B (masked at the edges) and multiplies them with `tl.dot`; the compiler decides the rest, which
+is everything the CUDA kernels above do by hand (threads, shared memory, 16-byte loads, the `cp.async` pipeline from
+`num_stages`, and tensor cores for TF32). An autotuner picks the tile sizes per problem size. It runs the same five
+cases against cuBLAS in FP32 and TF32, and `--dump-ir DIR` writes one kernel's IR at each stage of Triton's compiler
+(Triton IR, Triton GPU IR, LLVM IR, PTX).
+
+```sh
+# once, on SOL: a conda environment with PyTorch, which brings Triton
+conda create -n nova-triton python=3.11 -y && conda activate nova-triton && pip install torch
+
+cd triton && sbatch run_triton.sh       # benchmark, then the IR into triton/ir/
+cat triton-<job id>.out
+```
+
+Without a GPU, `TRITON_INTERPRET=1 python matmul.py --check` runs the kernel in Triton's interpreter on the CPU
+(it needs NumPy older than 2.3).
+
 ## Running on SOL
 
 Either way in, the job runs on a GPU node through Slurm:
