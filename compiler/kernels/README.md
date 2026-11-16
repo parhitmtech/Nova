@@ -29,10 +29,11 @@ cases against cuBLAS in FP32 and TF32, and `--dump-ir DIR` writes one kernel's I
 (Triton IR, Triton GPU IR, LLVM IR, PTX).
 
 ```sh
-# once, on SOL: a conda environment with PyTorch, which brings Triton
-conda create -n nova-triton python=3.11 -y && conda activate nova-triton && pip install torch
+# once, on SOL: a Python with PyTorch, which brings Triton (run_triton.sh says which it looks for)
+conda create -n nova-triton python=3.11 -y && conda activate nova-triton && python -m pip install torch
 
 cd triton && sbatch run_triton.sh       # benchmark, then the IR into triton/ir/
+PYTHON=/path/to/python sbatch run_triton.sh   # or with a given Python
 cat triton-<job id>.out
 ```
 
@@ -85,3 +86,28 @@ What limits each step:
 
 The next steps on this path are a deeper pipeline (3 or 4 stages), larger K steps, warp-level tiling and
 16-byte stores; past the FP32 peak, tensor cores (TF32 peaks near 156 TFLOP/s on an A100).
+
+### Triton
+
+The same A100, torch 2.6 with Triton 3.2; share of cuBLAS's speed, FP32 against cuBLAS's FP32 and TF32 against
+its TF32, and the configuration the autotuner picked. Every result matches cuBLAS (TF32's error is about 7e-4,
+from rounding each input to a 10-bit mantissa; FP32's about 1e-6).
+
+| Case | pipelined (CUDA) | Triton FP32 | Triton TF32 | Triton TF32 speed | Tiles picked (FP32 / TF32) |
+|---|---|---|---|---|---|
+| 4096 x 4096 x 4096 | 82% | 95% | 84% | 111 TFLOP/s | 64x64x32, 4 stages / 128x256x32, 3 stages |
+| 32 x 512³, one A for the batch | 79% | 99% | 89% | 83 TFLOP/s | 64x64x32 / 128x64x32 |
+| 64 x 256³ (batched) | 77% | 112% | 98% | 42 TFLOP/s | 64x64x32 / 128x64x32 |
+| 1024 x 1024 x 1024 | 48% | 82% | 90% | 56 TFLOP/s | 64x64x32 / 64x64x32 |
+| 1000 x 999 x 1001 | 43% | 67% | 100% | 30 TFLOP/s | 64x64x32 / 128x128x16 |
+
+- For FP32 the autotuner picked 64 x 64 x 32 tiles with a 4-stage pipeline on every case, where the pipelined
+  kernel uses 128 x 128 x 8 with 2: a deeper pipeline and a larger K step (4 times fewer barriers) beat bigger
+  tiles, and 64 x 64 tiles make enough blocks for small problems (1024 x 1024 goes from 48% to 82%).
+- 1000 x 999 x 1001 is slower in FP32 because Triton specializes a kernel on whether its sizes and pointers are
+  divisible by 16; these are not, so it cannot prove 16-byte loads aligned, the choice the pipelined kernel's
+  `VEC` makes by hand.
+- On 64 small products Triton beats cuBLAS: cuBLAS chooses its batched kernel by heuristics, the autotuner by
+  measuring.
+- TF32 runs on tensor cores: cuBLAS reaches 132 TFLOP/s on 4096 x 4096 (7 times its FP32 rate, 85% of the TF32
+  peak), and the autotuner picks larger tiles to keep the tensor cores fed.
