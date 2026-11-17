@@ -41,6 +41,7 @@ and compile tensor ops, and run the same program on a laptop or a GPU cluster.
 | **Language** | Indentation-based syntax; static types (`int`, `float`, `double`, `bool`, `string`, `Tensor`); functions with several return values; generic functions and classes; structs, classes and inheritance; `vector<T>` and `map<K, V>`; modules via `orbit` |
 | **Tensors and ML** | 1–6-dimensional tensors with `+ - * / @`, indexing and slicing, activations, losses, reverse-mode autograd, and `novatorch.nn` / `optim` / `data` in the standard library |
 | **Compiler** | C++17; a lexer, a flat parse tree, a check pass for names and types, and lowering to an IR; optional optimizations (constant folding, copy propagation, dead-code elimination, loop-invariant code motion, inlining); a compiler pass that frees each tensor after its last use; an interpreter, and CUDA source output |
+| **GPU kernels** | Matmul and batched matmul in CUDA, by hand in four steps up to `cp.async` double buffering (82% of cuBLAS on an A100), and the same in Triton (95% of cuBLAS in FP32, up to 100% with tensor cores), with Triton's IR traced stage by stage: [compiler/kernels](compiler/kernels/) |
 | **IDE** | React + Monaco editor, file workspace, terminal, REPL, step debugger, sharing, and NovaBot (Claude via AWS Bedrock), which can read, write and run code |
 | **Execution** | Each run gets its own network-less, read-only container with CPU, memory, time and process limits |
 | **GPU training** | `sol.finetune(...)` submits HuggingFace training jobs to ASU's SOL cluster over SLURM |
@@ -97,13 +98,32 @@ issues the benchmarks found. To reproduce:
 python3 compiler/benchmarks/compare/run.py --optimize
 ```
 
+### GPU matmul
+
+On SOL's NVIDIA A100, share of cuBLAS's speed (all results match cuBLAS):
+
+| Case | Best hand-written CUDA kernel | Triton FP32 | Triton TF32 (tensor cores) |
+|---|---|---|---|
+| 4096 x 4096 x 4096 | 82% | 95% | 84% (111 TFLOP/s) |
+| 64 batched 256³ products | 77% | 112% | 98% |
+| 1024 x 1024 x 1024 | 48% | 82% | 90% |
+
+The kernels, what limits each step, and how to run them on SOL are in
+[compiler/kernels/README.md](compiler/kernels/README.md).
+
 ## Status
 
-Nova is in active development. The syntax redesign, objects as references (stage B), and phases 1–2 of the
-production compiler (a new lexer, a parse tree, a separate check pass, and lowering) are done, and so is
-batched matmul. Next on the [roadmap](docs/ROADMAP.md): error recovery, reference-counted strings and arrays,
-frames on a value stack, and a typed IR (Nova IR); then tensor compilation through MLIR/IREE and LLVM for
-scalar code, which brings native ARM and x86. Known gaps today:
+Nova is in active development. Done:
+
+- the syntax redesign and objects as references, with reference counting;
+- a production front end: a new lexer, a flat parse tree, a separate check pass, and lowering to the IR;
+- batched matmul with NumPy-style broadcasting, forward and backward;
+- GPU matmul kernels in CUDA and Triton, measured on A100s, and a [design record](docs/DESIGN.md) of the
+  decisions so far.
+
+Next on the [roadmap](docs/ROADMAP.md): Nova IR as an MLIR dialect in SSA form, lowered to native code through
+LLVM and to GPU code through `linalg`; a tile-level kernel language lowered to Triton; and a Triton backend for a
+simulated AI accelerator. Known gaps today:
 
 - `int` is 32-bit and overflows silently ([BENCHMARKS.md](docs/BENCHMARKS.md#issues-found), issue 2).
 - Some of [docs/SYNTAX.md](docs/SYNTAX.md) is still the *target* design. Not yet implemented: `10_000`
@@ -118,13 +138,16 @@ scalar code, which brings native ARM and x86. Known gaps today:
 | [docs/SETUP.md](docs/SETUP.md) | Running and testing everything locally |
 | [docs/DEPLOY.md](docs/DEPLOY.md) | Production deployment on EC2 |
 | [docs/ROADMAP.md](docs/ROADMAP.md) | What comes next |
+| [docs/DESIGN.md](docs/DESIGN.md) | The compiler's design decisions, with the alternatives and trade-offs |
+| [compiler/kernels/README.md](compiler/kernels/README.md) | The GPU matmul kernels and their A100 results |
+| [compiler/kernels/triton/IR_WALKTHROUGH.md](compiler/kernels/triton/IR_WALKTHROUGH.md) | Triton's compilation of the matmul, stage by stage |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance numbers, method, and the issues they found |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Nova next to Python/PyTorch, JAX, Mojo, Julia and others |
 
 ## Repository layout
 
 ```
-compiler/    the Nova language: C++17 compiler, runtime, stdlib, tests, benchmarks
+compiler/    the Nova language: C++17 compiler, runtime, stdlib, tests, benchmarks, GPU kernels (kernels/)
 server/      Node.js + Express backend: auth, execution, workspace, NovaBot
 frontend/    React + Vite IDE
 examples/    Nova example programs
