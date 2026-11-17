@@ -174,15 +174,15 @@ kernel (128 x 128 tiles, `cp.async` double buffering) that reaches 82% of cuBLAS
 ([results](../compiler/kernels/README.md#results)). A benchmark checks each against cuBLAS and times it, and a CPU
 checker runs the kernels' own code without a GPU. The same matmul in Triton (done) reaches 95% of cuBLAS in FP32
 and 84–100% in TF32 on tensor cores, its autotuner finding the deeper pipeline and smaller tiles the pipelined
-kernel lacks. Next, a study of Triton's IR at each stage (Triton IR, Triton GPU IR,
-LLVM IR, PTX) to see what its passes do: layouts (`#blocked`, `#mma`, `#shared`), coalescing, software pipelining
-(`num_stages`) and the mapping to tensor cores. Later kernels on the same path: warp tiling, tensor cores by hand
+kernel lacks. Its IR is read at each stage (Triton IR, Triton GPU IR, LLVM IR, PTX)
+in [IR_WALKTHROUGH.md](../compiler/kernels/triton/IR_WALKTHROUGH.md): layouts (`#blocked`, `#mma`, `#shared`),
+coalescing, the software pipeline from `num_stages`, and the mapping to tensor cores. Later kernels on the same path: warp tiling, tensor cores by hand
 (WMMA / MMA), and FlashAttention.
 
-**B. The design record.** [DESIGN.md](DESIGN.md) records the decisions made so far, each with its alternatives
-and trade-offs: the flat postorder parse tree, a check pass separate from lowering, lowering into the existing IR
-before replacing it, generics compiled once per copy, reference counting for objects and containers, the LICM
-safety rules, broadcasting through `MatmulPlan`, and the kernel steps. Every later step adds its own.
+**B. The design record** (done). [DESIGN.md](DESIGN.md) records the decisions made so far, each with its
+alternatives and trade-offs: the flat postorder parse tree, a check pass separate from lowering, lowering into the
+existing IR before replacing it, generics compiled once per copy, reference counting for objects and containers,
+the LICM safety rules, broadcasting through `MatmulPlan`, and the kernel steps. Every later step adds its own.
 
 **C. Nova IR as an MLIR dialect, in SSA form** (replaces phases 6 and 7).
 - A `nova` dialect (ODS / TableGen) for Nova's operations and types: numbers, tensors with their element type and
