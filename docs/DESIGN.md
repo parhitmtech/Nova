@@ -162,6 +162,110 @@ asynchronous copies finish at once there, so a missing `cp.async` wait shows onl
 cores) and that it does it well: 95% of cuBLAS in FP32, against the hand-written 82%. Triton's design (tile-level
 ops, layouts in the IR, lowering a level at a time) is the model for Nova's own tensor path.
 
+## Proposed: step C, the `nova` dialect
+
+The plan for Nova IR as an MLIR dialect in SSA form (roadmap step C), for review before it is built.
+
+### C1. Lower from the checked tree, beside today's IR
+
+**Decision.** A second lowering, `lower_mlir.cc`, reads the same check-pass result as `lower.cc` and writes MLIR.
+Both back ends stay: the interpreter runs today's IR, and the MLIR path compiles to native code. A test passes only
+if both print the same output. Today's IR goes once the MLIR path covers every test.
+
+**Alternatives.** Translate today's IR into MLIR, or replace it at once.
+
+**Why.** Today's IR has already lost the structure MLIR wants (loops are jumps, values are numbered slots
+written many times); the checked tree still has it. Running both is the strangler pattern again (decision 6), and
+gives differential testing for free: every golden test checks the new compiler against the old one.
+
+### C2. Upstream dialects where they fit, `nova` ops only for what is Nova's own
+
+**Decision.**
+
+| Nova | MLIR | Dialect |
+|---|---|---|
+| `int`, `float`, `double`, `bool` and their arithmetic | `i32`, `f32`, `f64`, `i1`; `arith.addi`, `arith.mulf`, `arith.cmpi`, ... | `arith` (upstream) |
+| `if` / `while` / `for` | `scf.if`, `scf.while`, `scf.for` | `scf` (upstream) |
+| functions, calls, several return values | `func.func`, `func.call` (several results built in) | `func` (upstream) |
+| a generic function's copies | one `func.func` per copy (`@scale<int, int>`) | `func` |
+| arrays | `memref<?xi32>` | `memref` (upstream) |
+| `Tensor` and its built-ins | `!nova.tensor<f64>` (rank known at run time); `nova.matmul`, `nova.add`, `nova.relu`, ... | `nova` |
+| objects, `vector<T>`, `map<K, V>`, strings | `!nova.object<"Point">`, `!nova.vector<i32>`, `!nova.string`; `nova.new`, `nova.get_field`, `nova.call_method`, ... | `nova` |
+| `print`, `input`, `hf.*`, `sol.*` | `nova.print`, ... (calls into the runtime library) | `nova` |
+
+**Alternatives.** A `nova` op for everything (`nova.add`, `nova.if`), lowered to upstream dialects later.
+
+**Why.** `arith`, `scf` and `func` come with their optimizations (constant folding, CSE, LICM, inlining) and their
+lowering to LLVM. A `nova.add` would need all of that written again. Custom ops are for semantics no upstream
+dialect has: reference-counted objects, virtual calls, Nova's tensors. This is how Triton is built: `tt` ops beside
+`arith` and `scf`.
+
+### C3. Tensors are references in `nova`, values only where it is safe
+
+**Decision.** `!nova.tensor` is a reference to a buffer, as a Nova tensor is (`tensor_set` changes it in place, and
+two variables can share one). The tensor built-ins lower to `linalg` ops on `memref` buffers (`nova.matmul` to
+`linalg.matmul` or `linalg.batch_matmul`, and a broadcast batch to `linalg.generic` with index maps that reuse one
+operand), then to loops or GPU code. Ranked types, once the check pass tracks shapes, let these lowerings use
+static sizes. A
+later pass gives a function's tensors value semantics where nothing mutates or shares them, so that `linalg` on
+`tensor` values can fuse them.
+
+**Alternatives.** MLIR's built-in `tensor` type from the start: values, never changed.
+
+**Why.** Value semantics are what fusion and the `linalg` transformations want, but they do not describe a
+language whose tensors change in place; modelling them as values would be wrong for `tensor_set`. Starting with
+references and recovering values where it is provably safe is what PyTorch does (its "functionalization" pass).
+
+### C4. Reference counting as explicit ops, inserted by a pass
+
+**Decision.** The lowering writes plain `nova` ops; a pass then inserts `nova.retain` / `nova.release` where values
+are copied and die, and a second pass removes pairs that cancel. They lower to calls into a small C runtime library
+(the object and container heaps, strings).
+
+**Alternatives.** Hide the counting inside each op's lowering, as the interpreter does at run time.
+
+**Why.** Explicit counts are visible to optimization: a retain followed by its release, with nothing between,
+disappears. Swift's SIL does the same (automatic reference counting as ops in its IR).
+
+### C5. Native code through LLVM, run in-process or written out
+
+**Decision.** `arith`, `scf`, `func`, `memref` and the lowered `nova` ops go to MLIR's `llvm` dialect, then to LLVM
+IR, then to machine code: run at once through MLIR's ExecutionEngine (LLVM's ORC JIT) for `nova --native file.nova`,
+or written as an object file and linked with the runtime library. Source locations come from the token locations,
+so errors and debug information name Nova lines.
+
+**Why.** It replaces the removed x86 emitter and JIT with LLVM's code generation, on x86 and ARM, and the
+interpreter remains for the REPL, the debugger and as the reference.
+
+### C6. Autograd as a transformation on `nova`
+
+**Decision.** Reverse-mode differentiation becomes a pass over a function's tensor ops: it walks them backwards and
+writes the backward ops (for `nova.matmul`, the two matmuls of its gradients), so the forward and backward graphs
+are lowered and optimized alike.
+
+**Alternatives.** Keep the run-time tape.
+
+**Why.** A tape records operations as they run, so the compiler never sees the backward graph and cannot fuse or
+tile it. Generating it at compile time is what JAX does. MLIR has no built-in automatic differentiation; Enzyme
+works at the LLVM IR level, below where tensor ops are visible.
+
+### Build and order
+
+- **Build.** The dialect's ops and types are declared in TableGen (ODS) and generated by `mlir-tblgen`, so the MLIR
+  part builds with CMake against a pinned LLVM / MLIR release (apt.llvm.org's `libmlir-dev` and `mlir-tools`), on
+  Linux and WSL2. A `nova-opt` tool runs the passes on `.mlir` files, as `mlir-opt` does, for tests in MLIR's
+  FileCheck style. The interpreter keeps its Makefile until the switch.
+- **Order**, each step tested against the interpreter on the golden tests it covers:
+  1. the dialect's skeleton, `nova-opt`, and a CI job against the pinned LLVM;
+  2. scalars, control flow, functions and `print`, to native code;
+  3. arrays, strings and structs;
+  4. tensors on CPU: `memref` and `linalg`;
+  5. objects and containers, with the reference-counting passes;
+  6. autograd as a pass, then tensors on the GPU (`linalg` tiled to the `gpu` dialect and NVVM, or IREE).
+- **Risks.** MLIR's C++ API changes between releases (pin one release, upgrade on purpose); CMake and TableGen next
+  to the Makefile; and scope, which the order above keeps small: step 2 alone gives a native compiler for a useful
+  subset of Nova.
+
 ## Still open
 
 - Reference counting leaves cycles; `weak` fields are planned.
