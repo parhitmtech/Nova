@@ -8,5 +8,5 @@ configure_lit_site_cfg(
 )
 add_lit_testsuite(check-nova "Running the nova dialect's tests"
     ${CMAKE_CURRENT_BINARY_DIR}
-    DEPENDS nova-opt
+    DEPENDS nova-opt nova-lower
 )

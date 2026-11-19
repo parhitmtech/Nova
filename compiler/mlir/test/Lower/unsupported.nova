@@ -1,0 +1,9 @@
+# RUN: not nova-lower %s 2>&1 | FileCheck %s
+#
+# What lowering does not cover yet stops it with the line and what it is, as the interpreter's lowering does.
+
+ignite:
+    int i = 0
+    # CHECK: Error at line [[@LINE+1]]: nova-lower cannot lower a while loop yet
+    while (i < 3):
+        i += 1

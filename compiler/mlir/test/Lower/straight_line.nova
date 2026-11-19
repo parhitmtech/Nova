@@ -1,0 +1,53 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# Straight-line code in SSA form: a declaration or an assignment gives the variable a new value, and a use reads
+# the newest one. The second run folds the whole program to the constants it prints; canonicalize moves constants
+# to the top of the function, so they are matched in any order (FOLD-DAG).
+
+# FOLD-LABEL: func.func @main()
+# FOLD-DAG: %[[C13:.*]] = arith.constant 13 : i32
+# FOLD-DAG: %[[C5:.*]] = arith.constant 5.000000e+00 : f64
+# FOLD: nova.print %[[C13]] : i32
+# FOLD: nova.print %[[C5]] : f64
+
+# CHECK-LABEL: func.func @main()
+ignite:
+    # CHECK: %[[X:.*]] = arith.constant 10 : i32
+    int x = 10
+    # CHECK: %[[Y:.*]] = arith.constant 3 : i32
+    int y = 3
+    # CHECK: %[[SUM:.*]] = arith.addi %[[X]], %[[Y]] : i32
+    # CHECK: nova.print %[[SUM]] : i32
+    print(x + y)
+
+    # x is assigned twice, so it names two values in turn
+    # CHECK: %[[X2:.*]] = arith.muli %[[X]], %[[Y]] : i32
+    x = x * y
+    # CHECK: %[[X3:.*]] = arith.addi %[[X2]], %{{.*}} : i32
+    x += 1
+    # CHECK: arith.divsi %[[X3]], %[[Y]] : i32
+    print(x / y)
+    # CHECK: arith.remsi %[[X3]], %[[Y]] : i32
+    print(x % y)
+
+    # a float literal is an f32, widened where a double is wanted
+    # CHECK: %[[F:.*]] = arith.constant 2.500000e+00 : f32
+    # CHECK: %[[D:.*]] = arith.extf %[[F]] : f32 to f64
+    double d = 2.5
+    # CHECK: %[[D2:.*]] = arith.mulf %[[D]], %{{.*}} : f64
+    # CHECK: nova.print %[[D2]] : f64
+    d = d * 2.0
+    print(d)
+
+    # CHECK: %[[BIG:.*]] = arith.cmpi sgt, %[[X3]], %{{.*}} : i32
+    # CHECK: arith.xori %[[BIG]], %true : i1
+    bool big = x > 20
+    print(not big)
+
+    # a declaration without a value starts at zero
+    # CHECK: %[[ZERO:.*]] = arith.constant 0.000000e+00 : f32
+    # CHECK: nova.print %[[ZERO]] : f32
+    float f
+    print(f)
+    # CHECK: return
