@@ -120,7 +120,7 @@ jobs:
         run: >-
           cmake -G Ninja -S compiler/mlir -B build/mlir
           -DMLIR_DIR=/usr/lib/llvm-20/lib/cmake/mlir
-          -DLLVM_EXTERNAL_LIT="$HOME/.local/bin/lit"
+          -DLLVM_EXTERNAL_LIT="$(command -v lit)"  # pipx's bin dir differs by machine
       - name: Build nova-opt and run the dialect tests
         run: ninja -C build/mlir check-nova
 
