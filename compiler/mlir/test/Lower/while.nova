@@ -1,0 +1,95 @@
+# RUN: nova-lower %s | FileCheck %s
+#
+# while, do-while and for as scf.while. At the top of an iteration, a variable the loop assigns holds either its
+# value from before the loop or the one the last iteration left: scf.while takes the first as its operands, and
+# each iteration passes the next back with scf.yield. scf.condition decides whether another iteration runs and,
+# when none does, which values are the loop's results.
+
+# CHECK-LABEL: func.func @main()
+ignite:
+    # CHECK: %[[I0:.*]] = arith.constant 0 : i32
+    # CHECK: %[[SUM0:.*]] = arith.constant 0 : i32
+    # CHECK: %[[LIMIT:.*]] = arith.constant 4 : i32
+    int i = 0
+    int sum = 0
+    int limit = 4
+
+    # sum and i are assigned in the loop, so they are carried; limit is not, so the loop reads it from outside
+    # CHECK: %[[W:.*]]:2 = scf.while (%[[SUM:.*]] = %[[SUM0]], %[[I:.*]] = %[[I0]]) : (i32, i32) -> (i32, i32) {
+    # CHECK:   %[[MORE:.*]] = arith.cmpi slt, %[[I]], %[[LIMIT]] : i32
+    # CHECK:   scf.condition(%[[MORE]]) %[[SUM]], %[[I]] : i32, i32
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[SUM2:.*]]: i32, %[[I2:.*]]: i32):
+    # CHECK:   %[[SUM3:.*]] = arith.addi %[[SUM2]], %[[I2]] : i32
+    # CHECK:   %[[I3:.*]] = arith.addi %[[I2]], %{{.*}} : i32
+    # CHECK:   scf.yield %[[SUM3]], %[[I3]] : i32, i32
+    # CHECK: }
+    # CHECK: nova.print %[[W]]#0 : i32
+    # CHECK: nova.print %[[W]]#1 : i32
+    while (i < limit):
+        sum += i
+        i += 1
+    print(sum)
+    print(i)
+
+    # do-while: the body runs before the test, so it goes in the before region, and the after region only passes
+    # the values back
+    # CHECK: %[[D:.*]] = scf.while (%[[S:.*]] = %{{.*}}) : (i32) -> i32 {
+    # CHECK:   %[[S2:.*]] = arith.addi %[[S]], %{{.*}} : i32
+    # CHECK:   %[[SQ:.*]] = arith.muli %[[S2]], %[[S2]] : i32
+    # CHECK:   %[[AGAIN:.*]] = arith.cmpi slt, %[[SQ]], %{{.*}} : i32
+    # CHECK:   scf.condition(%[[AGAIN]]) %[[S2]] : i32
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[S3:.*]]: i32):
+    # CHECK:   scf.yield %[[S3]] : i32
+    # CHECK: }
+    # CHECK: nova.print %[[D]] : i32
+    int steps = 0
+    do:
+        steps += 1
+    while (steps * steps < 10)
+    print(steps)
+
+    # for: the start runs once before the loop, the step at the end of each iteration. k is declared by the start,
+    # so it ends with the loop: nothing after it reads the loop's result.
+    # CHECK: scf.while (%[[K:.*]] = %{{.*}}) : (i32) -> i32 {
+    # CHECK:   arith.cmpi slt, %[[K]], %{{.*}} : i32
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[K2:.*]]: i32):
+    # CHECK:   %[[KK:.*]] = arith.muli %[[K2]], %[[K2]] : i32
+    # CHECK:   nova.print %[[KK]] : i32
+    # CHECK:   %[[K3:.*]] = arith.addi %[[K2]], %{{.*}} : i32
+    # CHECK:   scf.yield %[[K3]] : i32
+    # CHECK: }
+    for (int k = 0; k < 3; k += 1):
+        int sq = k * k
+        print(sq)
+
+    # j is declared before the for, so it outlives it and holds the loop's result
+    # CHECK: %[[J:.*]] = scf.while
+    # CHECK: nova.print %[[J]] : i32
+    int j
+    for (j = 0; j < 2; j += 1):
+        print(j)
+    print(j)
+
+    # a loop in a loop: total is carried through both; r only through the outer one (its step), c only through the
+    # inner one (it is declared in the outer body)
+    # CHECK: %[[OUT:.*]]:2 = scf.while ({{.*}}) : (i32, i32) -> (i32, i32) {
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[R:.*]]: i32, %{{.*}}: i32):
+    # CHECK:   %[[IN:.*]]:2 = scf.while ({{.*}}) : (i32, i32) -> (i32, i32) {
+    # CHECK:   } do {
+    # CHECK:     arith.addi %{{.*}}, %[[R]] : i32
+    # CHECK:   }
+    # CHECK:   %[[R2:.*]] = arith.addi %[[R]], %{{.*}} : i32
+    # CHECK:   scf.yield %[[R2]], %[[IN]]#0 : i32, i32
+    # CHECK: }
+    # CHECK: nova.print %[[OUT]]#1 : i32
+    int total = 0
+    for (int r = 0; r < 2; r += 1):
+        int c = 0
+        while (c < 3):
+            total += r
+            c += 1
+    print(total)

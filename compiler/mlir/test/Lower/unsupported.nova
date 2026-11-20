@@ -4,6 +4,7 @@
 
 ignite:
     int i = 0
-    # CHECK: Error at line [[@LINE+1]]: nova-lower cannot lower a while loop yet
     while (i < 3):
         i += 1
+        # CHECK: Error at line [[@LINE+1]]: nova-lower cannot lower break and continue yet
+        break

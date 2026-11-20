@@ -1,6 +1,6 @@
 // Lowering the checked tree to MLIR (LowerTree.h). It covers the ignite block's numbers and bools, variables,
-// arithmetic, comparisons, print, and if / elif / else and and / or (as scf.if). Anything else stops lowering with
-// an error that names it, as lower.cc's unlowered() does.
+// arithmetic, comparisons, print, if / elif / else and and / or (as scf.if), and while, do-while and for (as
+// scf.while). Anything else stops lowering with an error that names it, as lower.cc's unlowered() does.
 //
 // SSA. A Nova variable is assigned many times; an SSA value is defined once. Lowering keeps, for each variable, the
 // SSA value it holds at this point of the program ('values'): a declaration or an assignment makes a new value and
@@ -10,6 +10,10 @@
 // Where branches join, a variable can hold a different value depending on the branch taken. LLVM IR writes that
 // as a phi; MLIR's structured scf.if writes it as the op's results: each branch ends in scf.yield with the values
 // its variables hold, and after the scf.if the variables hold its results.
+//
+// A loop is a join too: at the top of an iteration a variable holds either its value from before the loop or the
+// one the last iteration left. scf.while writes that as block arguments: the loop's operands are the first values,
+// and each iteration ends by passing the next ones back to the top.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -59,6 +63,9 @@ class Lowerer
         void if_chain(const std::vector<uint32_t>& parts, size_t i, const std::vector<uint32_t>& vars);
         void enter(mlir::Block* b);  // put the builder in a branch: before its scf.yield if it has one
         void yield(uint32_t n, const std::vector<uint32_t>& vars);
+        llvm::SmallVector<mlir::Value> current(const std::vector<uint32_t>& vars);  // the values they hold here
+        void loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst);
+        void iteration(mlir::Region& r, const std::vector<uint32_t>& vars, uint32_t n);
 
         mlir::Value expr(uint32_t n);
         mlir::Value literal(uint32_t n);
@@ -167,9 +174,25 @@ void Lowerer::statement(uint32_t n)
         case NodeKind::If:  // children: the condition, Block, then Elif... and Else
             if_chain(kids, 0, assigned(n));
             return;
-        case NodeKind::While:    fail(n, "a while loop");     return;
-        case NodeKind::For:      fail(n, "a for loop");       return;
-        default:                 fail(n, "this statement");   return;
+        case NodeKind::While:    // children: the condition, Block
+            loop(n, kids[0], kids[1], 0, false);
+            return;
+        case NodeKind::DoWhile:  // children: Block, the condition. The body runs before the first test.
+            loop(n, kids[1], kids[0], 0, true);
+            return;
+        case NodeKind::For:      // children: the start, the condition, the step (each may be Empty), Block
+        {
+            llvm::DenseMap<uint32_t, mlir::Value> outer = values;
+            if (tree.kind(kids[0]) != NodeKind::Empty) statement(kids[0]);
+            loop(n, kids[1], kids[3], kids[2], false);
+            // a variable the start declares (for (int i = 0; ...)) ends with the loop; the others keep their values
+            for (auto& [var, v] : outer) v = values[var];
+            values = outer;
+            return;
+        }
+        case NodeKind::Break:
+        case NodeKind::Continue: fail(n, "break and continue");  return;
+        default:                 fail(n, "this statement");      return;
     }
 }
 
@@ -250,9 +273,64 @@ void Lowerer::enter(mlir::Block* b)
 void Lowerer::yield(uint32_t n, const std::vector<uint32_t>& vars)
 {
     if (!ok() || vars.empty()) return;
+    builder.create<mlir::scf::YieldOp>(loc(n), current(vars));
+}
+
+llvm::SmallVector<mlir::Value> Lowerer::current(const std::vector<uint32_t>& vars)
+{
     llvm::SmallVector<mlir::Value> out;
     for (uint32_t v : vars) out.push_back(values[v]);
-    builder.create<mlir::scf::YieldOp>(loc(n), out);
+    return out;
+}
+
+// while (cond): body, with for's step after the body; with bodyFirst, do: body while (cond). One scf.while:
+//
+//   %results = scf.while (%a = <values before the loop>) {     the 'before' region: is there another iteration?
+//     scf.condition(%cond) <values>                            false: they are the loop's results
+//   } do {                                                     true: they go to the 'after' region
+//   ^bb0(%b):
+//     <body, step>
+//     scf.yield <values>                                       back to the top, as the next iteration's %a
+//   }
+//
+// The before region may do work ahead of the test, so a do-while's body goes there and its after region only
+// passes the values back. A for with no condition, for (;;), tests true.
+void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst)
+{
+    std::vector<uint32_t> vars = assigned(n);
+    llvm::SmallVector<mlir::Type> types;
+    for (uint32_t v : vars) types.push_back(values[v].getType());
+    auto op = builder.create<mlir::scf::WhileOp>(loc(n), types, current(vars));
+    llvm::DenseMap<uint32_t, mlir::Value> before = values;
+
+    iteration(op.getBefore(), vars, n);
+    if (bodyFirst) block(body);
+    mlir::Value c = tree.kind(cond) == NodeKind::Empty
+                        ? builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true)).getResult()
+                        : convert(cond, expr(cond), builder.getI1Type());
+    if (!ok()) return;
+    builder.create<mlir::scf::ConditionOp>(loc(n), c, current(vars));
+
+    iteration(op.getAfter(), vars, n);
+    if (!bodyFirst) block(body);
+    if (step && tree.kind(step) != NodeKind::Empty) statement(step);
+    if (!ok()) return;
+    builder.create<mlir::scf::YieldOp>(loc(n), current(vars));
+
+    values = before;
+    builder.setInsertionPointAfter(op);
+    for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = op.getResult(k);
+}
+
+// One of scf.while's regions: a block with an argument per variable, which the variables hold inside it.
+// createBlock also puts the builder at the block's end.
+void Lowerer::iteration(mlir::Region& r, const std::vector<uint32_t>& vars, uint32_t n)
+{
+    llvm::SmallVector<mlir::Type> types;
+    for (uint32_t v : vars) types.push_back(values[v].getType());
+    llvm::SmallVector<mlir::Location> locs(vars.size(), loc(n));
+    mlir::Block* b = builder.createBlock(&r, {}, types, locs);
+    for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = b->getArgument(k);
 }
 
 mlir::Value Lowerer::expr(uint32_t n)
