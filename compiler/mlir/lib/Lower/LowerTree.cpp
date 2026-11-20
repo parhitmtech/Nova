@@ -21,6 +21,10 @@
 // (an scf.if), and the loop tests it with its condition. continue sets a second flag, cleared at the start of
 // each iteration, which skips the rest of the body but not for's step. The flags live in 'values' like variables
 // (flag()), so if and loop pass them out the same way.
+//
+// Functions. Each becomes a func.func, its parameters the entry block's arguments, and a call a func.call. return
+// is a jump too: it sets the function's return flag and one slot per value returned; the code it skips tests the
+// flag, every loop around it ends, and the func.return at the end returns the slots.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -55,6 +59,7 @@ class Lowerer
         std::string file;
         llvm::DenseMap<uint32_t, mlir::Value> values;  // by entity: the SSA value a variable holds at this point
         llvm::DenseMap<uint32_t, uint32_t> owner;      // by break or continue node: the loop it leaves
+        llvm::SmallVector<mlir::Type> results;         // the result types of the function being lowered
         std::string error;                             // the first thing not lowered; once set, lowering stops
 
         bool ok() const { return error.empty(); }
@@ -62,11 +67,19 @@ class Lowerer
         mlir::Location loc(uint32_t n);
         mlir::Type type(TypeId t);  // null if lowering has no type for it yet
         mlir::Type type_of(uint32_t n) { return type(in.nodeTypes[n]); }
+        bool lower_types(uint32_t n, const std::vector<TypeId>& from, llvm::SmallVector<mlir::Type>& to);
 
         uint32_t first(uint32_t n) { return n + 1 - tree.nodes[n].size; }  // n's subtree is [first(n), n]
         // a loop's break flag and continue flag: keys in 'values' past the last entity, so never a variable's
         uint32_t flag(uint32_t loop, bool cont) { return uint32_t(in.entities.size()) + 2 * loop + cont; }
+        // the function's return flag, then its return slots: keys past every loop's flags
+        uint32_t ret_flag() { return uint32_t(in.entities.size() + 2 * tree.nodes.size()); }
+        uint32_t ret_value(size_t k) { return ret_flag() + 1 + uint32_t(k); }
+        bool is_flag(uint32_t key) { return key >= in.entities.size() && key <= ret_flag(); }
+        bool contains(uint32_t n, NodeKind k);  // whether n's subtree has a node of kind k
         void find_loops(uint32_t n, uint32_t loop);
+
+        void function(uint32_t d, uint32_t body, const std::vector<uint32_t>& params, const Signature& sig);
 
         void block(uint32_t n);
         void statements(const std::vector<uint32_t>& list, size_t i);
@@ -83,6 +96,7 @@ class Lowerer
         void loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst);
         void iteration(mlir::Region& r, const std::vector<uint32_t>& vars, uint32_t n);
         mlir::Value condition(uint32_t cond);
+        mlir::Value any(uint32_t n, const std::vector<uint32_t>& flags);  // flag or flag ...
 
         mlir::Value expr(uint32_t n);
         mlir::Value literal(uint32_t n);
@@ -91,7 +105,7 @@ class Lowerer
         mlir::Value logical(uint32_t n);
         mlir::Value arithmetic(uint32_t n, TokenType op, mlir::Value left, mlir::Value right, mlir::Type t);
         mlir::Value compare(uint32_t n, TokenType op, mlir::Value left, mlir::Value right);
-        mlir::Value call(uint32_t n);
+        llvm::SmallVector<mlir::Value> call(uint32_t n);  // the values it gives: none, one, or several
         mlir::Value convert(uint32_t n, mlir::Value v, mlir::Type to);
         mlir::Value truth(uint32_t n, mlir::Value v);  // v != 0, as an i1
 };
@@ -121,6 +135,23 @@ mlir::Type Lowerer::type(TypeId t)
     }
 }
 
+// Several types at once, as for a function's parameters or results; false (and lowering stops) at the first one
+// lowering has no type for
+bool Lowerer::lower_types(uint32_t n, const std::vector<TypeId>& from, llvm::SmallVector<mlir::Type>& to)
+{
+    for (TypeId t : from)
+    {
+        mlir::Type m = type(t);
+        if (!m)
+        {
+            fail(n, "a value of type " + type_name(in, t));
+            return false;
+        }
+        to.push_back(m);
+    }
+    return true;
+}
+
 mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
 {
     mlir::OwningOpRef<mlir::ModuleOp> module = mlir::ModuleOp::create(loc(tree.root()));
@@ -128,16 +159,16 @@ mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
     find_loops(tree.root(), 0);
     for (uint32_t d : tree.children(tree.root()))
     {
-        if (tree.kind(d) != NodeKind::Ignite)
+        std::vector<uint32_t> kids = tree.children(d);
+        if (tree.kind(d) == NodeKind::Ignite) function(d, kids[0], {}, Signature{});  // func.func @main()
+        else if (tree.kind(d) == NodeKind::FunctionDecl)  // children: ParamList, ReturnTypes if written, Block
         {
-            fail(d, "functions, structs and classes");
-            break;
+            const Signature& sig = in.signatures.at(d);
+            if (sig.generic) fail(d, "a generic function");  // one copy per call's types: a later slice
+            else function(d, kids.back(), tree.children(kids[0]), sig);
         }
-        // ignite: becomes func.func @main(), its block the function's body
-        auto main = builder.create<mlir::func::FuncOp>(loc(d), "main", builder.getFunctionType({}, {}));
-        builder.setInsertionPointToStart(main.addEntryBlock());
-        block(tree.children(d)[0]);
-        builder.create<mlir::func::ReturnOp>(loc(d));
+        else fail(d, "this declaration");
+        if (!ok()) break;
         builder.setInsertionPointToEnd(module->getBody());
     }
     if (!ok())
@@ -146,6 +177,40 @@ mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
         return nullptr;
     }
     return module;
+}
+
+// A function (or ignite, as main): a func.func whose entry block's arguments are the parameters. Its variables
+// start afresh: a function sees only its parameters. If it has a return, the return flag starts false; the return
+// slots start at zero, so every path has a value to return, and the func.return at the end returns them.
+void Lowerer::function(uint32_t d, uint32_t body, const std::vector<uint32_t>& params, const Signature& sig)
+{
+    llvm::SmallVector<mlir::Type> ins;
+    results.clear();
+    if (!lower_types(d, sig.params, ins) || !lower_types(d, sig.returns, results)) return;
+    std::string name = tree.kind(d) == NodeKind::Ignite ? "main" : std::string(tree.spelling(d));
+    auto f = builder.create<mlir::func::FuncOp>(loc(d), name, builder.getFunctionType(ins, results));
+    mlir::Block* entry = f.addEntryBlock();
+    builder.setInsertionPointToStart(entry);
+
+    values.clear();
+    for (size_t k = 0; k < params.size(); k++) values[in.refs[params[k]]] = entry->getArgument(k);
+    if (contains(body, NodeKind::Return))
+        values[ret_flag()] = builder.create<mlir::arith::ConstantOp>(loc(d), builder.getBoolAttr(false));
+    for (size_t k = 0; k < results.size(); k++)
+        values[ret_value(k)] = builder.create<mlir::arith::ConstantOp>(loc(d), builder.getZeroAttr(results[k]));
+
+    block(body);
+    if (!ok()) return;
+    llvm::SmallVector<mlir::Value> out;
+    for (size_t k = 0; k < results.size(); k++) out.push_back(values[ret_value(k)]);
+    builder.create<mlir::func::ReturnOp>(loc(d), out);
+}
+
+bool Lowerer::contains(uint32_t n, NodeKind k)
+{
+    for (uint32_t m = first(n); m <= n; m++)
+        if (tree.kind(m) == k) return true;
+    return false;
 }
 
 // The loop each break and continue leaves: the innermost one around it. (The check pass has made sure there is one.)
@@ -184,9 +249,7 @@ void Lowerer::unless(const std::vector<uint32_t>& flags, const std::vector<uint3
 {
     if (flags.empty()) return statements(list, i);
     uint32_t n = list[i];
-    mlir::Value jumped = values[flags[0]];
-    for (size_t k = 1; k < flags.size(); k++)
-        jumped = builder.create<mlir::arith::OrIOp>(loc(n), jumped, values[flags[k]]);
+    mlir::Value jumped = any(n, flags);
     mlir::Value one = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true));
     mlir::Value go = builder.create<mlir::arith::XOrIOp>(loc(n), jumped, one);
 
@@ -223,6 +286,29 @@ void Lowerer::statement(uint32_t n)
             mlir::Value v = kids.size() == 2 ? convert(n, expr(kids[1]), t)
                                              : builder.create<mlir::arith::ConstantOp>(loc(n), builder.getZeroAttr(t));
             if (ok()) values[var] = v;
+            return;
+        }
+        case NodeKind::MultiDecl:  // int q, int r = divmod(17, 5): children: VarDecl..., then the call
+        {
+            llvm::SmallVector<mlir::Value> got = call(kids.back());
+            for (size_t k = 0; k + 1 < kids.size() && ok(); k++)
+            {
+                uint32_t var = in.refs[kids[k]];
+                mlir::Type t = type(in.entities[var].type);
+                if (!t) { fail(kids[k], "a variable of type " + type_name(in, in.entities[var].type)); return; }
+                values[var] = convert(kids[k], got[k], t);
+            }
+            return;
+        }
+        case NodeKind::Return:  // children: the values. Fills the return slots and sets the return flag.
+        {
+            for (size_t k = 0; k < kids.size(); k++)
+            {
+                mlir::Value v = convert(kids[k], expr(kids[k]), results[k]);
+                if (!ok()) return;
+                values[ret_value(k)] = v;
+            }
+            values[ret_flag()] = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true));
             return;
         }
         case NodeKind::Assign:  // x = value: x now holds a new value
@@ -277,35 +363,41 @@ void Lowerer::assign(uint32_t target, mlir::Value value)
 
 // The variables an if, a loop or the code after a break must pass out: those the nodes [from, to) may assign that
 // are live here, so declared before them. One declared inside is gone after it (block scope), so it is not passed
-// out. A break or continue assigns its loop's flag, which is live only inside that loop. The tree is in postorder,
-// so a subtree, or a run of sibling statements with their subtrees, is a range of nodes: one pass, in source order.
+// out. A break or continue assigns its loop's flag, which is live only inside that loop, and a return the return
+// flag and slots. The tree is in postorder, so a subtree, or a run of sibling statements with their subtrees, is a
+// range of nodes: one pass, in source order.
 std::vector<uint32_t> Lowerer::assigned(uint32_t from, uint32_t to)
 {
     std::vector<uint32_t> vars;
     llvm::DenseSet<uint32_t> seen;
     for (uint32_t m = from; m < to; m++)
     {
-        uint32_t var;
+        llvm::SmallVector<uint32_t, 4> keys;
         NodeKind k = tree.kind(m);
-        if (k == NodeKind::Break || k == NodeKind::Continue) var = flag(owner[m], k == NodeKind::Continue);
+        if (k == NodeKind::Break || k == NodeKind::Continue) keys.push_back(flag(owner[m], k == NodeKind::Continue));
+        else if (k == NodeKind::Return)
+        {
+            keys.push_back(ret_flag());
+            for (size_t r = 0; r < results.size(); r++) keys.push_back(ret_value(r));
+        }
         else if (k == NodeKind::Assign || k == NodeKind::CompoundAssign)
         {
             uint32_t target = tree.children(m)[0];
-            if (tree.kind(target) != NodeKind::Name) continue;
-            var = in.refs[target];
+            if (tree.kind(target) == NodeKind::Name) keys.push_back(in.refs[target]);
         }
-        else continue;
-        if (values.count(var) && seen.insert(var).second) vars.push_back(var);
+        for (uint32_t key : keys)
+            if (values.count(key) && seen.insert(key).second) vars.push_back(key);
     }
     return vars;
 }
 
-// The flags statement n may set: of the loops around it, not of loops inside it (theirs are not live here)
+// The flags statement n may set: the return flag, and those of the loops around it, not of loops inside it (theirs
+// are not live here)
 std::vector<uint32_t> Lowerer::jumps(uint32_t n)
 {
     std::vector<uint32_t> flags;
-    for (uint32_t v : assigned(first(n), n + 1))
-        if (v >= in.entities.size()) flags.push_back(v);
+    for (uint32_t key : assigned(first(n), n + 1))
+        if (is_flag(key)) flags.push_back(key);
     return flags;
 }
 
@@ -383,7 +475,8 @@ llvm::SmallVector<mlir::Value> Lowerer::current(const std::vector<uint32_t>& var
 //
 // With a break, the break flag starts false and is carried like a variable; the condition becomes
 // 'brk ? false : cond' (an scf.if, so cond is not run after a break), and for's step runs only without a break.
-// With a continue, the continue flag is false at the start of each body and only skips the rest of it.
+// A return in the body ends the loop the same way, with the return flag. With a continue, the continue flag is
+// false at the start of each body and only skips the rest of it.
 void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst)
 {
     uint32_t brk = flag(n, false), cont = flag(n, true);
@@ -393,8 +486,11 @@ void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool
         if (tree.kind(m) == NodeKind::Break && owner[m] == n) breaks = true;
         if (tree.kind(m) == NodeKind::Continue && owner[m] == n) continues = true;
     }
-    mlir::Value no;  // false: the flags' first value
-    if (breaks || continues) no = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(false));
+    std::vector<uint32_t> stops;  // the flags that end the loop early
+    if (breaks) stops.push_back(brk);
+    if (contains(body, NodeKind::Return)) stops.push_back(ret_flag());
+    mlir::Value no;  // false: the flags' first value, and the condition once one of 'stops' is set
+    if (continues || !stops.empty()) no = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(false));
     if (breaks) values[brk] = no;
 
     std::vector<uint32_t> vars = assigned(first(n), n);  // with brk, if there is a break
@@ -413,9 +509,9 @@ void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool
     iteration(op.getBefore(), vars, n);
     if (bodyFirst) run_body();
     mlir::Value c;
-    if (breaks && ok())
+    if (!stops.empty() && ok())
     {
-        auto test = builder.create<mlir::scf::IfOp>(loc(n), mlir::TypeRange{builder.getI1Type()}, values[brk], true);
+        auto test = builder.create<mlir::scf::IfOp>(loc(n), mlir::TypeRange{builder.getI1Type()}, any(n, stops), true);
         builder.setInsertionPointToEnd(test.thenBlock());
         builder.create<mlir::scf::YieldOp>(loc(n), no);
         builder.setInsertionPointToEnd(test.elseBlock());
@@ -431,7 +527,7 @@ void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool
     iteration(op.getAfter(), vars, n);
     if (!bodyFirst) run_body();
     if (step && tree.kind(step) != NodeKind::Empty)
-        unless(breaks ? std::vector<uint32_t>{brk} : std::vector<uint32_t>{}, {step}, 0);
+        unless(stops, {step}, 0);
     if (!ok()) return;
     builder.create<mlir::scf::YieldOp>(loc(n), current(vars));
 
@@ -439,6 +535,13 @@ void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool
     builder.setInsertionPointAfter(op);
     for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = op.getResult(k);
     values.erase(brk);  // the break flag ends with the loop
+}
+
+mlir::Value Lowerer::any(uint32_t n, const std::vector<uint32_t>& flags)
+{
+    mlir::Value v = values[flags[0]];
+    for (size_t k = 1; k < flags.size(); k++) v = builder.create<mlir::arith::OrIOp>(loc(n), v, values[flags[k]]);
+    return v;
 }
 
 // A loop's condition as an i1. A for with none, for (;;), tests true.
@@ -477,7 +580,11 @@ mlir::Value Lowerer::expr(uint32_t n)
         case NodeKind::Paren:        return expr(tree.children(n)[0]);
         case NodeKind::Unary:        return unary(n);
         case NodeKind::Binary:       return binary(n);
-        case NodeKind::Call:         return call(n);
+        case NodeKind::Call:         // as a value: its one result (a call that gives none is a statement)
+        {
+            llvm::SmallVector<mlir::Value> got = call(n);
+            return got.empty() ? nullptr : got[0];
+        }
         default:                     return fail(n, "this expression");
     }
 }
@@ -619,18 +726,34 @@ mlir::Value Lowerer::compare(uint32_t n, TokenType op, mlir::Value l, mlir::Valu
     return builder.create<mlir::arith::CmpIOp>(at, p, convert(n, l, t), convert(n, r, t));
 }
 
-// print(x): nova.print. The other built-ins come with their slices.
-mlir::Value Lowerer::call(uint32_t n)
+// A call to one of the program's functions: func.call, each argument converted to its parameter's type. print(x)
+// is nova.print; the other built-ins come with their slices.
+llvm::SmallVector<mlir::Value> Lowerer::call(uint32_t n)
 {
     std::vector<uint32_t> kids = tree.children(n);
     uint32_t callee = kids[0];
-    bool print = tree.kind(callee) == NodeKind::Name && in.refs[callee] != NoEntity &&
-                 in.entities[in.refs[callee]].kind == EntityKind::Builtin && tree.spelling(callee) == "print";
-    if (!print) return fail(n, "a call to '" + std::string(tree.spelling(callee)) + "'");
-    mlir::Value v = expr(kids[1]);
-    if (!ok()) return nullptr;
-    builder.create<nova::PrintOp>(loc(n), v);
-    return nullptr;  // print gives nothing
+    uint32_t e = tree.kind(callee) == NodeKind::Name ? in.refs[callee] : NoEntity;
+    EntityKind kind = e == NoEntity ? EntityKind::None : in.entities[e].kind;
+    if (kind == EntityKind::Builtin && tree.spelling(callee) == "print")
+    {
+        mlir::Value v = expr(kids[1]);
+        if (ok()) builder.create<nova::PrintOp>(loc(n), v);
+        return {};  // print gives nothing
+    }
+    if (kind != EntityKind::Function || in.calls.count(n))  // in.calls: a generic function's copy
+    {
+        fail(n, "a call to '" + std::string(tree.spelling(callee)) + "'");
+        return {};
+    }
+
+    const Signature& sig = in.signatures.at(in.entities[e].decl);
+    llvm::SmallVector<mlir::Type> params, returns;
+    if (!lower_types(n, sig.params, params) || !lower_types(n, sig.returns, returns)) return {};
+    llvm::SmallVector<mlir::Value> args;
+    for (size_t k = 1; k < kids.size(); k++) args.push_back(convert(kids[k], expr(kids[k]), params[k - 1]));
+    if (!ok()) return {};
+    auto op = builder.create<mlir::func::CallOp>(loc(n), std::string(tree.spelling(callee)), returns, args);
+    return llvm::SmallVector<mlir::Value>(op.getResults());
 }
 
 // The conversions the check pass allows without a cast: a float to a double, a bool to an int, an int to a float
