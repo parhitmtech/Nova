@@ -9,7 +9,7 @@
 ![CUDA and Triton](https://img.shields.io/badge/GPU-CUDA%20%C2%B7%20Triton-f5a6b1?style=flat-square)
 ![MLIR](https://img.shields.io/badge/next-MLIR%20dialect-f2c879?style=flat-square)
 
-**[Showcase](https://claude.ai/artifact/WVofyfHu9TYksc2vySJuMg)** · [Quick start](#-quick-start) · [Architecture](#-architecture) ·
+**[Showcase](docs/showcase/index.html)** · [Quick start](#-quick-start) · [Architecture](#-architecture) ·
 [Performance](#-performance) · [Roadmap](#-roadmap) · [Docs](#-documentation)
 
 </div>
@@ -18,6 +18,10 @@
 tensors, autograd and GPU-cluster training built into the language. **NovaComp** is the cloud IDE around
 it: a browser editor that compiles and runs Nova in sandboxed containers, streams the output back, and
 includes an AI coding assistant.
+
+> **Interactive showcase:** [`docs/showcase/index.html`](docs/showcase/index.html) is a single-file page with a
+> live compiler walkthrough, a clickable architecture map and the benchmark charts. Open it in a browser, or
+> serve it with GitHub Pages (Settings → Pages → `main` / `docs`) at `https://parhitmtech.github.io/Nova/showcase/`.
 
 ```python
 orbit novatorch.nn
