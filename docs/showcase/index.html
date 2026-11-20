@@ -1,0 +1,799 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Nova and NovaComp</title>
+<meta name="description" content="Nova, a statically typed language for machine learning, and NovaComp, the cloud IDE that runs it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+/* Layout: a single editorial column; the compiler demo is the one big interactive moment, the rest are calm sections. */
+:root {
+  --bg: #0b0f19; --surface: #111725; --surface-2: #161d2e; --line: #242e43; --line-2: #34415e;
+  --fg: #e6eaf2; --muted: #99a6be; --faint: #6b7896;
+  --accent: #a5a2ff; --teal: #76dac4; --pink: #f5a6b1; --amber: #f2c879; --sky: #7cb8f2;
+  --accent-ink: #0b0f19; --glow: rgba(165,162,255,.18); --glow-2: rgba(118,218,196,.12);
+  --font-display: "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --radius: 14px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    --bg: #f6f7fb; --surface: #ffffff; --surface-2: #eef0f7; --line: #dde1ec; --line-2: #c3c9da;
+    --fg: #121828; --muted: #4f5b75; --faint: #7a849c;
+    --accent: #5b55e0; --teal: #138a72; --pink: #c9445c; --amber: #a86a00; --sky: #2a6fbf;
+    --accent-ink: #ffffff; --glow: rgba(91,85,224,.12); --glow-2: rgba(19,138,114,.08);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg: #f6f7fb; --surface: #ffffff; --surface-2: #eef0f7; --line: #dde1ec; --line-2: #c3c9da;
+  --fg: #121828; --muted: #4f5b75; --faint: #7a849c;
+  --accent: #5b55e0; --teal: #138a72; --pink: #c9445c; --amber: #a86a00; --sky: #2a6fbf;
+  --accent-ink: #ffffff; --glow: rgba(91,85,224,.12); --glow-2: rgba(19,138,114,.08);
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font-body); font-size: 16px; line-height: 1.6;
+  margin: 0;
+}
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+code, .mono { font-family: var(--font-mono); font-size: .9em; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+
+/* top bar */
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 9; background: color-mix(in srgb, var(--bg) 86%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.bar .wrap { display: flex; align-items: center; gap: 20px; height: 56px; }
+.brand { font-family: var(--font-display); font-weight: 800; font-size: 20px; letter-spacing: -.02em; color: var(--fg); text-decoration: none; display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 22px; height: 22px; }
+.nav { display: flex; gap: 4px; margin-left: auto; overflow-x: auto; scrollbar-width: none; }
+.nav::-webkit-scrollbar { display: none; }
+.nav a { color: var(--muted); text-decoration: none; font-size: 14px; padding: 6px 10px; border-radius: 8px; white-space: nowrap; }
+.nav a:hover, .nav a.on { color: var(--fg); background: var(--surface-2); }
+.gh { font-size: 14px; color: var(--fg); text-decoration: none; border: 1px solid var(--line-2); padding: 6px 12px; border-radius: 8px; white-space: nowrap; }
+.gh:hover { border-color: var(--accent); }
+@media (max-width: 720px) { .gh { display: none; } }
+
+/* hero */
+.hero { position: relative; overflow: hidden; padding-block: 72px 36px; }
+.hero::before { content: ""; position: absolute; inset: -20% -10% auto auto; width: 60%; height: 120%; background: radial-gradient(closest-side, var(--glow), transparent); pointer-events: none; }
+.hero::after { content: ""; position: absolute; inset: auto auto -30% -10%; width: 50%; height: 90%; background: radial-gradient(closest-side, var(--glow-2), transparent); pointer-events: none; }
+.eyebrow { font-family: var(--font-mono); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--teal); }
+h1, h2, h3 { font-family: var(--font-display); letter-spacing: -.02em; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(40px, 7vw, 76px); line-height: 1.02; font-weight: 800; max-width: 15ch; }
+h1 .grad { background: linear-gradient(90deg, var(--accent), var(--teal)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.lede { font-size: clamp(17px, 2vw, 20px); color: var(--muted); max-width: 60ch; margin: 22px 0 0; }
+.hero-row { position: relative; z-index: 1; display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: end; }
+.facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.fact { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 14px 16px; }
+.fact b { display: block; font-family: var(--font-display); font-size: 26px; font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
+.fact span { font-size: 13px; color: var(--muted); line-height: 1.4; display: block; }
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+.btn { font: 600 15px var(--font-body); border-radius: 10px; padding: 11px 18px; border: 1px solid var(--line-2); background: var(--surface); color: var(--fg); cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; gap: 8px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn:hover { filter: brightness(1.06); }
+@media (max-width: 860px) { .hero-row { grid-template-columns: 1fr; } }
+
+section { padding-block: 64px; border-top: 1px solid var(--line); scroll-margin-top: 60px; }
+.sec-head { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 28px; max-width: 760px; }
+h2 { font-size: clamp(28px, 4vw, 40px); font-weight: 700; line-height: 1.1; }
+.sec-head p { color: var(--muted); margin: 0; }
+
+/* ── compiler demo ─────────────────────────────────── */
+.demo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .demo { grid-template-columns: minmax(0, 1fr); } }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); min-width: 0; overflow: hidden; }
+.panel-head { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+.dots { display: flex; gap: 6px; }
+.dots i { width: 10px; height: 10px; border-radius: 50%; background: var(--line-2); display: block; }
+.panel-head .file { font-family: var(--font-mono); color: var(--fg); }
+.panel-head .sp { flex: 1; }
+.code { margin: 0; padding: 14px 0; font: 14px/1.7 var(--font-mono); overflow-x: auto; counter-reset: ln; }
+.code .ln { display: block; padding: 0 16px 0 52px; position: relative; white-space: pre; transition: background .25s; }
+.code .ln::before { counter-increment: ln; content: counter(ln); position: absolute; left: 0; width: 36px; text-align: right; color: var(--faint); }
+.code .ln.hot { background: var(--glow); }
+.t-kw { color: var(--accent); font-weight: 500; }
+.t-ty { color: var(--teal); }
+.t-num { color: var(--amber); }
+.t-com { color: var(--faint); font-style: italic; }
+.t-fn { color: var(--sky); }
+.t-op { color: var(--pink); }
+
+.stages { display: flex; gap: 0; padding: 14px 14px 4px; overflow-x: auto; }
+.stage { flex: 1 0 auto; min-width: 78px; display: grid; justify-items: center; gap: 6px; background: none; border: 0; color: var(--muted); font: 500 12px var(--font-body); cursor: pointer; position: relative; padding: 4px 2px; }
+.stage::before { content: ""; position: absolute; top: 15px; left: -50%; right: 50%; height: 2px; background: var(--line); z-index: 0; }
+.stage:first-child::before { display: none; }
+.stage .node { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line-2); background: var(--surface); position: relative; z-index: 1; transition: all .3s; display: grid; place-items: center; }
+.stage .node::after { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--line-2); transition: background .3s; }
+.stage.done .node { border-color: var(--teal); }
+.stage.done .node::after { background: var(--teal); }
+.stage.done::before, .stage.active::before { background: var(--teal); }
+.stage.active .node { border-color: var(--accent); box-shadow: 0 0 0 6px var(--glow); }
+.stage.active .node::after { background: var(--accent); }
+.stage.active, .stage.done { color: var(--fg); }
+.view { padding: 14px 16px 18px; min-height: 280px; }
+.view h3 { font-size: 20px; margin-bottom: 4px; }
+.view .what { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { font: 12px var(--font-mono); padding: 3px 8px; border-radius: 6px; background: var(--surface-2); border: 1px solid var(--line); white-space: nowrap; }
+.chip.kw { color: var(--accent); } .chip.ty { color: var(--teal); } .chip.num { color: var(--amber); } .chip.op { color: var(--pink); } .chip.lay { color: var(--sky); border-style: dashed; }
+.kv { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 6px 14px; font: 13px var(--font-mono); }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; color: var(--teal); }
+.console { font: 14px/1.7 var(--font-mono); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-height: 120px; }
+.console .p { color: var(--faint); }
+.console .o { color: var(--fg); }
+.console .cursor { display: inline-block; width: 8px; height: 15px; background: var(--accent); vertical-align: -2px; animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+.stat { display: inline-flex; gap: 6px; align-items: baseline; font-size: 13px; color: var(--muted); margin-right: 14px; }
+.stat b { color: var(--fg); font: 600 15px var(--font-mono); }
+.note { font-size: 12px; color: var(--faint); margin-top: 10px; }
+.tree { font: 13px/1.55 var(--font-mono); margin: 0; white-space: pre; overflow-x: auto; color: var(--muted); }
+.tree b { color: var(--fg); font-weight: 500; }
+
+/* ── architecture ─────────────────────────────────── */
+.arch { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .arch { grid-template-columns: minmax(0, 1fr); } }
+.arch-svg { width: 100%; min-width: 560px; height: auto; display: block; }
+.arch-scroll { overflow-x: auto; padding: 8px; }
+.arch-svg .box { fill: var(--surface-2); stroke: var(--line-2); stroke-width: 1.5; transition: all .2s; }
+.arch-svg .hit { cursor: pointer; }
+.arch-svg .hit:hover .box, .arch-svg .hit.sel .box { stroke: var(--accent); fill: var(--surface); }
+.arch-svg .hit.sel .box { stroke-width: 2.5; }
+.arch-svg text { fill: var(--fg); font-family: var(--font-body); font-size: 14px; }
+.arch-svg .sub { fill: var(--muted); font-size: 12px; }
+.arch-svg .zone { fill: none; stroke: var(--line); stroke-dasharray: 5 5; }
+.arch-svg .zlabel { fill: var(--faint); font: 11px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; }
+.arch-svg .wire { stroke: var(--line-2); stroke-width: 1.5; fill: none; }
+.arch-svg .flow { stroke: var(--teal); stroke-width: 2; fill: none; stroke-dasharray: 4 10; animation: dash 1.4s linear infinite; }
+.arch-svg .flow.gpu { stroke: var(--pink); }
+.arch-svg .flow.ai { stroke: var(--accent); }
+.arch-svg .wl { fill: var(--faint); font: 11px var(--font-mono); }
+@keyframes dash { to { stroke-dashoffset: -28; } }
+.detail h3 { font-size: 22px; }
+.detail .tag { font: 12px var(--font-mono); color: var(--teal); }
+.detail ul { padding-left: 18px; margin: 10px 0 0; color: var(--muted); font-size: 15px; }
+.detail li { margin: 4px 0; }
+.detail li b { color: var(--fg); font-weight: 600; }
+.limits { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 16px; }
+@media (max-width: 760px) { .limits { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.limit { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--surface); }
+.limit b { font: 700 20px var(--font-mono); display: block; }
+.limit span { font-size: 13px; color: var(--muted); }
+
+/* ── performance ─────────────────────────────────── */
+.tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.tab { font: 500 14px var(--font-body); padding: 8px 14px; border-radius: 999px; border: 1px solid var(--line-2); background: transparent; color: var(--muted); cursor: pointer; }
+.tab[aria-selected="true"] { background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.chart-card { padding: 18px 18px 14px; }
+.chart-title { font: 700 19px var(--font-display); margin: 0; }
+.chart-sub { color: var(--muted); font-size: 14px; margin: 4px 0 10px; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.legend label, .legend span { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.legend i { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+.legend input { accent-color: var(--accent); margin: 0; }
+.chart-scroll { overflow-x: auto; }
+svg.chart { width: 100%; min-width: 620px; height: auto; display: block; }
+svg.chart text { font-family: var(--font-body); fill: var(--muted); font-size: 12px; }
+svg.chart .v { fill: var(--fg); font-weight: 600; font-variant-numeric: tabular-nums; }
+svg.chart .lab { fill: var(--fg); font-size: 13px; font-weight: 600; }
+svg.chart .mono { font-family: var(--font-mono); }
+svg.chart .grid { stroke: var(--line); }
+svg.chart .ref { stroke: var(--amber); stroke-dasharray: 6 5; }
+svg.chart .reft { fill: var(--amber); }
+svg.chart rect.m { transition: width .7s cubic-bezier(.2,.8,.2,1), height .7s cubic-bezier(.2,.8,.2,1), y .7s cubic-bezier(.2,.8,.2,1), opacity .3s; }
+svg.chart rect.m:hover { filter: brightness(1.15); }
+.takeaways { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+@media (max-width: 760px) { .takeaways { grid-template-columns: minmax(0, 1fr); } }
+.take { padding: 12px 14px; border-left: 3px solid var(--line-2); background: var(--surface); border-radius: 0 10px 10px 0; font-size: 14px; color: var(--muted); }
+.take b { color: var(--fg); }
+.take.good { border-left-color: var(--teal); } .take.warn { border-left-color: var(--amber); } .take.bad { border-left-color: var(--pink); }
+.tip { position: fixed; pointer-events: none; background: var(--fg); color: var(--bg); font: 600 12px var(--font-mono); padding: 5px 8px; border-radius: 6px; z-index: 20; opacity: 0; transition: opacity .12s; }
+
+/* ── comparison ─────────────────────────────────── */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+th, td { text-align: left; padding: 12px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+thead th { font: 600 13px var(--font-body); color: var(--muted); background: var(--surface); }
+tbody th { font-weight: 600; color: var(--muted); width: 18%; }
+tr:last-child th, tr:last-child td { border-bottom: 0; }
+.nova-col { background: var(--glow); color: var(--fg); font-weight: 500; }
+thead .nova-col { color: var(--accent); font-weight: 700; }
+.yes { color: var(--teal); font-weight: 600; } .no { color: var(--faint); }
+
+/* ── roadmap ─────────────────────────────────── */
+.track { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 900px) { .track { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+@media (max-width: 520px) { .track { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.step { text-align: left; font: inherit; color: inherit; cursor: pointer; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 12px; display: grid; gap: 6px; align-content: start; min-height: 112px; position: relative; }
+.step .st { font: 600 11px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.step.done .st { color: var(--teal); } .step.now .st { color: var(--accent); } .step.next .st { color: var(--faint); }
+.step .nm { font: 600 15px/1.25 var(--font-display); }
+.step.now { border-color: var(--accent); box-shadow: 0 0 0 4px var(--glow); }
+.step[aria-pressed="true"] { outline: 2px solid var(--fg); outline-offset: 2px; }
+.step.next .nm { color: var(--muted); }
+.step-detail { margin-top: 14px; padding: 18px 20px; }
+.step-detail h3 { font-size: 22px; margin-bottom: 6px; }
+.step-detail p { color: var(--muted); margin: 0; max-width: 75ch; }
+
+/* ── quick start ─────────────────────────────────── */
+.qs { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; }
+@media (max-width: 900px) { .qs { grid-template-columns: minmax(0, 1fr); } }
+pre.shell { margin: 0; padding: 14px 16px; font: 13.5px/1.75 var(--font-mono); overflow-x: auto; }
+pre.shell .c { color: var(--faint); }
+pre.shell .d { color: var(--teal); }
+.copy { font: 500 12px var(--font-body); color: var(--muted); background: transparent; border: 1px solid var(--line-2); border-radius: 6px; padding: 3px 9px; cursor: pointer; }
+.copy:hover { color: var(--fg); }
+.doclist { display: grid; gap: 8px; }
+.doc { display: flex; gap: 12px; align-items: baseline; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; text-decoration: none; color: var(--fg); background: var(--surface); }
+.doc:hover { border-color: var(--accent); }
+.doc code { color: var(--accent); white-space: nowrap; }
+.doc span { color: var(--muted); font-size: 14px; }
+footer { border-top: 1px solid var(--line); padding-block: 28px 40px; color: var(--faint); font-size: 13px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+}
+</style>
+</head>
+<body>
+<header class="bar">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="Nova, back to top">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><defs><linearGradient id="bg1" x1="0" x2="1"><stop offset="0" stop-color="var(--accent)"/><stop offset="1" stop-color="var(--teal)"/></linearGradient></defs><path d="M12 2.5l2.4 6.8 7.1.3-5.6 4.4 2 6.9-5.9-4-5.9 4 2-6.9-5.6-4.4 7.1-.3z" fill="url(#bg1)"/></svg>
+      Nova
+    </a>
+    <nav class="nav" aria-label="Sections">
+      <a href="#compiler">Compiler</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#performance">Performance</a>
+      <a href="#compare">Compare</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#start">Get started</a>
+    </nav>
+    <a class="gh" href="https://github.com/parhitmtech/Nova">GitHub ↗</a>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <div class="hero-row">
+        <div>
+          <div class="eyebrow">orbit novatorch.nn</div>
+          <h1 style="margin-top:14px">Tensors the <span class="grad">compiler understands</span></h1>
+          <p class="lede"><b style="color:var(--fg)">Nova</b> is a statically typed language for machine learning, with Python-style layout and tensors, autograd and GPU-cluster training built in. <b style="color:var(--fg)">NovaComp</b> is the cloud IDE around it: write in the browser, run in a sandbox, train on A100s.</p>
+          <div class="cta">
+            <a class="btn primary" href="#compiler">▶ Watch a program compile</a>
+            <a class="btn" href="#start">Get started</a>
+          </div>
+        </div>
+        <div class="facts" aria-label="Headline numbers">
+          <div class="fact"><b>95%</b><span>of cuBLAS on a 4096³ matmul, Triton FP32 on an A100</span></div>
+          <div class="fact"><b>2–3.5×</b><span>faster than CPython on loops and vectors</span></div>
+          <div class="fact"><b>1–6-D</b><span>tensors with <code>+ - * / @</code>, checked before running</span></div>
+          <div class="fact"><b>8</b><span>required CI checks on every pull request</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ───────────── compiler demo ───────────── -->
+  <section id="compiler">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">The compiler</div>
+        <h2>One program, seven stages</h2>
+        <p>Press Run to send the README's example through the C++17 compiler, or click any stage. Each stage shows what it does to this exact program.</p>
+      </div>
+      <div class="demo">
+        <div class="panel">
+          <div class="panel-head"><div class="dots" aria-hidden="true"><i></i><i></i><i></i></div><span class="file">example.nova</span><span class="sp"></span>
+            <button class="btn primary" id="run" style="padding:6px 14px;font-size:13px">▶ Run</button></div>
+          <pre class="code" id="code" aria-label="Nova source code"></pre>
+        </div>
+        <div class="panel">
+          <div class="stages" id="stages" role="tablist" aria-label="Compiler stages"></div>
+          <div class="view" id="view" role="tabpanel" aria-live="polite"></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── architecture ───────────── -->
+  <section id="architecture">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Architecture</div>
+        <h2>From the browser to an A100</h2>
+        <p>Click a part to see what it does. The server and worker images are built from the same commit by CI and run on one EC2 host with Docker Compose.</p>
+      </div>
+      <div class="arch">
+        <div class="panel arch-scroll">
+          <svg class="arch-svg" id="arch" viewBox="0 0 720 470" role="group" aria-label="Architecture diagram"></svg>
+        </div>
+        <div class="panel detail" style="padding:20px" id="archDetail" aria-live="polite"></div>
+      </div>
+      <div class="limits" aria-label="Sandbox limits per run">
+        <div class="limit"><b>none</b><span>network inside a run</span></div>
+        <div class="limit"><b>1 CPU</b><span>per run, with a hard deadline</span></div>
+        <div class="limit"><b>256 MB</b><span>memory, 32 processes</span></div>
+        <div class="limit"><b>5 / 2</b><span>batch slots in total / per user</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── performance ───────────── -->
+  <section id="performance">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Performance</div>
+        <h2>Measured, with the caveats left in</h2>
+        <p>CPU numbers are like-for-like programs that print the same result in every language. GPU numbers are share of cuBLAS on SOL's NVIDIA A100, every result checked against cuBLAS.</p>
+      </div>
+      <div class="tabs" role="tablist" aria-label="Benchmarks">
+        <button class="tab" role="tab" id="tab-cpu" aria-selected="true" data-chart="cpu">CPU interpreter</button>
+        <button class="tab" role="tab" id="tab-ladder" aria-selected="false" data-chart="ladder">GPU: kernel ladder</button>
+        <button class="tab" role="tab" id="tab-cases" aria-selected="false" data-chart="cases">GPU: across sizes</button>
+      </div>
+      <div class="panel chart-card">
+        <p class="chart-title" id="chartTitle"></p>
+        <p class="chart-sub" id="chartSub"></p>
+        <div class="legend" id="legend"></div>
+        <div class="chart-scroll"><svg class="chart" id="chart" role="img"></svg></div>
+      </div>
+      <div class="takeaways" id="takeaways"></div>
+    </div>
+  </section>
+
+  <!-- ───────────── comparison ───────────── -->
+  <section id="compare">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">How Nova compares</div>
+        <h2>Its lead is integration</h2>
+        <p>One language, editor, sandbox and GPU path. Nova is young and single-backend, and doesn't compete on ecosystem or raw speed yet.</p>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th scope="col"></th><th scope="col" class="nova-col">Nova</th><th scope="col">Python + PyTorch</th><th scope="col">JAX</th><th scope="col">Mojo</th><th scope="col">Julia</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Typing</th><td class="nova-col">Static, checked before running</td><td>Dynamic</td><td>Dynamic (traced)</td><td>Static where declared</td><td>Dynamic, inferred</td></tr>
+            <tr><th scope="row">Tensors</th><td class="nova-col">Built-in type</td><td>Library</td><td>Library</td><td>Library</td><td>Library (arrays built in)</td></tr>
+            <tr><th scope="row">Autodiff</th><td class="nova-col">Built in</td><td>Library (autograd)</td><td>Library (<code>grad</code>)</td><td>Library</td><td>Library (Zygote, Enzyme)</td></tr>
+            <tr><th scope="row">Execution</th><td class="nova-col">Interpreter (LLVM and IREE planned)</td><td>Interpreter + C++/CUDA kernels</td><td>XLA compiler</td><td>MLIR → native</td><td>LLVM JIT</td></tr>
+            <tr><th scope="row">IDE, sandbox and GPU cluster included</th><td class="nova-col yes">Yes</td><td class="no">No</td><td class="no">No</td><td class="no">No</td><td class="no">No</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────── roadmap ───────────── -->
+  <section id="roadmap">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Roadmap</div>
+        <h2>Toward the compilers ML hardware is built on</h2>
+        <p>SSA IRs in MLIR, lowering through several levels, code generation for a hardware target, and scheduling driven by its memory hierarchy. Each step comes with its design decisions written down.</p>
+      </div>
+      <div class="track" id="track"></div>
+      <div class="panel step-detail" id="stepDetail" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- ───────────── quick start ───────────── -->
+  <section id="start">
+    <div class="wrap">
+      <div class="sec-head">
+        <div class="eyebrow">Get started</div>
+        <h2>Build it, test it, train XOR</h2>
+        <p>You need <code>make</code>, a C++17 compiler (g++ or clang++) and Node.js 22.12+.</p>
+      </div>
+      <div class="qs">
+        <div class="panel">
+          <div class="panel-head"><span class="file">terminal</span><span class="sp"></span><button class="copy" id="copyQs">Copy</button></div>
+<pre class="shell" id="qsText"><span class="d">git clone https://github.com/parhitmtech/Nova.git &amp;&amp; cd Nova</span>
+<span class="d">make -C compiler</span>                      <span class="c"># builds compiler/build/nova</span>
+<span class="d">make -C compiler test</span>                 <span class="c"># the golden language tests</span>
+
+<span class="d">export NOVA_HOME=$PWD/compiler</span>        <span class="c"># where `orbit` finds the stdlib</span>
+<span class="d">compiler/build/nova examples/xor.nova</span> <span class="c"># trains a 2-layer network on XOR</span></pre>
+        </div>
+        <div class="doclist">
+          <a class="doc" href="https://github.com/parhitmtech/Nova/blob/main/docs/SYNTAX.md"><code>SYNTAX.md</code><span>The Nova language</span></a>
+          <a class="doc" href="https://github.com/parhitmtech/Nova/blob/main/docs/ARCHITECTURE.md"><code>ARCHITECTURE.md</code><span>How every part fits together</span></a>
+          <a class="doc" href="https://github.com/parhitmtech/Nova/blob/main/docs/BENCHMARKS.md"><code>BENCHMARKS.md</code><span>Numbers, method, issues found</span></a>
+          <a class="doc" href="https://github.com/parhitmtech/Nova/blob/main/compiler/kernels/README.md"><code>kernels/README.md</code><span>CUDA and Triton matmul on A100s</span></a>
+          <a class="doc" href="https://github.com/parhitmtech/Nova/blob/main/docs/ROADMAP.md"><code>ROADMAP.md</code><span>What comes next</span></a>
+        </div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">Nova and NovaComp · figures from <code>docs/BENCHMARKS.md</code> and <code>compiler/kernels/README.md</code> on <code>main</code> · <a href="https://github.com/parhitmtech/Nova">github.com/parhitmtech/Nova</a></div>
+</footer>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+(function () {
+  const $ = (s, r = document) => r.querySelector(s);
+  const el = (tag, attrs = {}, html = '') => { const n = document.createElement(tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (html) n.innerHTML = html; return n; };
+  const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const sv = (tag, attrs = {}, text) => { const n = document.createElementNS(SVGNS, tag); for (const k in attrs) n.setAttribute(k, attrs[k]); if (text != null) n.textContent = text; return n; };
+
+  /* ══ 1. Compiler demo ══════════════════════════════════════════════ */
+  const SRC = `orbit novatorch.nn
+
+def scale(x, k):
+    return x * k
+
+ignite:
+    Linear layer = Linear(2, 3)
+    Tensor h = relu(layer.forward(randn(4, 2)))
+    print(h.rows)
+
+    Tensor W = randn(3, 2)
+    requires_grad(W)
+    Tensor loss = mse_loss(ones(4, 3) @ W, zeros(4, 2))
+    backward(loss)
+    print(tensor_grad(W).rows)
+
+    print(scale(1.5, 2.0))`;
+  const KW = new Set(['orbit', 'def', 'return', 'ignite', 'class', 'if', 'elif', 'else', 'while', 'for', 'print', 'self', 'extends']);
+  const TY = new Set(['int', 'float', 'double', 'bool', 'string', 'Tensor', 'Linear', 'vector', 'map']);
+
+  // A small lexer for display: real tokens of the program above, plus INDENT / DEDENT / NEWLINE as Nova's scanner makes them.
+  function lex(src) {
+    const toks = []; const lines = src.split('\n'); const stack = [0];
+    lines.forEach((line, li) => {
+      if (!line.trim()) return;
+      const ind = line.match(/^ */)[0].length;
+      if (ind > stack[stack.length - 1]) { stack.push(ind); toks.push({ k: 'lay', t: 'INDENT', l: li }); }
+      while (ind < stack[stack.length - 1]) { stack.pop(); toks.push({ k: 'lay', t: 'DEDENT', l: li }); }
+      const re = /\s*([A-Za-z_][A-Za-z0-9_.]*|\d+\.\d+|\d+|->|[()\[\],:@*+\-\/=<>])/y;
+      let m; re.lastIndex = ind;
+      while ((m = re.exec(line))) {
+        const t = m[1]; let k = 'id';
+        if (KW.has(t)) k = 'kw'; else if (TY.has(t)) k = 'ty'; else if (/^\d/.test(t)) k = 'num'; else if (/^[()\[\],:@*+\-\/=<>]|->/.test(t)) k = 'op';
+        toks.push({ k, t, l: li });
+      }
+      toks.push({ k: 'lay', t: 'NEWLINE', l: li });
+    });
+    while (stack.length > 1) { stack.pop(); toks.push({ k: 'lay', t: 'DEDENT', l: lines.length - 1 }); }
+    return toks;
+  }
+  const TOKS = lex(SRC);
+
+  function highlight(line) {
+    return esc(line).replace(/\b([A-Za-z_][A-Za-z0-9_]*)\b(?=\s*\()|\b([A-Za-z_][A-Za-z0-9_]*)\b|(\d+\.\d+|\d+)|(@|\*|\+)/g, (m, fn, id, num, op) => {
+      if (fn) return KW.has(fn) ? `<span class="t-kw">${fn}</span>` : TY.has(fn) ? `<span class="t-ty">${fn}</span>` : `<span class="t-fn">${fn}</span>`;
+      if (id) return KW.has(id) ? `<span class="t-kw">${id}</span>` : TY.has(id) ? `<span class="t-ty">${id}</span>` : id;
+      if (num) return `<span class="t-num">${num}</span>`;
+      if (op) return `<span class="t-op">${op}</span>`;
+      return m;
+    });
+  }
+  const codeEl = $('#code');
+  SRC.split('\n').forEach((line, i) => codeEl.appendChild(el('span', { class: 'ln', 'data-l': i }, highlight(line) || ' ')));
+  const lines = [...codeEl.querySelectorAll('.ln')];
+  const hot = idx => lines.forEach((l, i) => l.classList.toggle('hot', idx.includes(i)));
+
+  const counts = TOKS.reduce((a, t) => (a[t.t] = (a[t.t] || 0) + 1, a), {});
+  const nReal = TOKS.filter(t => t.k !== 'lay').length;
+  const OUTPUT = ['4', '3', '3.000000'];
+
+  const STAGES = [
+    { id: 'modules', name: 'Modules', lines: [0],
+      title: 'Modules', what: '<code>orbit a.b</code> loads <code>a/b.nova</code> next to the file, or else from the standard library.',
+      body: () => `<dl class="kv"><dt>orbit</dt><dd>novatorch.nn</dd><dt>resolves to</dt><dd>compiler/stdlib/novatorch.nn.nova</dd><dt>brings in</dt><dd>Linear, ReLU, Sigmoid, Tanh, …</dd></dl>` },
+    { id: 'lexer', name: 'Lexer', lines: SRC.split('\n').map((_, i) => i),
+      title: 'Lexer', what: 'A pointer-based scanner writes compact tokens over one source buffer. Indentation becomes INDENT / DEDENT while scanning, so blocks need no braces.',
+      body: () => `<div style="margin-bottom:10px"><span class="stat"><b>${nReal}</b> tokens</span><span class="stat"><b>${counts.INDENT || 0}</b> INDENT</span><span class="stat"><b>${counts.DEDENT || 0}</b> DEDENT</span><span class="stat"><b>${counts.NEWLINE || 0}</b> NEWLINE</span></div>
+        <div class="chips">${TOKS.slice(0, 34).map(t => `<span class="chip ${t.k}">${esc(t.t)}</span>`).join('')}<span class="chip">…</span></div>
+        <p class="note">Counted live from the source on the left.</p>` },
+    { id: 'tree', name: 'Parse tree', lines: [2, 3],
+      title: 'Parse tree', what: 'A flat tree in postorder (Carbon / Zig style): an array of 12-byte nodes. It parses 100,000 lines in about 5 ms.',
+      body: () => `<pre class="tree"><b>FunctionDef</b> scale
+├─ <b>Params</b>   x, k        <span style="color:var(--faint)"># no types written</span>
+└─ <b>Return</b>
+   └─ <b>Binary *</b>
+      ├─ <b>Name</b> x
+      └─ <b>Name</b> k</pre><p class="note">Shown as a tree for reading; in memory the children come before their parent in one array.</p>` },
+    { id: 'check', name: 'Check pass', lines: [6, 7, 10, 12, 16],
+      title: 'Check pass', what: 'Resolves names, scopes and types against every built-in\'s signature. A generic function gets one checked copy per argument-type combination.',
+      body: () => `<dl class="kv"><dt>layer</dt><dd>Linear</dd><dt>h</dt><dd>Tensor</dd><dt>W</dt><dd>Tensor  (requires_grad)</dd><dt>loss</dt><dd>Tensor  ones(4,3) @ W : (4,2)</dd><dt>scale(1.5, 2.0)</dt><dd>copy scale&lt;double, double&gt; → double</dd></dl>
+        <p class="note">A shape or type mistake here is a compile error, before anything runs.</p>` },
+    { id: 'ir', name: 'IR + passes', lines: [7, 12, 13],
+      title: 'Lowering and passes', what: 'The checked tree lowers to the IR. With <code>--optimize</code>: constant folding, copy propagation, dead-code elimination, loop-invariant code motion and inlining.',
+      body: () => `<div class="chips" style="margin-bottom:10px"><span class="chip">constant folding</span><span class="chip">copy propagation</span><span class="chip">dead code</span><span class="chip">LICM</span><span class="chip">inlining</span><span class="chip ty">tensor-free pass</span></div>
+        <p style="margin:0;color:var(--muted);font-size:14px">The tensor-free pass frees each tensor after its last use, so <code>h</code>, <code>W</code> and <code>loss</code> don't outlive the lines that read them. Pure recursive functions are memoized automatically.</p>` },
+    { id: 'interp', name: 'Interpreter', lines: [8, 14, 16],
+      title: 'Interpreter', what: 'The default back end runs the IR, with reverse-mode autograd for <code>backward</code>.',
+      body: (n = OUTPUT.length) => `<div class="console" aria-label="Program output"><div class="p">$ nova example.nova</div>${OUTPUT.slice(0, n).map(o => `<div class="o">${o}</div>`).join('')}<span class="cursor"></span></div>
+        <p class="note">h.rows = 4 · tensor_grad(W).rows = 3 · scale(1.5, 2.0) = 3.000000</p>` },
+    { id: 'cuda', name: 'CUDA', lines: [7, 12],
+      title: 'CUDA source', what: '<code>--emit-cuda</code> writes CUDA source for the tensor ops. Next on the roadmap: Nova IR as an MLIR dialect, lowered to LLVM for native code and through <code>linalg</code> for GPUs.',
+      body: () => `<dl class="kv"><dt>kernels for</dt><dd>matmul · relu · the backward pass</dd><dt>in this program</dt><dd>ones(4,3) @ W, relu(...), backward(loss)</dd></dl><p class="note">The hand-written and Triton matmul kernels are in compiler/kernels/.</p>` },
+  ];
+
+  const stagesEl = $('#stages'), viewEl = $('#view');
+  let cur = -1, timer = null, outTimer = null;
+  STAGES.forEach((s, i) => {
+    const b = el('button', { class: 'stage', role: 'tab', 'aria-selected': 'false', id: 'st-' + s.id }, `<span class="node"></span><span>${s.name}</span>`);
+    b.addEventListener('click', () => { stop(); show(i, false); });
+    stagesEl.appendChild(b);
+  });
+  function show(i, typing) {
+    cur = i;
+    [...stagesEl.children].forEach((b, j) => { b.classList.toggle('active', j === i); b.classList.toggle('done', j < i); b.setAttribute('aria-selected', j === i); });
+    const s = STAGES[i];
+    hot(s.lines);
+    viewEl.innerHTML = `<h3>${s.title}</h3><p class="what">${s.what}</p>${s.body(typing && s.id === 'interp' ? 0 : undefined)}`;
+    if (typing && s.id === 'interp') {
+      let n = 0; clearInterval(outTimer);
+      outTimer = setInterval(() => { n++; const c = viewEl.querySelector('.console'); c.innerHTML = `<div class="p">$ nova example.nova</div>${OUTPUT.slice(0, n).map(o => `<div class="o">${o}</div>`).join('')}<span class="cursor"></span>`; if (n >= OUTPUT.length) clearInterval(outTimer); }, 380);
+    }
+  }
+  function stop() { clearTimeout(timer); clearInterval(outTimer); $('#run').textContent = '▶ Run'; running = false; }
+  let running = false;
+  function run() {
+    if (running) { stop(); return; }
+    running = true; $('#run').textContent = '■ Stop';
+    let i = 0;
+    const step = () => {
+      show(i, true);
+      if (i === STAGES.indexOf(STAGES.find(s => s.id === 'interp'))) {
+        // finish on the output: hold, then mark CUDA as the optional path
+        timer = setTimeout(() => { stop(); }, reduce ? 0 : 1800);
+        return;
+      }
+      i++; timer = setTimeout(step, reduce ? 0 : 1500);
+    };
+    step();
+  }
+  $('#run').addEventListener('click', run);
+  show(5, false); // at rest: the program's output, so the first frame is complete
+  [...stagesEl.children].forEach((b, j) => b.classList.toggle('done', j < 5));
+
+  /* ══ 2. Architecture ═══════════════════════════════════════════════ */
+  const NODES = {
+    browser: { x: 250, y: 18, w: 220, h: 62, t: 'Browser', s: 'React 19 · Monaco',
+      tag: 'frontend/', d: 'The IDE in the browser.', li: ['<b>Editor:</b> Monaco with Nova highlighting, a file workspace and a command palette', '<b>Panels:</b> output, terminal, REPL, step debugger', '<b>Sharing:</b> read-only links to a snippet', '<b>NovaBot</b> in the right panel'] },
+    server: { x: 250, y: 150, w: 220, h: 62, t: 'Server', s: 'Node.js 22 · Express 5',
+      tag: 'server/', d: 'Auth, execution, workspace and NovaBot, on port 3001 behind a TLS proxy.', li: ['<b>Auth:</b> bcrypt passwords, 1-hour JWTs, 10 requests/min', '<b>Run:</b> <code>/run-stream</code> streams output over SSE; 503 when capacity is full', '<b>Workspace:</b> per-user files with byte and entry quotas', '<b>WebSockets:</b> <code>/repl</code> and <code>/terminal</code>, token in the first message'] },
+    workers: { x: 250, y: 282, w: 220, h: 62, t: 'Worker containers', s: 'the compiler, one per job',
+      tag: 'docker run --network=none', d: 'Each run gets its own container. The deadline is enforced inside it, so a job stops even if the server dies.', li: ['<b>No network</b>, read-only filesystem, all capabilities dropped', '<b>1 CPU, 256 MB, 32 processes</b>, 16 MiB file-size limit', '<b>5 batch slots</b>, at most 2 per user; REPL has its own pool of 2', 'A kill is reported as "timed out" or "out of memory"'] },
+    s3: { x: 18, y: 150, w: 150, h: 62, t: 'S3', s: 'files, models',
+      tag: 'novacomp-files', d: 'File content, keyed by user.', li: ['<code>.nova</code> files and <code>.tar.gz</code> models', 'Shared snippets', 'Files a program saves with <code>NOVA_SAVE_FILE:</code>'] },
+    ddb: { x: 18, y: 282, w: 150, h: 62, t: 'DynamoDB', s: 'users, files, NovaBot',
+      tag: '4 tables', d: 'Accounts, file metadata and NovaBot\'s history and memory.', li: ['<code>novacomp-users</code>, <code>novacomp-files-meta</code>', '<code>novacomp-agent-history</code> (30-day TTL)', '<code>novacomp-agent-memory</code>: experience level, topics, common mistakes'] },
+    bedrock: { x: 552, y: 150, w: 150, h: 62, t: 'Bedrock', s: 'Claude',
+      tag: 'NovaBot', d: 'A coding assistant that can read, write and run Nova for the user.', li: ['<b>Tool-use loop</b>, up to 5 rounds: run code, read / write / list files, explain an error', 'Its system prompt teaches the current syntax; every example in it is type-checked', 'Streams to the IDE over SSE', 'IAM role on EC2: no API keys'] },
+    sol: { x: 552, y: 282, w: 150, h: 62, t: 'ASU SOL', s: 'SLURM → A100',
+      tag: 'sol.finetune(...)', d: 'GPU training on ASU\'s HPC cluster, reached from EC2 through an SSH tunnel.', li: ['<code>sol.finetune(model=..., task=..., dataset=...)</code> submits a HuggingFace job', '<code>sol.wait</code>, <code>sol.predict</code>, <code>sol.save</code>', 'The matmul kernels were benchmarked on its A100s'] },
+  };
+  const arch = $('#arch');
+  arch.appendChild(sv('rect', { class: 'zone', x: 236, y: 120, width: 248, height: 244, rx: 14 }));
+  arch.appendChild(sv('text', { class: 'zlabel', x: 250, y: 140 }, 'AWS EC2'));
+  arch.appendChild(sv('text', { class: 'zlabel', x: 18, y: 140 }, 'AWS services'));
+  arch.appendChild(sv('text', { class: 'zlabel', x: 552, y: 140 }, 'Cloud · HPC'));
+  const C = k => { const n = NODES[k]; return { cx: n.x + n.w / 2, cy: n.y + n.h / 2, n }; };
+  const wires = [
+    ['browser', 'server', 'flow', 'REST · SSE · WS', 'v'],
+    ['server', 'workers', 'flow', 'docker run', 'v'],
+    ['server', 's3', 'flow', '', 'h'],
+    ['server', 'ddb', 'flow', '', 'hd'],
+    ['server', 'bedrock', 'flow ai', 'tool use', 'h'],
+    ['server', 'sol', 'flow gpu', 'SSH tunnel', 'hd'],
+  ];
+  wires.forEach(([a, b, cls, label, dir]) => {
+    const A = C(a), B = C(b); let d;
+    if (dir === 'v') d = `M${A.cx} ${A.n.y + A.n.h} L${B.cx} ${B.n.y}`;
+    else if (dir === 'h') { const toLeft = B.cx < A.cx; d = `M${toLeft ? A.n.x : A.n.x + A.n.w} ${A.cy} L${toLeft ? B.n.x + B.n.w : B.n.x} ${B.cy}`; }
+    else { const toLeft = B.cx < A.cx; const x0 = toLeft ? A.n.x : A.n.x + A.n.w; const x1 = toLeft ? B.n.x + B.n.w : B.n.x; const mx = (x0 + x1) / 2; d = `M${x0} ${A.cy + 14} L${mx} ${A.cy + 14} L${mx} ${B.cy} L${x1} ${B.cy}`; }
+    arch.appendChild(sv('path', { class: 'wire', d }));
+    arch.appendChild(sv('path', { class: cls, d }));
+    if (label) {
+            const pos = dir === 'v' ? [A.cx + 10, (A.n.y + A.n.h + B.n.y) / 2 + 4] : dir === 'h' ? [(A.cx + B.cx) / 2 + (B.cx > A.cx ? 10 : -10), A.cy - 8] : [(A.cx + B.cx) / 2 + 20, B.cy - 8];
+      arch.appendChild(sv('text', { class: 'wl', x: pos[0], y: pos[1], 'text-anchor': dir === 'v' ? 'start' : 'middle' }, label));
+    }
+  });
+  const archDetail = $('#archDetail');
+  Object.entries(NODES).forEach(([k, n]) => {
+    const g = sv('g', { class: 'hit', tabindex: '0', role: 'button', 'aria-label': n.t, 'data-k': k });
+    g.appendChild(sv('rect', { class: 'box', x: n.x, y: n.y, width: n.w, height: n.h, rx: 12 }));
+    g.appendChild(sv('text', { x: n.x + 16, y: n.y + 27, 'font-weight': 600 }, n.t));
+    g.appendChild(sv('text', { class: 'sub', x: n.x + 16, y: n.y + 46 }, n.s));
+    const pick = () => selectNode(k);
+    g.addEventListener('click', pick);
+    g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+    arch.appendChild(g);
+  });
+  // legend line under the diagram
+  [['var(--teal)', 'requests and jobs'], ['var(--accent)', 'NovaBot'], ['var(--pink)', 'GPU training']].forEach(([c, t], i) => {
+    arch.appendChild(sv('line', { x1: 18 + i * 190, y1: 420, x2: 44 + i * 190, y2: 420, stroke: c, 'stroke-width': 3 }));
+    arch.appendChild(sv('text', { class: 'sub', x: 52 + i * 190, y: 424 }, t));
+  });
+  function selectNode(k) {
+    const n = NODES[k];
+    arch.querySelectorAll('.hit').forEach(g => g.classList.toggle('sel', g.dataset.k === k));
+    archDetail.innerHTML = `<div class="tag">${n.tag}</div><h3 style="margin-top:4px">${n.t}</h3><p style="color:var(--muted);margin:8px 0 0">${n.d}</p><ul>${n.li.map(x => `<li>${x}</li>`).join('')}</ul>`;
+  }
+  selectNode('workers');
+
+  /* ══ 3. Performance charts ═════════════════════════════════════════ */
+  const C_ = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  const tip = $('#tip');
+  const showTip = (e, t) => { tip.textContent = t; tip.style.left = (e.clientX + 12) + 'px'; tip.style.top = (e.clientY - 30) + 'px'; tip.style.opacity = 1; };
+  const hideTip = () => tip.style.opacity = 0;
+  const chart = $('#chart');
+
+  const CHARTS = {
+    cpu: {
+      title: "CPU: Nova's interpreter next to CPython, Node and C",
+      sub: 'Wall-clock ms, best of 7, including process startup. Log scale; shorter is faster. Intel Core Ultra 7 155H, Windows 11.',
+      series: [['Nova', '--accent'], ['CPython 3.13', '--amber'], ['Node 22', '--teal'], ['C (gcc -O2)', '--sky']],
+      groups: [['calls', 'naive fib(30), 2.7M calls', [1004, 134, 56, 17]], ['int_loop', '3M-iteration integer loop', [134, 486, 54, 17]], ['vector_sum', 'fill and sum a 1M vector', [93, 192, 64, 17]]],
+      takes: [['good', '<b>2–3.5× faster than CPython</b> on loops and vectors, close to Node.'], ['bad', '<b>About 7.5× slower on function calls:</b> each call copies the callee\'s slots in and out. Frames on a value stack fix this.'], ['warn', '<b><code>int_loop</code> prints the wrong answer:</b> Nova\'s <code>int</code> is 32-bit and overflows silently. It is first on the fix list.']],
+    },
+    ladder: {
+      title: 'GPU: a 4096³ matmul, by hand in four steps, then in Triton',
+      sub: "Share of cuBLAS's FP32 speed (19.0 TFLOP/s) on SOL's NVIDIA A100-SXM4-80GB.",
+      bars: [['naive', 'one thread per element', 13, '--faint'], ['tiled', '32×32 shared-memory tiles', 27, '--sky'], ['blocked', '4×4 register blocking', 50, '--teal'], ['pipelined', 'cp.async double buffering', 82, '--accent'], ['Triton FP32', 'autotuned, 4 stages', 95, '--pink']],
+      takes: [['good', '<b>82% by hand:</b> 128×128 tiles, 8×8 per thread, 16-byte loads, and the next tiles loading while the current ones compute.'], ['good', '<b>95% in Triton:</b> its autotuner picked 64×64×32 tiles with a 4-stage pipeline.'], ['warn', '<b>Small sizes fall off:</b> at 1024³ the 128×128 tiles make 64 blocks for 108 SMs, so 44 SMs idle (48%).']],
+    },
+    cases: {
+      title: 'GPU: the same matmul across sizes, CUDA by hand against Triton',
+      sub: 'Share of cuBLAS on an A100: FP32 against FP32, TF32 against TF32. Above the line beats cuBLAS. Toggle a series to compare.',
+      series: [['pipelined CUDA (FP32)', '--accent'], ['Triton FP32', '--pink'], ['Triton TF32, tensor cores', '--teal']],
+      groups: [['4096³', '', [82, 95, 84]], ['32 × 512³, one A', '', [79, 99, 89]], ['64 × 256³ batched', '', [77, 112, 98]], ['1024³', '', [48, 82, 90]], ['1000 × 999 × 1001', '', [43, 67, 100]]],
+      takes: [['good', '<b>112% on 64 small products:</b> cuBLAS picks its batched kernel by heuristics, the autotuner by measuring.'], ['good', '<b>111 TFLOP/s</b> with TF32 tensor cores on 4096³.'], ['warn', '<b>1000 × 999 × 1001 drops to 67% in FP32:</b> sizes not divisible by 16 stop Triton proving 16-byte loads aligned.']],
+    },
+  };
+  let active = 'cpu'; const on = { cases: [true, true, true] };
+
+  function legend(c, key) {
+    const L = $('#legend'); L.innerHTML = '';
+    if (!c.series) { L.hidden = true; return; } L.hidden = false;
+    c.series.forEach(([n, col], i) => {
+      if (key === 'cases') {
+        const id = 'ser' + i;
+        const lab = el('label', { for: id }, `<input type="checkbox" id="${id}" ${on.cases[i] ? 'checked' : ''}><i style="background:var(${col})"></i>${n}`);
+        lab.querySelector('input').addEventListener('change', e => { on.cases[i] = e.target.checked; draw(); });
+        L.appendChild(lab);
+      } else L.appendChild(el('span', {}, `<i style="background:var(${col})"></i>${n}`));
+    });
+    if (key === 'cases') L.appendChild(el('span', {}, `<i style="background:none;border-top:2px dashed var(--amber);border-radius:0;height:0;width:18px"></i>cuBLAS = 100%`));
+  }
+
+  function draw() {
+    const key = active, c = CHARTS[key];
+    $('#chartTitle').textContent = c.title; $('#chartSub').textContent = c.sub; legend(c, key);
+    $('#takeaways').innerHTML = c.takes.map(([k, t]) => `<div class="take ${k}">${t}</div>`).join('');
+    chart.innerHTML = '';
+    chart.setAttribute('aria-label', c.title);
+    if (key === 'cpu') drawCPU(c); else if (key === 'ladder') drawLadder(c); else drawCases(c);
+  }
+  const grow = (r, attr, to) => { if (reduce) { r.setAttribute(attr, to); return; } requestAnimationFrame(() => requestAnimationFrame(() => r.setAttribute(attr, to))); };
+
+  function drawCPU(c) {
+    const W = 900, L = 190, R = 210, T = 10, bar = 16, gap = 4, gg = 26;
+    const gh = 4 * bar + 3 * gap; const H = T + 3 * gh + 2 * gg + 34;
+    chart.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const lo = Math.log10(10), hi = Math.log10(2000);
+    const x = v => L + (Math.log10(v) - lo) / (hi - lo) * (W - L - R);
+    const bottom = T + 3 * gh + 2 * gg;
+    [10, 30, 100, 300, 1000].forEach(v => { chart.appendChild(sv('line', { class: 'grid', x1: x(v), x2: x(v), y1: T - 4, y2: bottom + 4 })); chart.appendChild(sv('text', { x: x(v), y: bottom + 22, 'text-anchor': 'middle' }, v.toLocaleString() + ' ms')); });
+    c.groups.forEach(([name, desc, vals], gi) => {
+      const gy = T + gi * (gh + gg);
+      chart.appendChild(sv('text', { class: 'lab mono', x: L - 14, y: gy + gh / 2 - 2, 'text-anchor': 'end' }, name));
+      chart.appendChild(sv('text', { x: L - 14, y: gy + gh / 2 + 15, 'text-anchor': 'end' }, desc));
+      vals.forEach((v, si) => {
+        const y = gy + si * (bar + gap); const w = x(v) - L;
+        const r = sv('rect', { class: 'm', x: L, y, width: 0, height: bar, rx: 4, fill: `var(${c.series[si][1]})` });
+        r.addEventListener('mousemove', e => showTip(e, `${c.series[si][0]}: ${v.toLocaleString()} ms`)); r.addEventListener('mouseleave', hideTip);
+        chart.appendChild(r); grow(r, 'width', w);
+        let label = v.toLocaleString() + ' ms'; if (name === 'int_loop' && si === 0) label += '  ⚠ wrong answer';
+        chart.appendChild(sv('text', { class: 'v', x: L + w + 8, y: y + bar - 4 }, label));
+      });
+    });
+  }
+  function drawLadder(c) {
+    const W = 900, H = 380, L = 54, B = 300, T = 30;
+    chart.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const y = p => B - p / 100 * (B - T); const cw = (W - L - 20) / c.bars.length; const bw = cw * .52;
+    [0, 25, 50, 75, 100].forEach(p => { chart.appendChild(sv('line', { class: 'grid', x1: L, x2: W - 20, y1: y(p), y2: y(p) })); chart.appendChild(sv('text', { x: L - 10, y: y(p) + 4, 'text-anchor': 'end' }, p + '%')); });
+    chart.appendChild(sv('line', { class: 'ref', x1: L, x2: W - 20, y1: y(100), y2: y(100) }));
+    chart.appendChild(sv('text', { class: 'reft', x: W - 24, y: y(100) - 8, 'text-anchor': 'end' }, 'cuBLAS'));
+    c.bars.forEach(([n, d, p, col], i) => {
+      const cx = L + cw * i + cw / 2;
+      const r = sv('rect', { class: 'm', x: cx - bw / 2, y: B, width: bw, height: 0, rx: 6, fill: `var(${col})` });
+      r.addEventListener('mousemove', e => showTip(e, `${n}: ${p}% of cuBLAS`)); r.addEventListener('mouseleave', hideTip);
+      chart.appendChild(r);
+      if (reduce) { r.setAttribute('y', y(p)); r.setAttribute('height', B - y(p)); } else requestAnimationFrame(() => requestAnimationFrame(() => { r.setAttribute('y', y(p)); r.setAttribute('height', B - y(p)); }));
+      chart.appendChild(sv('text', { class: 'v', x: cx, y: y(p) - 10, 'text-anchor': 'middle', style: 'font-size:17px' }, p + '%'));
+      chart.appendChild(sv('text', { class: 'lab', x: cx, y: B + 24, 'text-anchor': 'middle' }, n));
+      chart.appendChild(sv('text', { x: cx, y: B + 42, 'text-anchor': 'middle' }, d));
+    });
+  }
+  function drawCases(c) {
+    const W = 900, H = 360, L = 54, B = 300, T = 16, maxp = 120;
+    chart.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const y = p => B - p / maxp * (B - T); const gw = (W - L - 20) / c.groups.length;
+    const vis = c.series.map((_, i) => on.cases[i]); const nVis = vis.filter(Boolean).length || 1; const bw = Math.min(46, gw * .7 / nVis);
+    [0, 40, 80, 120].forEach(p => { chart.appendChild(sv('line', { class: 'grid', x1: L, x2: W - 20, y1: y(p), y2: y(p) })); chart.appendChild(sv('text', { x: L - 10, y: y(p) + 4, 'text-anchor': 'end' }, p + '%')); });
+    chart.appendChild(sv('line', { class: 'ref', x1: L, x2: W - 20, y1: y(100), y2: y(100) }));
+    c.groups.forEach(([n, , vals], gi) => {
+      const gx = L + gi * gw + gw / 2; let k = 0;
+      vals.forEach((v, si) => {
+        if (!vis[si]) return;
+        const x = gx + (k - (nVis - 1) / 2) * (bw + 5) - bw / 2; k++;
+        const r = sv('rect', { class: 'm', x, y: B, width: bw, height: 0, rx: 4, fill: `var(${c.series[si][1]})` });
+        r.addEventListener('mousemove', e => showTip(e, `${c.series[si][0]}, ${n}: ${v}%`)); r.addEventListener('mouseleave', hideTip);
+        chart.appendChild(r);
+        if (reduce) { r.setAttribute('y', y(v)); r.setAttribute('height', B - y(v)); } else requestAnimationFrame(() => requestAnimationFrame(() => { r.setAttribute('y', y(v)); r.setAttribute('height', B - y(v)); }));
+        chart.appendChild(sv('text', { class: 'v', x: x + bw / 2, y: y(v) - 6, 'text-anchor': 'middle', style: 'paint-order:stroke;stroke:var(--surface);stroke-width:4px' }, v));
+      });
+      chart.appendChild(sv('text', { class: 'lab mono', x: gx, y: B + 24, 'text-anchor': 'middle', style: 'font-size:12px' }, n));
+    });
+  }
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(x => x.setAttribute('aria-selected', x === t));
+    active = t.dataset.chart; draw();
+  }));
+  draw();
+
+  /* ══ 4. Roadmap ════════════════════════════════════════════════════ */
+  const STEPS = [
+    ['done', 'Syntax redesign', 'Indentation-based syntax, then objects as references with reference counting: objects in fields and containers, generics, subclasses with virtual methods, and <code>none</code>.'],
+    ['done', 'Production front end', 'A pointer-based lexer with interned names, a flat postorder parse tree, a separate check pass for names and types, and lowering to the IR. The old one-pass parser (about 5,800 lines) is deleted.'],
+    ['done', 'Batched matmul', 'A right side of rank 3 or more makes <code>matmul</code> batched, forward and backward, with batch dimensions broadcasting as NumPy\'s do. Every gradient element is checked against finite differences.'],
+    ['done', 'A · GPU kernels', 'Matmul in CUDA by hand in four steps up to <code>cp.async</code> double buffering (82% of cuBLAS), then in Triton (95% FP32, up to 100% TF32), with Triton\'s IR read at every stage down to PTX.'],
+    ['done', 'B · Design record', 'DESIGN.md records each decision with its alternatives and trade-offs: the flat tree, the separate check pass, generics per copy, reference counting, the LICM safety rules, broadcasting through MatmulPlan.'],
+    ['now', 'C · MLIR dialect', 'Nova IR as a <code>nova</code> MLIR dialect in SSA form, lowered to LLVM for native code and through <code>linalg</code> for GPUs, with autograd as a transformation on the dialect. The first slice is in: <code>!nova.tensor</code>, <code>nova.zeros</code>, <code>nova.matmul</code>, <code>nova.print</code>, a <code>nova-opt</code> driver and lit tests.'],
+    ['next', 'D · Kernel language', 'Tile-level <code>kernel</code> functions in Nova, as Triton\'s are: a program id, block pointers, masked loads and stores, and a block-level <code>dot</code>, lowered to Triton IR and run on SOL\'s GPUs.'],
+    ['next', 'E · Accelerator backend', 'A small simulated accelerator (scratchpad, DMA engine, matrix and vector units) with an out-of-tree Triton backend and hardware-aware passes, each measured on its cycle-approximate simulator.'],
+  ];
+  const track = $('#track'), sd = $('#stepDetail');
+  const label = { done: 'Done', now: 'In progress', next: 'Next' };
+  STEPS.forEach(([st, nm, d], i) => {
+    const b = el('button', { class: 'step ' + st, 'aria-pressed': 'false' }, `<span class="st">${label[st]}</span><span class="nm">${nm}</span>`);
+    b.addEventListener('click', () => pickStep(i)); track.appendChild(b);
+  });
+  function pickStep(i) {
+    [...track.children].forEach((b, j) => b.setAttribute('aria-pressed', j === i));
+    const [st, nm, d] = STEPS[i];
+    sd.innerHTML = `<div class="eyebrow" style="color:var(${st === 'done' ? '--teal' : st === 'now' ? '--accent' : '--faint'})">${label[st]}</div><h3>${nm}</h3><p>${d}</p>`;
+  }
+  pickStep(5);
+
+  /* ══ 5. Copy + nav highlight ═══════════════════════════════════════ */
+  $('#copyQs').addEventListener('click', e => {
+    const text = $('#qsText').innerText.split('\n').map(l => l.replace(/\s+#.*$/, '')).join('\n').trim();
+    const btn = e.currentTarget;
+    const done = ok => { btn.textContent = ok ? 'Copied' : 'Select and copy'; setTimeout(() => btn.textContent = 'Copy', 1600); };
+    try { navigator.clipboard.writeText(text).then(() => done(true), () => { selectQs(); done(false); }); } catch (_) { selectQs(); done(false); }
+  });
+  function selectQs() { const r = document.createRange(); r.selectNodeContents($('#qsText')); const s = getSelection(); s.removeAllRanges(); s.addRange(r); }
+  const navLinks = [...document.querySelectorAll('.nav a')];
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver(es => es.forEach(e => { if (e.isIntersecting) navLinks.forEach(a => a.classList.toggle('on', a.getAttribute('href') === '#' + e.target.id)); }), { rootMargin: '-40% 0px -55% 0px' });
+    document.querySelectorAll('section[id]').forEach(s => io.observe(s));
+  }
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img">
+<style>
+  text { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Helvetica, Arial, sans-serif; fill: #e6eaf2; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'DejaVu Sans Mono', monospace; }
+  .muted { fill: #99a6be; }
+  .title { font-size: 20px; font-weight: 700; }
+  .sub { font-size: 13px; fill: #99a6be; }
+  .lbl { font-size: 13px; }
+  .val { font-size: 12px; font-weight: 600; }
+  .tick { font-size: 11px; fill: #99a6be; }
+  .grid { stroke: #242e43; stroke-width: 1; }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+
+  .col { transform-box: fill-box; transform-origin: center bottom; animation: rise .9s cubic-bezier(.2,.8,.2,1) both; }
+  @keyframes rise { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+  .dash { stroke-dasharray: 6 5; }
+</style>
+<rect x="0.5" y="0.5" width="999" height="439" rx="14" fill="#0c101b" stroke="#242e43"/>
+<text x="32" y="44" class="title">GPU: the same matmul across sizes, CUDA by hand against Triton</text>
+<text x="32" y="68" class="sub">Share of cuBLAS on an A100 (FP32 against FP32, TF32 against TF32). Above 100% beats cuBLAS.</text>
+<rect x="32" y="84" width="12" height="12" rx="3" fill="#a5a2ff"/><text x="50" y="95" class="tick" style="fill:#e6eaf2">pipelined CUDA (FP32)</text>
+<rect x="215.0" y="84" width="12" height="12" rx="3" fill="#f5a6b1"/><text x="233.0" y="95" class="tick" style="fill:#e6eaf2">Triton FP32</text>
+<rect x="328.0" y="84" width="12" height="12" rx="3" fill="#76dac4"/><text x="346.0" y="95" class="tick" style="fill:#e6eaf2">Triton TF32, tensor cores</text>
+<line x1="70" y1="330.0" x2="970" y2="330.0" class="grid"/><text x="60" y="334.0" class="tick" text-anchor="end">0%</text>
+<line x1="70" y1="260.0" x2="970" y2="260.0" class="grid"/><text x="60" y="264.0" class="tick" text-anchor="end">40%</text>
+<line x1="70" y1="190.0" x2="970" y2="190.0" class="grid"/><text x="60" y="194.0" class="tick" text-anchor="end">80%</text>
+<line x1="70" y1="120.0" x2="970" y2="120.0" class="grid"/><text x="60" y="124.0" class="tick" text-anchor="end">120%</text>
+<line x1="70" y1="155.0" x2="970" y2="155.0" stroke="#f2c879" class="dash"/>
+<line x1="539.0" y1="90" x2="561.0" y2="90" stroke="#f2c879" stroke-width="2" class="dash"/><text x="567.0" y="95" class="tick" style="fill:#f2c879">cuBLAS = 100%</text>
+<rect class="col" style="animation-delay:0.00s" x="95.9" y="186.5" width="38.7" height="143.5" rx="4" fill="#a5a2ff"/>
+<text x="115.3" y="180.5" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">82</text>
+<rect class="col" style="animation-delay:0.05s" x="138.6" y="163.8" width="38.7" height="166.2" rx="4" fill="#f5a6b1"/>
+<text x="158.0" y="157.8" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">95</text>
+<rect class="col" style="animation-delay:0.10s" x="181.4" y="183.0" width="38.7" height="147.0" rx="4" fill="#76dac4"/>
+<text x="200.7" y="177.0" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">84</text>
+<text x="158.0" y="354" class="lbl mono" text-anchor="middle">4096³</text>
+<rect class="col" style="animation-delay:0.12s" x="271.9" y="191.8" width="38.7" height="138.2" rx="4" fill="#a5a2ff"/>
+<text x="291.3" y="185.8" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">79</text>
+<rect class="col" style="animation-delay:0.17s" x="314.6" y="156.8" width="38.7" height="173.2" rx="4" fill="#f5a6b1"/>
+<text x="334.0" y="150.8" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">99</text>
+<rect class="col" style="animation-delay:0.22s" x="357.4" y="174.2" width="38.7" height="155.8" rx="4" fill="#76dac4"/>
+<text x="376.7" y="168.2" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">89</text>
+<text x="334.0" y="354" class="lbl mono" text-anchor="middle">32 × 512³, one A</text>
+<rect class="col" style="animation-delay:0.24s" x="447.9" y="195.2" width="38.7" height="134.8" rx="4" fill="#a5a2ff"/>
+<text x="467.3" y="189.2" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">77</text>
+<rect class="col" style="animation-delay:0.29s" x="490.6" y="134.0" width="38.7" height="196.0" rx="4" fill="#f5a6b1"/>
+<text x="510.0" y="128.0" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">112</text>
+<rect class="col" style="animation-delay:0.34s" x="533.4" y="158.5" width="38.7" height="171.5" rx="4" fill="#76dac4"/>
+<text x="552.7" y="152.5" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">98</text>
+<text x="510.0" y="354" class="lbl mono" text-anchor="middle">64 × 256³ batched</text>
+<rect class="col" style="animation-delay:0.36s" x="623.9" y="246.0" width="38.7" height="84.0" rx="4" fill="#a5a2ff"/>
+<text x="643.3" y="240.0" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">48</text>
+<rect class="col" style="animation-delay:0.41s" x="666.6" y="186.5" width="38.7" height="143.5" rx="4" fill="#f5a6b1"/>
+<text x="686.0" y="180.5" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">82</text>
+<rect class="col" style="animation-delay:0.46s" x="709.4" y="172.5" width="38.7" height="157.5" rx="4" fill="#76dac4"/>
+<text x="728.7" y="166.5" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">90</text>
+<text x="686.0" y="354" class="lbl mono" text-anchor="middle">1024³</text>
+<rect class="col" style="animation-delay:0.48s" x="799.9" y="254.8" width="38.7" height="75.2" rx="4" fill="#a5a2ff"/>
+<text x="819.3" y="248.8" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">43</text>
+<rect class="col" style="animation-delay:0.53s" x="842.6" y="212.8" width="38.7" height="117.2" rx="4" fill="#f5a6b1"/>
+<text x="862.0" y="206.8" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">67</text>
+<rect class="col" style="animation-delay:0.58s" x="885.4" y="155.0" width="38.7" height="175.0" rx="4" fill="#76dac4"/>
+<text x="904.7" y="149.0" class="tick" text-anchor="middle" style="fill:#e6eaf2; paint-order: stroke; stroke: #0c101b; stroke-width: 4px">100</text>
+<text x="862.0" y="354" class="lbl mono" text-anchor="middle">1000 × 999 × 1001</text>
+<text x="32" y="416" class="sub">Triton TF32 reaches 111 TFLOP/s on 4096³. Its autotuner picks deeper pipelines and smaller tiles than the hand-written kernel.</text>
+</svg>
