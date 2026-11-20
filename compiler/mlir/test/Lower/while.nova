@@ -50,9 +50,9 @@ ignite:
     while (steps * steps < 10)
     print(steps)
 
-    # for: the start runs once before the loop, the step at the end of each iteration. k is declared by the start,
-    # so it ends with the loop: nothing after it reads the loop's result.
-    # CHECK: scf.while (%[[K:.*]] = %{{.*}}) : (i32) -> i32 {
+    # for: the start runs once before the loop, the step at the end of each iteration. The start runs in the
+    # enclosing scope, so k outlives the loop and holds its result.
+    # CHECK: %[[KEND:.*]] = scf.while (%[[K:.*]] = %{{.*}}) : (i32) -> i32 {
     # CHECK:   arith.cmpi slt, %[[K]], %{{.*}} : i32
     # CHECK: } do {
     # CHECK: ^bb0(%[[K2:.*]]: i32):
@@ -61,9 +61,11 @@ ignite:
     # CHECK:   %[[K3:.*]] = arith.addi %[[K2]], %{{.*}} : i32
     # CHECK:   scf.yield %[[K3]] : i32
     # CHECK: }
+    # CHECK: nova.print %[[KEND]] : i32
     for (int k = 0; k < 3; k += 1):
         int sq = k * k
         print(sq)
+    print(k)
 
     # j is declared before the for, so it outlives it and holds the loop's result
     # CHECK: %[[J:.*]] = scf.while

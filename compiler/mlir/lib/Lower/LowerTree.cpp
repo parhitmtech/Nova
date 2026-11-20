@@ -1,6 +1,7 @@
 // Lowering the checked tree to MLIR (LowerTree.h). It covers the ignite block's numbers and bools, variables,
 // arithmetic, comparisons, print, if / elif / else and and / or (as scf.if), and while, do-while and for (as
-// scf.while). Anything else stops lowering with an error that names it, as lower.cc's unlowered() does.
+// scf.while) with break and continue. Anything else stops lowering with an error that names it, as lower.cc's
+// unlowered() does.
 //
 // SSA. A Nova variable is assigned many times; an SSA value is defined once. Lowering keeps, for each variable, the
 // SSA value it holds at this point of the program ('values'): a declaration or an assignment makes a new value and
@@ -14,6 +15,12 @@
 // A loop is a join too: at the top of an iteration a variable holds either its value from before the loop or the
 // one the last iteration left. scf.while writes that as block arguments: the loop's operands are the first values,
 // and each iteration ends by passing the next ones back to the top.
+//
+// break and continue. scf ops have no jumps: a region always runs to its end. So a loop with a break carries one
+// more variable, a flag that break sets: the code after a statement that may set it runs only if it is not set
+// (an scf.if), and the loop tests it with its condition. continue sets a second flag, cleared at the start of
+// each iteration, which skips the rest of the body but not for's step. The flags live in 'values' like variables
+// (flag()), so if and loop pass them out the same way.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -47,6 +54,7 @@ class Lowerer
         const CheckResult& in;
         std::string file;
         llvm::DenseMap<uint32_t, mlir::Value> values;  // by entity: the SSA value a variable holds at this point
+        llvm::DenseMap<uint32_t, uint32_t> owner;      // by break or continue node: the loop it leaves
         std::string error;                             // the first thing not lowered; once set, lowering stops
 
         bool ok() const { return error.empty(); }
@@ -55,17 +63,26 @@ class Lowerer
         mlir::Type type(TypeId t);  // null if lowering has no type for it yet
         mlir::Type type_of(uint32_t n) { return type(in.nodeTypes[n]); }
 
+        uint32_t first(uint32_t n) { return n + 1 - tree.nodes[n].size; }  // n's subtree is [first(n), n]
+        // a loop's break flag and continue flag: keys in 'values' past the last entity, so never a variable's
+        uint32_t flag(uint32_t loop, bool cont) { return uint32_t(in.entities.size()) + 2 * loop + cont; }
+        void find_loops(uint32_t n, uint32_t loop);
+
         void block(uint32_t n);
+        void statements(const std::vector<uint32_t>& list, size_t i);
+        void unless(const std::vector<uint32_t>& flags, const std::vector<uint32_t>& list, size_t i);
         void statement(uint32_t n);
         void assign(uint32_t target, mlir::Value value);
 
-        std::vector<uint32_t> assigned(uint32_t n);  // the variables declared before n that n may assign
+        std::vector<uint32_t> assigned(uint32_t from, uint32_t to);  // the live variables nodes [from, to) may assign
+        std::vector<uint32_t> jumps(uint32_t n);                     // the flags n may set
         void if_chain(const std::vector<uint32_t>& parts, size_t i, const std::vector<uint32_t>& vars);
         void enter(mlir::Block* b);  // put the builder in a branch: before its scf.yield if it has one
         void yield(uint32_t n, const std::vector<uint32_t>& vars);
         llvm::SmallVector<mlir::Value> current(const std::vector<uint32_t>& vars);  // the values they hold here
         void loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst);
         void iteration(mlir::Region& r, const std::vector<uint32_t>& vars, uint32_t n);
+        mlir::Value condition(uint32_t cond);
 
         mlir::Value expr(uint32_t n);
         mlir::Value literal(uint32_t n);
@@ -108,6 +125,7 @@ mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
 {
     mlir::OwningOpRef<mlir::ModuleOp> module = mlir::ModuleOp::create(loc(tree.root()));
     builder.setInsertionPointToEnd(module->getBody());
+    find_loops(tree.root(), 0);
     for (uint32_t d : tree.children(tree.root()))
     {
         if (tree.kind(d) != NodeKind::Ignite)
@@ -130,13 +148,66 @@ mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
     return module;
 }
 
+// The loop each break and continue leaves: the innermost one around it. (The check pass has made sure there is one.)
+void Lowerer::find_loops(uint32_t n, uint32_t loop)
+{
+    NodeKind k = tree.kind(n);
+    if (k == NodeKind::Break || k == NodeKind::Continue) owner[n] = loop;
+    if (k == NodeKind::While || k == NodeKind::DoWhile || k == NodeKind::For) loop = n;
+    for (uint32_t c : tree.children(n)) find_loops(c, loop);
+}
+
 void Lowerer::block(uint32_t n)
 {
-    for (uint32_t s : tree.children(n))
+    statements(tree.children(n), 0);
+}
+
+// The statements from list[i] on. After one that may break or continue, the rest run only if it did not.
+void Lowerer::statements(const std::vector<uint32_t>& list, size_t i)
+{
+    for (; i < list.size(); i++)
     {
-        statement(s);
+        statement(list[i]);
         if (!ok()) return;
+        std::vector<uint32_t> flags = jumps(list[i]);
+        if (!flags.empty() && i + 1 < list.size())
+        {
+            unless(flags, list, i + 1);
+            return;
+        }
     }
+}
+
+// The statements from list[i] on, run only when none of 'flags' is set: scf.if (not (flag or flag ...)). Like an if
+// with no else, it passes out the variables they may assign, and the flags they may set.
+void Lowerer::unless(const std::vector<uint32_t>& flags, const std::vector<uint32_t>& list, size_t i)
+{
+    if (flags.empty()) return statements(list, i);
+    uint32_t n = list[i];
+    mlir::Value jumped = values[flags[0]];
+    for (size_t k = 1; k < flags.size(); k++)
+        jumped = builder.create<mlir::arith::OrIOp>(loc(n), jumped, values[flags[k]]);
+    mlir::Value one = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true));
+    mlir::Value go = builder.create<mlir::arith::XOrIOp>(loc(n), jumped, one);
+
+    std::vector<uint32_t> vars = assigned(first(n), list.back() + 1);
+    llvm::SmallVector<mlir::Type> types;
+    for (uint32_t v : vars) types.push_back(values[v].getType());
+    auto op = builder.create<mlir::scf::IfOp>(loc(n), types, go, !vars.empty());
+
+    llvm::DenseMap<uint32_t, mlir::Value> before = values;
+    enter(op.thenBlock());
+    statements(list, i);
+    yield(n, vars);
+    values = before;
+    if (!vars.empty() && ok())
+    {
+        enter(op.elseBlock());  // skipped: everything keeps its value
+        yield(n, vars);
+    }
+    if (!ok()) return;
+    builder.setInsertionPointAfter(op);
+    for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = op.getResult(k);
 }
 
 void Lowerer::statement(uint32_t n)
@@ -172,7 +243,7 @@ void Lowerer::statement(uint32_t n)
         case NodeKind::Pass:
             return;
         case NodeKind::If:  // children: the condition, Block, then Elif... and Else
-            if_chain(kids, 0, assigned(n));
+            if_chain(kids, 0, assigned(first(n), n));
             return;
         case NodeKind::While:    // children: the condition, Block
             loop(n, kids[0], kids[1], 0, false);
@@ -181,18 +252,16 @@ void Lowerer::statement(uint32_t n)
             loop(n, kids[1], kids[0], 0, true);
             return;
         case NodeKind::For:      // children: the start, the condition, the step (each may be Empty), Block
-        {
-            llvm::DenseMap<uint32_t, mlir::Value> outer = values;
+            // the start runs once, in the enclosing scope: for (int i = 0; ...) declares an i that outlives the loop
             if (tree.kind(kids[0]) != NodeKind::Empty) statement(kids[0]);
             loop(n, kids[1], kids[3], kids[2], false);
-            // a variable the start declares (for (int i = 0; ...)) ends with the loop; the others keep their values
-            for (auto& [var, v] : outer) v = values[var];
-            values = outer;
             return;
-        }
-        case NodeKind::Break:
-        case NodeKind::Continue: fail(n, "break and continue");  return;
-        default:                 fail(n, "this statement");      return;
+        case NodeKind::Break:    // sets its loop's flag; what it skips tests the flag (statements(), loop())
+        case NodeKind::Continue:
+            values[flag(owner[n], tree.kind(n) == NodeKind::Continue)] =
+                builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true));
+            return;
+        default:                 fail(n, "this statement");  return;
     }
 }
 
@@ -206,22 +275,38 @@ void Lowerer::assign(uint32_t target, mlir::Value value)
     if (ok()) values[var] = v;
 }
 
-// The variables an if (or, later, a loop) must pass out: those it may assign that were declared before it. A
-// variable declared inside a branch is gone after it (block scope), so it is not passed out. The tree is in
-// postorder, so n's subtree is the size(n) nodes ending at n: one pass over them, in source order.
-std::vector<uint32_t> Lowerer::assigned(uint32_t n)
+// The variables an if, a loop or the code after a break must pass out: those the nodes [from, to) may assign that
+// are live here, so declared before them. One declared inside is gone after it (block scope), so it is not passed
+// out. A break or continue assigns its loop's flag, which is live only inside that loop. The tree is in postorder,
+// so a subtree, or a run of sibling statements with their subtrees, is a range of nodes: one pass, in source order.
+std::vector<uint32_t> Lowerer::assigned(uint32_t from, uint32_t to)
 {
     std::vector<uint32_t> vars;
     llvm::DenseSet<uint32_t> seen;
-    for (uint32_t m = n + 1 - tree.nodes[n].size; m < n; m++)
+    for (uint32_t m = from; m < to; m++)
     {
-        if (tree.kind(m) != NodeKind::Assign && tree.kind(m) != NodeKind::CompoundAssign) continue;
-        uint32_t target = tree.children(m)[0];
-        if (tree.kind(target) != NodeKind::Name) continue;
-        uint32_t var = in.refs[target];
+        uint32_t var;
+        NodeKind k = tree.kind(m);
+        if (k == NodeKind::Break || k == NodeKind::Continue) var = flag(owner[m], k == NodeKind::Continue);
+        else if (k == NodeKind::Assign || k == NodeKind::CompoundAssign)
+        {
+            uint32_t target = tree.children(m)[0];
+            if (tree.kind(target) != NodeKind::Name) continue;
+            var = in.refs[target];
+        }
+        else continue;
         if (values.count(var) && seen.insert(var).second) vars.push_back(var);
     }
     return vars;
+}
+
+// The flags statement n may set: of the loops around it, not of loops inside it (theirs are not live here)
+std::vector<uint32_t> Lowerer::jumps(uint32_t n)
+{
+    std::vector<uint32_t> flags;
+    for (uint32_t v : assigned(first(n), n + 1))
+        if (v >= in.entities.size()) flags.push_back(v);
+    return flags;
 }
 
 // parts[i] is a condition and parts[i + 1] its block; after them come the Elif and Else nodes. One scf.if per
@@ -294,32 +379,74 @@ llvm::SmallVector<mlir::Value> Lowerer::current(const std::vector<uint32_t>& var
 //   }
 //
 // The before region may do work ahead of the test, so a do-while's body goes there and its after region only
-// passes the values back. A for with no condition, for (;;), tests true.
+// passes the values back.
+//
+// With a break, the break flag starts false and is carried like a variable; the condition becomes
+// 'brk ? false : cond' (an scf.if, so cond is not run after a break), and for's step runs only without a break.
+// With a continue, the continue flag is false at the start of each body and only skips the rest of it.
 void Lowerer::loop(uint32_t n, uint32_t cond, uint32_t body, uint32_t step, bool bodyFirst)
 {
-    std::vector<uint32_t> vars = assigned(n);
+    uint32_t brk = flag(n, false), cont = flag(n, true);
+    bool breaks = false, continues = false;
+    for (uint32_t m = first(body); m < body; m++)
+    {
+        if (tree.kind(m) == NodeKind::Break && owner[m] == n) breaks = true;
+        if (tree.kind(m) == NodeKind::Continue && owner[m] == n) continues = true;
+    }
+    mlir::Value no;  // false: the flags' first value
+    if (breaks || continues) no = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(false));
+    if (breaks) values[brk] = no;
+
+    std::vector<uint32_t> vars = assigned(first(n), n);  // with brk, if there is a break
     llvm::SmallVector<mlir::Type> types;
     for (uint32_t v : vars) types.push_back(values[v].getType());
     auto op = builder.create<mlir::scf::WhileOp>(loc(n), types, current(vars));
     llvm::DenseMap<uint32_t, mlir::Value> before = values;
 
+    auto run_body = [&]
+    {
+        if (continues) values[cont] = no;
+        block(body);
+        values.erase(cont);  // the continue flag lives in the body only
+    };
+
     iteration(op.getBefore(), vars, n);
-    if (bodyFirst) block(body);
-    mlir::Value c = tree.kind(cond) == NodeKind::Empty
-                        ? builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true)).getResult()
-                        : convert(cond, expr(cond), builder.getI1Type());
+    if (bodyFirst) run_body();
+    mlir::Value c;
+    if (breaks && ok())
+    {
+        auto test = builder.create<mlir::scf::IfOp>(loc(n), mlir::TypeRange{builder.getI1Type()}, values[brk], true);
+        builder.setInsertionPointToEnd(test.thenBlock());
+        builder.create<mlir::scf::YieldOp>(loc(n), no);
+        builder.setInsertionPointToEnd(test.elseBlock());
+        mlir::Value more = condition(cond);
+        if (ok()) builder.create<mlir::scf::YieldOp>(loc(n), more);
+        builder.setInsertionPointAfter(test);
+        c = test.getResult(0);
+    }
+    else c = condition(cond);
     if (!ok()) return;
     builder.create<mlir::scf::ConditionOp>(loc(n), c, current(vars));
 
     iteration(op.getAfter(), vars, n);
-    if (!bodyFirst) block(body);
-    if (step && tree.kind(step) != NodeKind::Empty) statement(step);
+    if (!bodyFirst) run_body();
+    if (step && tree.kind(step) != NodeKind::Empty)
+        unless(breaks ? std::vector<uint32_t>{brk} : std::vector<uint32_t>{}, {step}, 0);
     if (!ok()) return;
     builder.create<mlir::scf::YieldOp>(loc(n), current(vars));
 
     values = before;
     builder.setInsertionPointAfter(op);
     for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = op.getResult(k);
+    values.erase(brk);  // the break flag ends with the loop
+}
+
+// A loop's condition as an i1. A for with none, for (;;), tests true.
+mlir::Value Lowerer::condition(uint32_t cond)
+{
+    if (tree.kind(cond) == NodeKind::Empty)
+        return builder.create<mlir::arith::ConstantOp>(loc(cond), builder.getBoolAttr(true));
+    return convert(cond, expr(cond), builder.getI1Type());
 }
 
 // One of scf.while's regions: a block with an argument per variable, which the variables hold inside it.

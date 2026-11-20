@@ -1,0 +1,95 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# break and continue. scf ops have no jumps, so a jump becomes a flag: break sets its loop's break flag, which the
+# loop carries like a variable and tests with its condition; continue sets a flag that is false at the start of
+# each iteration. The code after a statement that may set a flag runs only if it is not set.
+
+# CHECK-LABEL: func.func @main()
+ignite:
+    # break: the flag starts false and is carried with i. After a break the condition is not tested ('brk ?
+    # false : i < 10'), and the rest of the body is skipped.
+    # CHECK: %[[NO:.*]] = arith.constant false
+    # CHECK: %[[W:.*]]:2 = scf.while (%[[BRK:.*]] = %[[NO]], %[[I:.*]] = %{{.*}}) : (i1, i32) -> (i1, i32) {
+    # CHECK:   %[[MORE:.*]] = scf.if %[[BRK]] -> (i1) {
+    # CHECK:     scf.yield %[[NO]] : i1
+    # CHECK:   } else {
+    # CHECK:     arith.cmpi slt, %[[I]], %{{.*}} : i32
+    # CHECK:   }
+    # CHECK:   scf.condition(%[[MORE]]) %[[BRK]], %[[I]] : i1, i32
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[BRK2:.*]]: i1, %[[I2:.*]]: i32):
+    # CHECK:   %[[SET:.*]] = scf.if %{{.*}} -> (i1) {
+    # CHECK:     %[[YES:.*]] = arith.constant true
+    # CHECK:     scf.yield %[[YES]] : i1
+    # CHECK:   } else {
+    # CHECK:     scf.yield %[[BRK2]] : i1
+    # CHECK:   }
+    # CHECK:   %[[GO:.*]] = arith.xori %[[SET]], %{{.*}} : i1
+    # CHECK:   %[[I3:.*]] = scf.if %[[GO]] -> (i32) {
+    # CHECK:     arith.addi %[[I2]], %{{.*}} : i32
+    # CHECK:   } else {
+    # CHECK:     scf.yield %[[I2]] : i32
+    # CHECK:   }
+    # CHECK:   scf.yield %[[SET]], %[[I3]] : i1, i32
+    # CHECK: }
+    # CHECK: nova.print %[[W]]#1 : i32
+    int i = 0
+    while (i < 10):
+        if (i == 3):
+            break
+        i += 1
+    print(i)
+
+    # continue: its flag is not carried (each iteration starts it false), and it skips the rest of the body but
+    # not the step. Canonicalize folds the flag away: what is left is 'if (k % 2 != 0) odd += k' (FOLD).
+    # CHECK: %[[F:.*]]:2 = scf.while (%[[K:.*]] = %{{.*}}, %[[ODD:.*]] = %{{.*}}) : (i32, i32) -> (i32, i32) {
+    # CHECK: } do {
+    # CHECK: ^bb0(%[[K2:.*]]: i32, %[[ODD2:.*]]: i32):
+    # CHECK:   %[[CONT:.*]] = scf.if %{{.*}} -> (i1) {
+    # CHECK:   %[[GO2:.*]] = arith.xori %[[CONT]], %{{.*}} : i1
+    # CHECK:   %[[ODD3:.*]] = scf.if %[[GO2]] -> (i32) {
+    # CHECK:   %[[K3:.*]] = arith.addi %[[K2]], %{{.*}} : i32
+    # CHECK:   scf.yield %[[K3]], %[[ODD3]] : i32, i32
+    # CHECK: }
+    # CHECK: nova.print %[[F]]#1 : i32
+    # CHECK: nova.print %[[F]]#0 : i32
+    # FOLD-LABEL: func.func @main()
+    # FOLD: scf.while ({{.*}}) : (i32, i32) -> (i32, i32) {
+    # FOLD: ^bb0(%[[FK:.*]]: i32, %[[FODD:.*]]: i32):
+    # FOLD:   %[[REM:.*]] = arith.remsi %[[FK]], %{{.*}} : i32
+    # FOLD:   %[[ISODD:.*]] = arith.cmpi ne, %[[REM]], %{{.*}} : i32
+    # FOLD:   scf.if %[[ISODD]] -> (i32) {
+    # FOLD:     arith.addi %[[FODD]], %[[FK]] : i32
+    int odd = 0
+    for (int k = 0; k < 6; k += 1):
+        if (k % 2 == 0):
+            continue
+        odd += k
+    print(odd)
+    print(k)
+
+    # nested loops: each break leaves its own loop, so each loop has its own flag. The inner one ends with the
+    # inner loop; the outer one is set by the outer break, after the inner loop.
+    # CHECK: %[[OUT:.*]]:3 = scf.while ({{.*}}, %[[OBRK:.*]] = %{{.*}}) : (i32, i32, i1) -> (i32, i32, i1) {
+    # CHECK: ^bb0(%{{.*}}: i32, %{{.*}}: i32, %[[OBRK2:.*]]: i1):
+    # CHECK:   %[[IN:.*]]:3 = scf.while ({{.*}}, %[[IBRK:.*]] = %{{.*}}) : (i32, i32, i1) -> (i32, i32, i1) {
+    # CHECK:   }
+    # CHECK:   %[[OSET:.*]] = scf.if %{{.*}} -> (i1) {
+    # CHECK:   } else {
+    # CHECK:     scf.yield %[[OBRK2]] : i1
+    # CHECK:   }
+    # CHECK:   scf.yield %{{.*}}, %[[IN]]#1, %[[OSET]] : i32, i32, i1
+    # CHECK: }
+    # CHECK: nova.print %[[OUT]]#1 : i32
+    # CHECK: nova.print %[[OUT]]#0 : i32
+    int found = 0
+    for (int r = 1; r < 4; r += 1):
+        for (int c = 1; c < 4; c += 1):
+            if (r * c == 4):
+                found = r
+                break
+        if (found > 0):
+            break
+    print(found)
+    print(r)
