@@ -205,7 +205,9 @@ the LICM safety rules, broadcasting through `MatmulPlan`, and the kernel steps. 
   SSA form, with if / elif / else and short-circuit and / or as `scf.if` (its results join the branches' values, as
   a phi does), and while / do-while / for as `scf.while` (its block arguments carry the loop's variables), with
   `break` and `continue` as flags the loop carries and tests. Functions are `func.func` and calls `func.call`
-  (several results too), with `return` as a flag and result slots the same way. Tensors are next.
+  (several results too), with `return` as a flag and result slots the same way. Tensors are `!nova.tensor<f64>`:
+  `zeros`, `@` / `matmul` and `print` lower to the nova dialect. Next: tensor ops that write (which make creating
+  a tensor an allocation, not `Pure`), generic functions, then lowering nova, scf and func to LLVM.
 - Frames, variable lifetimes and memory (phase 6) come from the dialect's lowering instead of slot ranges.
 
 **D. A tile-level kernel language in Nova.** `kernel` functions that work on blocks of a tensor, as Triton's do:

@@ -14,6 +14,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -49,7 +50,7 @@ int main(int argc, char** argv)
     // The dialects lowering writes: their ops can be made only once they are loaded
     mlir::MLIRContext context;
     context.loadDialect<nova::NovaDialect, mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                        mlir::scf::SCFDialect>();
+                        mlir::scf::SCFDialect, mlir::ub::UBDialect>();
 
     std::string error;
     mlir::OwningOpRef<mlir::ModuleOp> module = nova::lower_to_mlir(context, tree, checked, argv[1], error);

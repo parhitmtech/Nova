@@ -3,6 +3,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/UB/IR/UBOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mlir/Transforms/Passes.h"
@@ -15,7 +16,8 @@ int main(int argc, char** argv)
 
     // The dialects a .mlir file may use: nova, and the upstream ones Nova lowers to (docs/DESIGN.md, C2)
     mlir::DialectRegistry registry;
-    registry.insert<nova::NovaDialect, mlir::arith::ArithDialect, mlir::func::FuncDialect, mlir::scf::SCFDialect>();
+    registry.insert<nova::NovaDialect, mlir::arith::ArithDialect, mlir::func::FuncDialect, mlir::scf::SCFDialect,
+                    mlir::ub::UBDialect>();
 
     return mlir::asMainReturnCode(mlir::MlirOptMain(argc, argv, "Nova's MLIR driver\n", registry));
 }
