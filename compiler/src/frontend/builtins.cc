@@ -1,9 +1,10 @@
-// The tensor built-ins: their names, and which give nothing, an int or a double instead of a Tensor. The check pass
-// declares and checks them by these tables, and lowering lowers them by them.
+// The tensor built-ins: their names, which give nothing, an int or a double instead of a Tensor, and what each one's
+// arguments must be. The check pass declares and checks them by these tables, and lowering lowers them by them.
 #include <map>
 #include <set>
 #include <string>
 #include "compiler.h"
+#include "tensor_ops.h"
 
 using namespace std;
 
@@ -90,3 +91,34 @@ extern const set<TensorOp> TENSOR_INT_OPS = {
 extern const set<TensorOp> TENSOR_DOUBLE_OPS = {
     TEN_SUM, TEN_MEAN, TEN_MAX, TEN_GET, CON_GET_D, CON_POP_D, CON_MIN_D, CON_MAX_D, CON_SUM_D, OBJ_GET_D
 };
+
+// What each argument of a tensor built-in must be: 'T' a Tensor, 'n' a number (int, float, double
+// or bool), 's' a string. A trailing '*' repeats the previous kind for any further arguments (one
+// argument per dimension: tensor_zeros(2, 3, 4), tensor_get(t, i, j, k)).
+const char* tensor_op_signature(TensorOp op)
+{
+    switch (op)
+    {
+        case TEN_ZEROS: case TEN_ONES: case TEN_RANDN:            return "n*";
+        case TEN_ALLOC: case TEN_XAVIER: case TEN_RAND_INT:
+        case TEN_PROGRESS_BAR:                                    return "nn";
+        case TEN_GET: case TEN_SET: case TEN_RESHAPE:             return "Tn*";
+        case TEN_MATMUL: case TEN_ADD: case TEN_SUB: case TEN_MUL: case TEN_DIV:
+        case TEN_MSE_LOSS: case TEN_MSE_GRAD: case TEN_BCE_GRAD:
+        case TEN_CE_LOSS: case TEN_CE_GRAD:                       return "TT";
+        case TEN_SCALE: case TEN_GET_ROW: case TEN_GRAD_STEP: case TEN_ADD_SCALAR:
+        case TEN_DIM:                                             return "Tn";
+        case TEN_CLIP: case TEN_SLICE_ROWS:                       return "Tnn";
+        case TEN_SET_ROW:                                         return "TnT";
+        case TEN_LOAD_CSV:                                        return "snn";
+        case TEN_PROGRESS_UPDATE:                                 return "nnn";
+        case TEN_PROGRESS_DONE:                                   return "n";
+        case TEN_LIVE_COUNT:                                      return "";
+        case CON_VEC_NEW: case CON_MAP_NEW: case CON_PUSH: case CON_POP: case CON_POP_D: case CON_GET:
+        case CON_GET_D: case CON_SET: case CON_SIZE: case CON_HAS: case CON_REMOVE: case CON_CLEAR:
+        case CON_SORT: case CON_REVERSE: case CON_CONTAINS: case CON_INDEX_OF: case CON_BSEARCH: case CON_MIN: case CON_MIN_D: case CON_MAX: case CON_MAX_D: case CON_SUM: case CON_SUM_D:
+        case OBJ_NEW: case OBJ_GET: case OBJ_GET_D: case OBJ_SET: case OBJ_STORE: case OBJ_MOVE: case OBJ_RELEASE:
+                                                                  return "";   // checked by the parser
+        default:                                                  return "T";  // one tensor
+    }
+}

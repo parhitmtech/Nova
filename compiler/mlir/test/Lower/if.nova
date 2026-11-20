@@ -1,0 +1,92 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# if / elif / else as scf.if. Where the branches join, a variable the if assigns holds a different value depending
+# on the branch taken: the scf.if gives it as a result, and each branch yields the value the variable holds at its
+# end (the old one, if that branch did not assign it). The conditions are constants, so canonicalize removes every
+# branch (FOLD).
+
+# FOLD-LABEL: func.func @main()
+# FOLD-NOT: scf.if
+# FOLD-DAG: %[[C1:.*]] = arith.constant 1 : i32
+# FOLD-DAG: %[[C3:.*]] = arith.constant 3 : i32
+# FOLD-DAG: %[[C6:.*]] = arith.constant 6 : i32
+# FOLD-DAG: %[[C12:.*]] = arith.constant 12 : i32
+# FOLD: nova.print %[[C1]] : i32
+# FOLD: nova.print %[[C3]] : i32
+# FOLD: nova.print %[[C6]] : i32
+# FOLD: nova.print %[[C12]] : i32
+# FOLD: nova.print %true : i1
+# FOLD: nova.print %true : i1
+
+# CHECK-LABEL: func.func @main()
+ignite:
+    # CHECK: %[[X:.*]] = arith.constant 5 : i32
+    # CHECK: %[[Y:.*]] = arith.constant 0 : i32
+    int x = 5
+    int y = 0
+
+    # y is assigned in one branch only: the other yields its old value
+    # CHECK: %[[Y1:.*]] = scf.if %{{.*}} -> (i32) {
+    # CHECK:   %[[ONE:.*]] = arith.constant 1 : i32
+    # CHECK:   scf.yield %[[ONE]] : i32
+    # CHECK: } else {
+    # CHECK:   scf.yield %[[Y]] : i32
+    # CHECK: }
+    # CHECK: nova.print %[[Y1]] : i32
+    if (x > 3):
+        y = 1
+    print(y)
+
+    # elif is an scf.if in the else branch; x and y are both passed out, through both levels
+    # CHECK: %[[R:.*]]:2 = scf.if %{{.*}} -> (i32, i32) {
+    # CHECK:   scf.yield %{{.*}}, %[[X]] : i32, i32
+    # CHECK: } else {
+    # CHECK:   %[[INNER:.*]]:2 = scf.if %{{.*}} -> (i32, i32) {
+    # CHECK:     %[[X2:.*]] = arith.addi %[[X]], %{{.*}} : i32
+    # CHECK:     scf.yield %{{.*}}, %[[X2]] : i32, i32
+    # CHECK:   } else {
+    # CHECK:     nova.print %[[X]] : i32
+    # CHECK:     scf.yield %[[Y1]], %[[X]] : i32, i32
+    # CHECK:   }
+    # CHECK:   scf.yield %[[INNER]]#0, %[[INNER]]#1 : i32, i32
+    # CHECK: }
+    # CHECK: nova.print %[[R]]#0 : i32
+    # CHECK: nova.print %[[R]]#1 : i32
+    if (x > 10):
+        y = 2
+    elif (x > 4):
+        y = 3
+        x += 1
+    else:
+        print(x)
+    print(y)
+    print(x)
+
+    # t is declared in the branch, so it is gone after it: no results, and no else
+    # CHECK: scf.if %{{.*}} {
+    # CHECK:   %[[T:.*]] = arith.muli %[[R]]#1, %{{.*}} : i32
+    # CHECK:   nova.print %[[T]] : i32
+    # CHECK: }
+    if (x == 6):
+        int t = x * 2
+        print(t)
+
+    # and / or skip their right side when the left decides, so they are scf.if too
+    # CHECK: %[[AND:.*]] = scf.if %{{.*}} -> (i1) {
+    # CHECK:   %[[YPOS:.*]] = arith.cmpi sgt, %[[R]]#0, %{{.*}} : i32
+    # CHECK:   scf.yield %[[YPOS]] : i1
+    # CHECK: } else {
+    # CHECK:   scf.yield %false : i1
+    # CHECK: }
+    # CHECK: nova.print %[[AND]] : i1
+    bool both = x > 0 and y > 0
+    print(both)
+    # CHECK: %[[OR:.*]] = scf.if %{{.*}} -> (i1) {
+    # CHECK:   scf.yield %true : i1
+    # CHECK: } else {
+    # CHECK:   %[[YBIG:.*]] = arith.cmpi sgt, %[[R]]#0, %{{.*}} : i32
+    # CHECK:   scf.yield %[[YBIG]] : i1
+    # CHECK: }
+    # CHECK: nova.print %[[OR]] : i1
+    print(x < 0 or y > 2)

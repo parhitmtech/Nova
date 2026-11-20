@@ -39,6 +39,7 @@ __pycache__/
 *.pyo
 *.pyd
 .Python
+.venv/
 
 # ── Scratch files ──
 *.csl

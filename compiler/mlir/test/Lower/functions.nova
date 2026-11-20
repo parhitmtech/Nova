@@ -1,0 +1,85 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# Functions as func.func, calls as func.call. return is a jump: it fills the function's return slots and sets its
+# return flag, the code it skips tests the flag, every loop around it ends, and the func.return at the end
+# returns the slots. Where the jumps are decided statically, canonicalize folds the flag away (FOLD).
+
+# Several values: one result each. No jump to skip anything, so no flag is tested.
+# CHECK-LABEL: func.func @divmod(%arg0: i32, %arg1: i32) -> (i32, i32) {
+# CHECK:   %[[Q:.*]] = arith.divsi %arg0, %arg1 : i32
+# CHECK:   %[[R:.*]] = arith.remsi %arg0, %arg1 : i32
+# CHECK:   return %[[Q]], %[[R]] : i32, i32
+def divmod(int a, int b) -> int, int:
+    return a / b, a % b
+
+# An early return: the slot and the flag leave the if as its results, and the rest runs only if the flag is unset
+# CHECK-LABEL: func.func @fib(%arg0: i32) -> i32 {
+# CHECK:   %[[NO:.*]] = arith.constant false
+# CHECK:   %[[ZERO:.*]] = arith.constant 0 : i32
+# CHECK:   %[[EARLY:.*]]:2 = scf.if %{{.*}} -> (i1, i32) {
+# CHECK:     scf.yield %{{.*}}, %arg0 : i1, i32
+# CHECK:   } else {
+# CHECK:     scf.yield %[[NO]], %[[ZERO]] : i1, i32
+# CHECK:   }
+# CHECK:   %[[GO:.*]] = arith.xori %[[EARLY]]#0, %{{.*}} : i1
+# CHECK:   %[[LATE:.*]]:2 = scf.if %[[GO]] -> (i1, i32) {
+# CHECK:     func.call @fib
+# CHECK:     func.call @fib
+# CHECK:   } else {
+# CHECK:     scf.yield %[[EARLY]]#0, %[[EARLY]]#1 : i1, i32
+# CHECK:   }
+# CHECK:   return %[[LATE]]#1 : i32
+# FOLD-LABEL: func.func @fib(%arg0: i32) -> i32 {
+# FOLD-NOT: i1
+# FOLD: return
+def fib(int n) -> int:
+    if (n < 2):
+        return n
+    return fib(n - 1) + fib(n - 2)
+
+# A return in a loop ends it: the loop carries the flag and the slot, its condition is not tested once the flag
+# is set, and the step is skipped. After the loop, 'return -1' runs only if nothing returned in it.
+# CHECK-LABEL: func.func @find(%arg0: i32) -> i32 {
+# CHECK:   %[[W:.*]]:3 = scf.while (%[[I:.*]] = %{{.*}}, %[[RET:.*]] = %{{.*}}, %[[SLOT:.*]] = %{{.*}}) : (i32, i1, i32) -> (i32, i1, i32) {
+# CHECK:     scf.if %[[RET]] -> (i1) {
+# CHECK:     scf.condition(%{{.*}}) %[[I]], %[[RET]], %[[SLOT]] : i32, i1, i32
+# CHECK:   } do {
+# CHECK:   }
+# CHECK:   %[[NOTRET:.*]] = arith.xori %[[W]]#1, %{{.*}} : i1
+# CHECK:   %[[END:.*]]:2 = scf.if %[[NOTRET]] -> (i1, i32) {
+# CHECK:   } else {
+# CHECK:     scf.yield %[[W]]#1, %[[W]]#2 : i1, i32
+# CHECK:   }
+# CHECK:   return %[[END]]#1 : i32
+# FOLD-LABEL: func.func @find(%arg0: i32) -> i32 {
+# FOLD:   %[[FW:.*]]:3 = scf.while
+# FOLD:   %[[PICK:.*]] = arith.select %[[FW]]#1, %[[FW]]#2, %{{.*}} : i32
+# FOLD:   return %[[PICK]] : i32
+def find(int target) -> int:
+    for (int i = 0; i < 10; i += 1):
+        if (i * i >= target):
+            return i
+    return -1
+
+def nothing(int x):
+    print(x + 1)
+
+# def main() is the entry point, as ignite is. A call with several results sets one variable per result; one
+# with none is a statement.
+# CHECK-LABEL: func.func @main() {
+# CHECK:   %[[F:.*]] = call @fib(%{{.*}}) : (i32) -> i32
+# CHECK:   nova.print %[[F]] : i32
+# CHECK:   %[[D:.*]]:2 = call @divmod(%{{.*}}, %{{.*}}) : (i32, i32) -> (i32, i32)
+# CHECK:   nova.print %[[D]]#0 : i32
+# CHECK:   nova.print %[[D]]#1 : i32
+# CHECK:   call @find(%{{.*}}) : (i32) -> i32
+# CHECK:   call @nothing(%{{.*}}) : (i32) -> ()
+# CHECK:   return
+def main():
+    print(fib(15))
+    int q, int r = divmod(17, 5)
+    print(q)
+    print(r)
+    print(find(20))
+    nothing(4)
