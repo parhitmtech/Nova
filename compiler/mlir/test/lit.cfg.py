@@ -5,6 +5,10 @@ import os
 import lit.formats
 from lit.llvm import llvm_config
 
+# lit runs this file with 'config' (a lit.TestingConfig, filled in by lit.site.cfg.py) already defined. Naming it
+# here changes nothing for lit, but lets editors and type checkers see where it comes from.
+config = globals()["config"]
+
 config.name = "NOVA"
 config.test_format = lit.formats.ShTest(execute_external=False)  # lit's own shell runs the RUN lines
 config.suffixes = [".mlir", ".nova"]
