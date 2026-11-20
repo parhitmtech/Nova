@@ -1,11 +1,15 @@
-// Lowering the checked tree to MLIR (LowerTree.h). This first slice covers straight-line code in the ignite block:
-// numbers and bools, variables, arithmetic, comparisons and print. Anything else stops lowering with an error that
-// names it, as lower.cc's unlowered() does.
+// Lowering the checked tree to MLIR (LowerTree.h). It covers the ignite block's numbers and bools, variables,
+// arithmetic, comparisons, print, and if / elif / else and and / or (as scf.if). Anything else stops lowering with
+// an error that names it, as lower.cc's unlowered() does.
 //
 // SSA. A Nova variable is assigned many times; an SSA value is defined once. Lowering keeps, for each variable, the
 // SSA value it holds at this point of the program ('values'): a declaration or an assignment makes a new value and
 // points the variable at it, and a use of the variable reads the value it points at. In straight-line code that is
-// all SSA construction is. Branches and loops (scf.if and scf.while) will pass the values they change out as results.
+// all SSA construction is.
+//
+// Where branches join, a variable can hold a different value depending on the branch taken. LLVM IR writes that
+// as a phi; MLIR's structured scf.if writes it as the op's results: each branch ends in scf.yield with the values
+// its variables hold, and after the scf.if the variables hold its results.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -17,8 +21,10 @@
 #include "Nova/NovaOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/Builders.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 
 // No 'using namespace mlir': the check pass has its own Type (check.h), so mlir::Type is always written out.
 namespace
@@ -49,10 +55,16 @@ class Lowerer
         void statement(uint32_t n);
         void assign(uint32_t target, mlir::Value value);
 
+        std::vector<uint32_t> assigned(uint32_t n);  // the variables declared before n that n may assign
+        void if_chain(const std::vector<uint32_t>& parts, size_t i, const std::vector<uint32_t>& vars);
+        void enter(mlir::Block* b);  // put the builder in a branch: before its scf.yield if it has one
+        void yield(uint32_t n, const std::vector<uint32_t>& vars);
+
         mlir::Value expr(uint32_t n);
         mlir::Value literal(uint32_t n);
         mlir::Value unary(uint32_t n);
         mlir::Value binary(uint32_t n);
+        mlir::Value logical(uint32_t n);
         mlir::Value arithmetic(uint32_t n, TokenType op, mlir::Value left, mlir::Value right, mlir::Type t);
         mlir::Value compare(uint32_t n, TokenType op, mlir::Value left, mlir::Value right);
         mlir::Value call(uint32_t n);
@@ -152,7 +164,9 @@ void Lowerer::statement(uint32_t n)
             return;
         case NodeKind::Pass:
             return;
-        case NodeKind::If:       fail(n, "an if statement");  return;
+        case NodeKind::If:  // children: the condition, Block, then Elif... and Else
+            if_chain(kids, 0, assigned(n));
+            return;
         case NodeKind::While:    fail(n, "a while loop");     return;
         case NodeKind::For:      fail(n, "a for loop");       return;
         default:                 fail(n, "this statement");   return;
@@ -167,6 +181,78 @@ void Lowerer::assign(uint32_t target, mlir::Value value)
     uint32_t var = in.refs[target];
     mlir::Value v = convert(target, value, type(in.entities[var].type));
     if (ok()) values[var] = v;
+}
+
+// The variables an if (or, later, a loop) must pass out: those it may assign that were declared before it. A
+// variable declared inside a branch is gone after it (block scope), so it is not passed out. The tree is in
+// postorder, so n's subtree is the size(n) nodes ending at n: one pass over them, in source order.
+std::vector<uint32_t> Lowerer::assigned(uint32_t n)
+{
+    std::vector<uint32_t> vars;
+    llvm::DenseSet<uint32_t> seen;
+    for (uint32_t m = n + 1 - tree.nodes[n].size; m < n; m++)
+    {
+        if (tree.kind(m) != NodeKind::Assign && tree.kind(m) != NodeKind::CompoundAssign) continue;
+        uint32_t target = tree.children(m)[0];
+        if (tree.kind(target) != NodeKind::Name) continue;
+        uint32_t var = in.refs[target];
+        if (values.count(var) && seen.insert(var).second) vars.push_back(var);
+    }
+    return vars;
+}
+
+// parts[i] is a condition and parts[i + 1] its block; after them come the Elif and Else nodes. One scf.if per
+// condition: 'if a: A elif b: B else: C' is 'if a: A else: (if b: B else: C)'. The scf.if gives one result per
+// variable in 'vars'; each branch yields what they hold at its end, and after it they hold its results.
+void Lowerer::if_chain(const std::vector<uint32_t>& parts, size_t i, const std::vector<uint32_t>& vars)
+{
+    uint32_t cond = parts[i], body = parts[i + 1];
+    mlir::Value c = convert(cond, expr(cond), builder.getI1Type());
+    if (!ok()) return;
+
+    llvm::SmallVector<mlir::Type> types;
+    for (uint32_t v : vars) types.push_back(values[v].getType());
+    size_t rest = i + 2;  // the next Elif or Else, if any
+    bool otherwise = rest < parts.size() || !vars.empty();  // a branch with results needs both sides
+    auto op = builder.create<mlir::scf::IfOp>(loc(cond), types, c, otherwise);
+
+    llvm::DenseMap<uint32_t, mlir::Value> before = values;  // each side starts from the values before the if
+    enter(op.thenBlock());
+    block(body);
+    yield(body, vars);
+    values = before;
+    if (otherwise && ok())
+    {
+        enter(op.elseBlock());
+        if (rest < parts.size() && tree.kind(parts[rest]) == NodeKind::Elif)
+        {
+            std::vector<uint32_t> elif = tree.children(parts[rest]);  // the condition, Block
+            std::vector<uint32_t> next = {elif[0], elif[1]};
+            next.insert(next.end(), parts.begin() + rest + 1, parts.end());
+            if_chain(next, 0, vars);
+        }
+        else if (rest < parts.size()) block(tree.children(parts[rest])[0]);  // Else: its Block
+        yield(rest < parts.size() ? parts[rest] : cond, vars);
+        values = before;
+    }
+    if (!ok()) return;
+    builder.setInsertionPointAfter(op);
+    for (size_t k = 0; k < vars.size(); k++) values[vars[k]] = op.getResult(k);
+}
+
+// An scf.if without results gets its scf.yield when it is made; one with results gets it from yield()
+void Lowerer::enter(mlir::Block* b)
+{
+    if (!b->empty() && b->back().hasTrait<mlir::OpTrait::IsTerminator>()) builder.setInsertionPoint(&b->back());
+    else builder.setInsertionPointToEnd(b);
+}
+
+void Lowerer::yield(uint32_t n, const std::vector<uint32_t>& vars)
+{
+    if (!ok() || vars.empty()) return;
+    llvm::SmallVector<mlir::Value> out;
+    for (uint32_t v : vars) out.push_back(values[v]);
+    builder.create<mlir::scf::YieldOp>(loc(n), out);
 }
 
 mlir::Value Lowerer::expr(uint32_t n)
@@ -224,7 +310,7 @@ mlir::Value Lowerer::unary(uint32_t n)
 mlir::Value Lowerer::binary(uint32_t n)
 {
     TokenType op = tree.token(n).kind;
-    if (op == AND || op == OR) return fail(n, "'and' / 'or'");  // they skip their right side: control flow
+    if (op == AND || op == OR) return logical(n);
     std::vector<uint32_t> kids = tree.children(n);
     mlir::Value left = expr(kids[0]);
     mlir::Value right = expr(kids[1]);
@@ -240,6 +326,30 @@ mlir::Value Lowerer::binary(uint32_t n)
             return arithmetic(n, op, convert(n, left, t), convert(n, right, t), t);
         }
     }
+}
+
+// a and b; a or b. The right side runs only when the left does not decide (short-circuit), so it is control flow,
+// not arith.andi: 'a and b' is scf.if a { yield b } else { yield false }, and 'a or b' is scf.if a { yield true }
+// else { yield b }.
+mlir::Value Lowerer::logical(uint32_t n)
+{
+    bool isAnd = tree.token(n).kind == AND;
+    std::vector<uint32_t> kids = tree.children(n);
+    mlir::Value left = convert(kids[0], expr(kids[0]), builder.getI1Type());
+    if (!ok()) return nullptr;
+    auto op = builder.create<mlir::scf::IfOp>(loc(n), mlir::TypeRange{builder.getI1Type()}, left, true);
+
+    builder.setInsertionPointToEnd(isAnd ? op.thenBlock() : op.elseBlock());  // where the right side decides
+    mlir::Value right = convert(kids[1], expr(kids[1]), builder.getI1Type());
+    if (!ok()) return nullptr;
+    builder.create<mlir::scf::YieldOp>(loc(n), right);
+
+    builder.setInsertionPointToEnd(isAnd ? op.elseBlock() : op.thenBlock());  // where the left side decides
+    mlir::Value decided = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(!isAnd));
+    builder.create<mlir::scf::YieldOp>(loc(n), decided);
+
+    builder.setInsertionPointAfter(op);
+    return op.getResult(0);
 }
 
 // One arith op per operator and kind of number. Integer division and remainder are signed (divsi, remsi), as C's.

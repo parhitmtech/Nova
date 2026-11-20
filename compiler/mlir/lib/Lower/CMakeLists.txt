@@ -12,6 +12,7 @@ add_mlir_library(NovaLower
     MLIRNova
     MLIRArithDialect
     MLIRFuncDialect
+    MLIRSCFDialect
     MLIRIR
     NovaFrontend
 )

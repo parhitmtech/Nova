@@ -201,8 +201,9 @@ the LICM safety rules, broadcasting through `MatmulPlan`, and the kernel steps. 
 - Progress: the dialect's first slice is in `compiler/mlir/`: `!nova.tensor`, `nova.zeros`, `nova.matmul` (with a
   verifier) and `nova.print`, defined in ODS; a `nova-opt` driver; and lit/FileCheck tests (`check-nova`) for printing
   and parsing, CSE and canonicalization, and the verifier's errors. `nova-lower` lowers the checked tree into it
-  (DESIGN.md C1): straight-line code in the ignite block (numbers, variables, arithmetic, comparisons, print), built
-  directly in SSA form. Branches and loops (`scf.if`, `scf.while`), functions and tensors are next.
+  (DESIGN.md C1): code in the ignite block (numbers, variables, arithmetic, comparisons, print), built directly in
+  SSA form, with if / elif / else and short-circuit and / or as `scf.if` (its results join the branches' values, as
+  a phi does). Loops (`scf.while`), functions and tensors are next.
 - Frames, variable lifetimes and memory (phase 6) come from the dialect's lowering instead of slot ranges.
 
 **D. A tile-level kernel language in Nova.** `kernel` functions that work on blocks of a tensor, as Triton's do:
