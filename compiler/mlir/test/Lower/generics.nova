@@ -1,0 +1,79 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | FileCheck %s --check-prefix=NONE
+#
+# Generic functions: a parameter without a type makes a function generic, and the check pass makes a copy of it for
+# each set of argument types a call passes. Each copy is a func.func of its own, named with its types, and each
+# call calls the copy made for it. A generic no call uses has no copy, so nothing of it is lowered.
+
+# NONE-NOT: @unused
+# NONE-NOT: @scale(
+
+# CHECK-LABEL: func.func @"scale<int, int>"(%arg0: i32, %arg1: i32) -> i32
+# CHECK: arith.muli %arg0, %arg1 : i32
+# CHECK-LABEL: func.func @"scale<float, float>"(%arg0: f32, %arg1: f32) -> f32
+# CHECK: arith.mulf %arg0, %arg1 : f32
+def scale(x, k):
+    return x * k
+
+# A recursive copy calls itself
+# CHECK-LABEL: func.func @"fact<int>"(%arg0: i32) -> i32
+# CHECK: call @"fact<int>"(%{{.*}}) : (i32) -> i32
+def fact(n):
+    if (n <= 1):
+        return 1
+    return n * fact(n - 1)
+
+def sq(x):
+    return x * x
+
+# A generic calling a generic: each copy calls the copy of sq for its own types
+# CHECK-LABEL: func.func @"sum_sq<int, int>"
+# CHECK: call @"sq<int>"(%arg0) : (i32) -> i32
+# CHECK-LABEL: func.func @"sum_sq<float, float>"
+# CHECK: call @"sq<float>"(%arg0) : (f32) -> f32
+def sum_sq(a, b):
+    return sq(a) + sq(b)
+
+# A partly typed function is generic too. A copy is named by the types of all its arguments (1.0 is a float), but
+# a typed parameter keeps its type (double) in every copy. A tensor is an argument like any other.
+# CHECK-LABEL: func.func @"put<float, Tensor, int>"(%arg0: f64, %arg1: !nova.tensor<f64>, %arg2: i32)
+# CHECK: nova.set %arg0, %arg1
+# CHECK: %[[X:.*]] = arith.sitofp %arg2 : i32 to f64
+# CHECK: nova.set %[[X]], %arg1
+def put(double base, t, x):
+    t[0, 0] = base
+    t[1, 1] = x
+
+# No return value: a copy that returns nothing
+# CHECK-LABEL: func.func @"show<double>"(%arg0: f64) {
+# CHECK-NEXT: nova.print %arg0 : f64
+# CHECK-NEXT: return
+def show(x):
+    print(x)
+
+def unused(x):
+    return x
+
+# CHECK-LABEL: func.func @main()
+# CHECK: call @"scale<int, int>"
+# CHECK: call @"scale<float, float>"
+# CHECK: call @"fact<int>"
+# CHECK: call @"sum_sq<int, int>"
+# CHECK: call @"sum_sq<float, float>"
+# CHECK: %[[T:.*]] = nova.ones
+# CHECK: call @"put<float, Tensor, int>"(%{{.*}}, %[[T]], %{{.*}}) : (f64, !nova.tensor<f64>, i32) -> ()
+# CHECK: %[[E:.*]] = nova.get %[[T]]
+# CHECK: call @"show<double>"(%[[E]]) : (f64) -> ()
+# Two calls with one set of types share one copy
+# CHECK: call @"scale<int, int>"
+ignite:
+    print(scale(2, 3))
+    print(scale(2.0, 3.0))
+    print(fact(5))
+    print(sum_sq(3, 4))
+    print(sum_sq(0.5, 1.5))
+    Tensor t = ones(2, 2)
+    put(1.0, t, 4)
+    show(t[0, 0])
+    int y = 100
+    print(scale(y, 2))

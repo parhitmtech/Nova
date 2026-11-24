@@ -208,8 +208,9 @@ the LICM safety rules, broadcasting through `MatmulPlan`, and the kernel steps. 
   (several results too), with `return` as a flag and result slots the same way. Tensors are `!nova.tensor<f64>`:
   `zeros` / `ones`, `@` / `matmul`, `print`, and element reads and writes (`t[i, j]`, `+=`, `tensor_get` /
   `tensor_set`) lower to the nova dialect. A write is a memory effect, not a new SSA value, and the ops declare
-  MemAlloc / MemRead / MemWrite instead of `Pure`, so CSE, LICM and canonicalize treat tensors as references. Next:
-  generic functions, element-wise tensor ops, then lowering nova, scf and func to LLVM.
+  MemAlloc / MemRead / MemWrite instead of `Pure`, so CSE, LICM and canonicalize treat tensors as references. A
+  generic function is lowered once per copy the check pass made, each copy a `func.func` named with its argument
+  types (`@"scale<int, int>"`). Next: element-wise tensor ops, then lowering nova, scf and func to LLVM.
 - Frames, variable lifetimes and memory (phase 6) come from the dialect's lowering instead of slot ranges.
 
 **D. A tile-level kernel language in Nova.** `kernel` functions that work on blocks of a tensor, as Triton's do:

@@ -31,6 +31,12 @@
 // are nova.matmul; print(t) is nova.print. A tensor variable or return slot with no value yet holds ub.poison:
 // there is no tensor to start from, and no path reads it before something is assigned. t[i, j] is nova.get and
 // t[i, j] = x nova.set: a write changes the tensor in place, so it is an effect, not a new SSA value for t.
+//
+// Generic functions. A function with an untyped parameter has no one type for it, and a func.func needs one. The
+// check pass has already made a copy of it for each set of argument types a call passes (check.h's Instance), with
+// the copy's own types for every node and variable in its body, and which copy each call in it calls. So each copy
+// is lowered as a func.func of its own, named as messages name it: @"scale<int, int>". That is monomorphization,
+// as C++ does for templates: no type is left to decide at run time.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -68,12 +74,19 @@ class Lowerer
         llvm::DenseMap<uint32_t, uint32_t> owner;      // by break or continue node: the loop it leaves
         llvm::SmallVector<mlir::Type> results;         // the result types of the function being lowered
         std::string error;                             // the first thing not lowered; once set, lowering stops
+        uint32_t copy = NoInstance;                    // the generic function's copy being lowered, if one is
 
         bool ok() const { return error.empty(); }
         mlir::Value fail(uint32_t n, const std::string& what);
         mlir::Location loc(uint32_t n);
         mlir::Type type(TypeId t);  // null if lowering has no type for it yet
-        mlir::Type type_of(uint32_t n) { return type(in.nodeTypes[n]); }
+        mlir::Type type_of(uint32_t n) { return type(node_type(n)); }
+        // The check pass's types; in a copy, the copy's own (check.h's Instance)
+        TypeId node_type(uint32_t n);
+        TypeId var_type(uint32_t entity);
+        const Signature& signature(uint32_t fn, uint32_t c);  // function fn's, or its copy c's
+        uint32_t called_copy(uint32_t call);                  // the copy a call calls, or NoInstance
+        std::string symbol(uint32_t fn, uint32_t c);          // the func.func's name: main, scale, scale<int, int>
         bool lower_types(uint32_t n, const std::vector<TypeId>& from, llvm::SmallVector<mlir::Type>& to);
         mlir::Value initial(uint32_t n, mlir::Type t);  // what a variable holds before anything is assigned
 
@@ -147,6 +160,51 @@ mlir::Type Lowerer::type(TypeId t)
     }
 }
 
+// A copy's body has its own types; the check pass's nodeTypes holds only the last copy checked's
+TypeId Lowerer::node_type(uint32_t n)
+{
+    if (copy == NoInstance) return in.nodeTypes[n];
+    auto it = in.instances[copy].nodeTypes.find(n);
+    return it == in.instances[copy].nodeTypes.end() ? TypeTable::Unknown : it->second;
+}
+
+// A copy's parameters and untyped locals have its types; a typed variable has the one it was declared with
+TypeId Lowerer::var_type(uint32_t entity)
+{
+    if (copy != NoInstance)
+    {
+        auto it = in.instances[copy].varTypes.find(entity);
+        if (it != in.instances[copy].varTypes.end()) return it->second;
+    }
+    return in.entities[entity].type;
+}
+
+const Signature& Lowerer::signature(uint32_t fn, uint32_t c)
+{
+    return c == NoInstance ? in.signatures.at(fn) : in.instances[c].signatures.at(fn);
+}
+
+// The copy a call to a generic function calls, as the check pass chose it: by the call node, in the body being
+// lowered (a call in a copy is in the copy's table: sum_sq<int, int> calls sq<int>, sum_sq<float, float> sq<float>)
+uint32_t Lowerer::called_copy(uint32_t call)
+{
+    const std::unordered_map<uint32_t, uint32_t>& calls = copy == NoInstance ? in.calls : in.instances[copy].calls;
+    auto it = calls.find(call);
+    return it == calls.end() ? NoInstance : it->second;
+}
+
+// A copy's name is the function's with its argument types, as the interpreter's messages write it. It is not a
+// valid identifier, so MLIR prints it quoted: @"scale<int, int>".
+std::string Lowerer::symbol(uint32_t fn, uint32_t c)
+{
+    if (tree.kind(fn) == NodeKind::Ignite) return "main";
+    std::string s(tree.spelling(fn));
+    if (c == NoInstance) return s;
+    const std::vector<TypeId>& args = in.instances[c].args;
+    for (size_t k = 0; k < args.size(); k++) s += (k == 0 ? "<" : ", ") + type_name(in, args[k]);
+    return s + ">";
+}
+
 // A number starts at zero, as the interpreter's do. A tensor has no zero to start from (zeros of what shape?), so
 // it starts as ub.poison: a value of the type that is not any tensor, and that nothing reads.
 mlir::Value Lowerer::initial(uint32_t n, mlir::Type t)
@@ -183,9 +241,15 @@ mlir::OwningOpRef<mlir::ModuleOp> Lowerer::run(std::string& errorOut)
         if (tree.kind(d) == NodeKind::Ignite) function(d, kids[0], {}, Signature{});  // func.func @main()
         else if (tree.kind(d) == NodeKind::FunctionDecl)  // children: ParamList, ReturnTypes if written, Block
         {
-            const Signature& sig = in.signatures.at(d);
-            if (sig.generic) fail(d, "a generic function");  // one copy per call's types: a later slice
-            else function(d, kids.back(), tree.children(kids[0]), sig);
+            if (!in.signatures.at(d).generic) function(d, kids.back(), tree.children(kids[0]), in.signatures.at(d));
+            for (uint32_t c = 0; c < in.instances.size() && ok(); c++)  // a generic one: each copy the check pass
+            {                                                            // made (one no call makes is never lowered)
+                if (in.instances[c].decl != d) continue;
+                copy = c;
+                builder.setInsertionPointToEnd(module->getBody());
+                function(d, kids.back(), tree.children(kids[0]), signature(d, c));
+                copy = NoInstance;
+            }
         }
         else fail(d, "this declaration");
         if (!ok()) break;
@@ -207,8 +271,7 @@ void Lowerer::function(uint32_t d, uint32_t body, const std::vector<uint32_t>& p
     llvm::SmallVector<mlir::Type> ins;
     results.clear();
     if (!lower_types(d, sig.params, ins) || !lower_types(d, sig.returns, results)) return;
-    std::string name = tree.kind(d) == NodeKind::Ignite ? "main" : std::string(tree.spelling(d));
-    auto f = builder.create<mlir::func::FuncOp>(loc(d), name, builder.getFunctionType(ins, results));
+    auto f = builder.create<mlir::func::FuncOp>(loc(d), symbol(d, copy), builder.getFunctionType(ins, results));
     mlir::Block* entry = f.addEntryBlock();
     builder.setInsertionPointToStart(entry);
 
@@ -301,8 +364,8 @@ void Lowerer::statement(uint32_t n)
         case NodeKind::VarDecl:  // int x = 10: x's first value; int x alone starts at zero
         {
             uint32_t var = in.refs[n];
-            mlir::Type t = type(in.entities[var].type);
-            if (!t) { fail(n, "a variable of type " + type_name(in, in.entities[var].type)); return; }
+            mlir::Type t = type(var_type(var));
+            if (!t) { fail(n, "a variable of type " + type_name(in, var_type(var))); return; }
             mlir::Value v = kids.size() == 2 ? convert(n, expr(kids[1]), t) : initial(n, t);
             if (ok()) values[var] = v;
             return;
@@ -313,8 +376,8 @@ void Lowerer::statement(uint32_t n)
             for (size_t k = 0; k + 1 < kids.size() && ok(); k++)
             {
                 uint32_t var = in.refs[kids[k]];
-                mlir::Type t = type(in.entities[var].type);
-                if (!t) { fail(kids[k], "a variable of type " + type_name(in, in.entities[var].type)); return; }
+                mlir::Type t = type(var_type(var));
+                if (!t) { fail(kids[k], "a variable of type " + type_name(in, var_type(var))); return; }
                 values[var] = convert(kids[k], got[k], t);
             }
             return;
@@ -396,7 +459,7 @@ void Lowerer::assign(uint32_t target, mlir::Value value)
     }
     if (tree.kind(target) != NodeKind::Name) { fail(target, "an assignment to a field"); return; }
     uint32_t var = in.refs[target];
-    mlir::Value v = convert(target, value, type(in.entities[var].type));
+    mlir::Value v = convert(target, value, type(var_type(var)));
     if (ok()) values[var] = v;
 }
 
@@ -685,7 +748,7 @@ mlir::Value Lowerer::binary(uint32_t n)
         default:
         {
             mlir::Type t = type_of(n);  // the check pass's: int with int, or the wider of float and double
-            if (!t) return fail(n, "arithmetic on " + type_name(in, in.nodeTypes[n]));
+            if (!t) return fail(n, "arithmetic on " + type_name(in, node_type(n)));
             return arithmetic(n, op, convert(n, left, t), convert(n, right, t), t);
         }
     }
@@ -777,8 +840,9 @@ mlir::Value Lowerer::compare(uint32_t n, TokenType op, mlir::Value l, mlir::Valu
     return builder.create<mlir::arith::CmpIOp>(at, p, convert(n, l, t), convert(n, r, t));
 }
 
-// A call to one of the program's functions: func.call, each argument converted to its parameter's type. A
-// built-in is its nova op (builtin()).
+// A call to one of the program's functions: func.call, each argument converted to its parameter's type. A call to
+// a generic function calls the copy the check pass chose for it, by that copy's name. A built-in is its nova op
+// (builtin()).
 llvm::SmallVector<mlir::Value> Lowerer::call(uint32_t n)
 {
     std::vector<uint32_t> kids = tree.children(n);
@@ -787,19 +851,20 @@ llvm::SmallVector<mlir::Value> Lowerer::call(uint32_t n)
     EntityKind kind = e == NoEntity ? EntityKind::None : in.entities[e].kind;
     if (kind == EntityKind::Builtin)
         return builtin(n, tree.spelling(callee), std::vector<uint32_t>(kids.begin() + 1, kids.end()));
-    if (kind != EntityKind::Function || in.calls.count(n))  // in.calls: a generic function's copy
+    if (kind != EntityKind::Function)
     {
         fail(n, "a call to '" + std::string(tree.spelling(callee)) + "'");
         return {};
     }
 
-    const Signature& sig = in.signatures.at(in.entities[e].decl);
+    uint32_t fn = in.entities[e].decl, c = called_copy(n);
+    const Signature& sig = signature(fn, c);
     llvm::SmallVector<mlir::Type> params, returns;
     if (!lower_types(n, sig.params, params) || !lower_types(n, sig.returns, returns)) return {};
     llvm::SmallVector<mlir::Value> args;
     for (size_t k = 1; k < kids.size(); k++) args.push_back(convert(kids[k], expr(kids[k]), params[k - 1]));
     if (!ok()) return {};
-    auto op = builder.create<mlir::func::CallOp>(loc(n), std::string(tree.spelling(callee)), returns, args);
+    auto op = builder.create<mlir::func::CallOp>(loc(n), symbol(fn, c), returns, args);
     return llvm::SmallVector<mlir::Value>(op.getResults());
 }
 
