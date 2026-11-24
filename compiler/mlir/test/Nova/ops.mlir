@@ -15,3 +15,15 @@ func.func @product(%rows: index, %cols: index) -> !nova.tensor<f64> {
   nova.print %c : !nova.tensor<f64>
   return %c : !nova.tensor<f64>
 }
+
+// get and set name the tensor's type once: the element's type follows from it (TypesMatchWith)
+// CHECK-LABEL: func.func @elements
+func.func @elements(%i: index, %j: index) -> f64 {
+  // CHECK: %[[T:.*]] = nova.ones %{{.*}}, %{{.*}} : !nova.tensor<f64>
+  %t = nova.ones %i, %j : !nova.tensor<f64>
+  // CHECK: %[[X:.*]] = nova.get %[[T]][%{{.*}}, %{{.*}}] : !nova.tensor<f64>
+  %x = nova.get %t[%i, %j] : !nova.tensor<f64>
+  // CHECK: nova.set %[[X]], %[[T]][%{{.*}}, %{{.*}}] : !nova.tensor<f64>
+  nova.set %x, %t[%j, %i] : !nova.tensor<f64>
+  return %x : f64
+}

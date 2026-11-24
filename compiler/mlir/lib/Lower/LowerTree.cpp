@@ -1,7 +1,7 @@
 // Lowering the checked tree to MLIR (LowerTree.h). It covers numbers and bools, variables, arithmetic, comparisons,
 // print, if / elif / else and and / or (as scf.if), while, do-while and for (as scf.while) with break and
-// continue, functions and calls (func), and tensors made by zeros and multiplied by @ (nova). Anything else stops
-// lowering with an error that names it, as lower.cc's unlowered() does.
+// continue, functions and calls (func), and tensors: made, multiplied, and read and written by element (nova).
+// Anything else stops lowering with an error that names it, as lower.cc's unlowered() does.
 //
 // SSA. A Nova variable is assigned many times; an SSA value is defined once. Lowering keeps, for each variable, the
 // SSA value it holds at this point of the program ('values'): a declaration or an assignment makes a new value and
@@ -29,7 +29,8 @@
 // Tensors. A Nova Tensor is a reference to doubles whose shape is known only at run time: !nova.tensor<f64>.
 // zeros(...) is nova.zeros, its sizes cast to index (MLIR's type for sizes and subscripts); a @ b and matmul(a, b)
 // are nova.matmul; print(t) is nova.print. A tensor variable or return slot with no value yet holds ub.poison:
-// there is no tensor to start from, and no path reads it before something is assigned.
+// there is no tensor to start from, and no path reads it before something is assigned. t[i, j] is nova.get and
+// t[i, j] = x nova.set: a write changes the tensor in place, so it is an effect, not a new SSA value for t.
 #include "Nova/LowerTree.h"
 
 #include <cstdlib>
@@ -114,6 +115,8 @@ class Lowerer
         mlir::Value compare(uint32_t n, TokenType op, mlir::Value left, mlir::Value right);
         llvm::SmallVector<mlir::Value> call(uint32_t n);  // the values it gives: none, one, or several
         llvm::SmallVector<mlir::Value> builtin(uint32_t n, llvm::StringRef name, const std::vector<uint32_t>& args);
+        bool subscript(uint32_t n, mlir::Value& t, llvm::SmallVector<mlir::Value>& at);  // t[i, j]: t, and i, j
+        mlir::Value to_index(uint32_t n, mlir::Value v);  // an int as a size or subscript
         mlir::Value convert(uint32_t n, mlir::Value v, mlir::Type to);
         mlir::Value truth(uint32_t n, mlir::Value v);  // v != 0, as an i1
 };
@@ -334,6 +337,17 @@ void Lowerer::statement(uint32_t n)
         {
             static const TokenType ops[] = {PLUS, MINUS, MULT, DIV};
             TokenType op = ops[tree.token(n).kind - PLUSEQ];  // PLUSEQ, MINUSEQ, MULTEQ, DIVEQ, in that order
+            if (tree.kind(kids[0]) == NodeKind::Index)  // t[i, j] += x: get, then set; t and i, j are lowered once
+            {
+                mlir::Value t;
+                llvm::SmallVector<mlir::Value> at;
+                if (!subscript(kids[0], t, at)) return;
+                mlir::Type element = llvm::cast<nova::TensorType>(t.getType()).getElementType();
+                mlir::Value old = builder.create<nova::GetOp>(loc(n), element, t, at);
+                mlir::Value now = arithmetic(n, op, old, convert(n, expr(kids[1]), element), element);
+                if (ok()) builder.create<nova::SetOp>(loc(n), now, t, at);
+                return;
+            }
             mlir::Value old = expr(kids[0]);
             mlir::Value value = expr(kids[1]);
             if (ok()) assign(kids[0], arithmetic(n, op, old, convert(n, value, old.getType()), old.getType()));
@@ -371,7 +385,16 @@ void Lowerer::statement(uint32_t n)
 void Lowerer::assign(uint32_t target, mlir::Value value)
 {
     if (!ok()) return;
-    if (tree.kind(target) != NodeKind::Name) { fail(target, "an assignment to an element or a field"); return; }
+    if (tree.kind(target) == NodeKind::Index)  // t[i, j] = x changes the tensor t names, not which tensor that is
+    {
+        mlir::Value t;
+        llvm::SmallVector<mlir::Value> at;
+        if (!subscript(target, t, at)) return;
+        mlir::Value v = convert(target, value, llvm::cast<nova::TensorType>(t.getType()).getElementType());
+        if (ok()) builder.create<nova::SetOp>(loc(target), v, t, at);
+        return;
+    }
+    if (tree.kind(target) != NodeKind::Name) { fail(target, "an assignment to a field"); return; }
     uint32_t var = in.refs[target];
     mlir::Value v = convert(target, value, type(in.entities[var].type));
     if (ok()) values[var] = v;
@@ -596,6 +619,14 @@ mlir::Value Lowerer::expr(uint32_t n)
         case NodeKind::Paren:        return expr(tree.children(n)[0]);
         case NodeKind::Unary:        return unary(n);
         case NodeKind::Binary:       return binary(n);
+        case NodeKind::Index:        // t[i, j]: one element
+        {
+            mlir::Value t;
+            llvm::SmallVector<mlir::Value> at;
+            if (!subscript(n, t, at)) return nullptr;
+            mlir::Type element = llvm::cast<nova::TensorType>(t.getType()).getElementType();
+            return builder.create<nova::GetOp>(loc(n), element, t, at);
+        }
         case NodeKind::Call:         // as a value: its one result (a call that gives none is a statement)
         {
             llvm::SmallVector<mlir::Value> got = call(n);
@@ -772,8 +803,9 @@ llvm::SmallVector<mlir::Value> Lowerer::call(uint32_t n)
     return llvm::SmallVector<mlir::Value>(op.getResults());
 }
 
-// The built-ins the nova dialect has ops for: print and tensor_print, zeros (tensor_zeros), and matmul. The
-// check pass has checked their arguments' number and types; the rest of the built-ins come with their ops.
+// The built-ins the nova dialect has ops for: print and tensor_print, zeros and ones (tensor_zeros, tensor_ones),
+// matmul, tensor_get and tensor_set. The check pass has checked their arguments' number and types; the rest of the
+// built-ins come with their ops.
 llvm::SmallVector<mlir::Value> Lowerer::builtin(uint32_t n, llvm::StringRef name, const std::vector<uint32_t>& args)
 {
     llvm::SmallVector<mlir::Value> vals;
@@ -784,19 +816,50 @@ llvm::SmallVector<mlir::Value> Lowerer::builtin(uint32_t n, llvm::StringRef name
         builder.create<nova::PrintOp>(loc(n), vals[0]);
         return {};  // print gives nothing
     }
-    if (name == "zeros" || name == "tensor_zeros")  // zeros(rows, cols), or one size per dimension
+    bool zeros = name == "zeros" || name == "tensor_zeros";
+    if (zeros || name == "ones" || name == "tensor_ones")  // zeros(rows, cols), or one size per dimension
     {
         llvm::SmallVector<mlir::Value> sizes;
-        for (size_t k = 0; k < vals.size(); k++)
-        {
-            if (!vals[k].getType().isInteger(32)) { fail(args[k], "a size that is not an int"); return {}; }
-            sizes.push_back(builder.create<mlir::arith::IndexCastOp>(loc(n), builder.getIndexType(), vals[k]));
-        }
-        return {builder.create<nova::ZerosOp>(loc(n), type(TypeTable::Tensor), sizes)};
+        for (size_t k = 0; k < vals.size(); k++) sizes.push_back(to_index(args[k], vals[k]));
+        if (!ok()) return {};
+        mlir::Type t = type(TypeTable::Tensor);
+        if (zeros) return {builder.create<nova::ZerosOp>(loc(n), t, sizes)};
+        return {builder.create<nova::OnesOp>(loc(n), t, sizes)};
     }
     if (name == "matmul") return {builder.create<nova::MatmulOp>(loc(n), vals[0].getType(), vals[0], vals[1])};
+    if (name == "tensor_get" || name == "tensor_set")  // tensor_get(t, i, j); tensor_set(t, i, j, x)
+    {
+        bool set = name == "tensor_set";
+        llvm::SmallVector<mlir::Value> at;
+        for (size_t k = 1; k + set < vals.size(); k++) at.push_back(to_index(args[k], vals[k]));
+        if (!ok()) return {};
+        mlir::Type element = llvm::cast<nova::TensorType>(vals[0].getType()).getElementType();
+        if (!set) return {builder.create<nova::GetOp>(loc(n), element, vals[0], at)};
+        mlir::Value v = convert(args.back(), vals.back(), element);
+        if (ok()) builder.create<nova::SetOp>(loc(n), v, vals[0], at);
+        return {};
+    }
     fail(n, "a call to '" + name.str() + "'");
     return {};
+}
+
+// t[i, j], to read or write: the tensor, then each subscript as an index. Only a tensor's elements so far.
+bool Lowerer::subscript(uint32_t n, mlir::Value& t, llvm::SmallVector<mlir::Value>& at)
+{
+    std::vector<uint32_t> kids = tree.children(n);  // the tensor, then the subscripts
+    t = expr(kids[0]);
+    if (!ok()) return false;
+    if (!llvm::isa<nova::TensorType>(t.getType())) { fail(n, "an element of this type"); return false; }
+    for (size_t k = 1; k < kids.size(); k++) at.push_back(to_index(kids[k], expr(kids[k])));
+    return ok();
+}
+
+// Sizes and subscripts are index, MLIR's type for them (as wide as a pointer, chosen when lowering to LLVM)
+mlir::Value Lowerer::to_index(uint32_t n, mlir::Value v)
+{
+    if (!ok()) return nullptr;
+    if (!v.getType().isInteger(32)) return fail(n, "a size or subscript that is not an int");
+    return builder.create<mlir::arith::IndexCastOp>(loc(n), builder.getIndexType(), v);
 }
 
 // The conversions the check pass allows without a cast: a float to a double, a bool to an int, an int to a float

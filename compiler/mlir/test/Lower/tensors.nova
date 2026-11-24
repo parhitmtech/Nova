@@ -34,7 +34,7 @@ ignite:
     print(mm(a, b))
 
     # d starts as poison and is assigned on both branches, so the if's result is all that is printed. Folded, the
-    # two branches are one (matmul is Pure), and the if and the poison go.
+    # condition n > 2 is known true, so the if is its then branch, and the poison goes.
     # CHECK: ub.poison : !nova.tensor<f64>
     # CHECK: %[[D:.*]] = scf.if %{{.*}} -> (!nova.tensor<f64>)
     # CHECK: nova.matmul %[[A]], %[[B]]

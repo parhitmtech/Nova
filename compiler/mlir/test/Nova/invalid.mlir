@@ -20,3 +20,12 @@ func.func @mixed(%n: index) {
   %c = nova.matmul %a, %b : !nova.tensor<f64>
   return
 }
+
+// -----
+
+// In the generic form, where every type is written, a get whose result is not the tensor's element type
+func.func @element(%t: !nova.tensor<f64>, %i: index) {
+  // expected-error @+1 {{'nova.get' op failed to verify that the result is the tensor's element type}}
+  %x = "nova.get"(%t, %i) : (!nova.tensor<f64>, index) -> f32
+  return
+}
