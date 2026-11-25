@@ -1,0 +1,63 @@
+# RUN: nova-lower %s | FileCheck %s
+#
+# + - * / with tensors. Two tensors are nova.add, sub, mul and div, element by element. A tensor and a number are
+# nova.scale or nova.add_scalar, in the interpreter's forms: t / k is t * (1 / k), t - k is t + -k, k - t is
+# -t + k, and -t is t * -1. The number becomes a double, the tensor's element type.
+
+# CHECK-LABEL: func.func @main()
+ignite:
+    # CHECK: %[[A:.*]] = nova.ones
+    # CHECK: %[[B:.*]] = nova.ones
+    # CHECK: %[[R:.*]] = nova.ones
+    Tensor a = ones(2, 3)
+    Tensor b = ones(2, 3)
+    Tensor row = ones(1, 3)
+
+    # CHECK: nova.add %[[A]], %[[B]] : !nova.tensor<f64>
+    # CHECK: nova.sub %[[A]], %[[R]] : !nova.tensor<f64>
+    # CHECK: nova.mul %[[A]], %[[B]] : !nova.tensor<f64>
+    # CHECK: nova.div %[[A]], %[[B]] : !nova.tensor<f64>
+    print(a + b)
+    print(a - row)
+    print(a * b)
+    print(a / b)
+
+    # The number on either side of *; an int becomes a double
+    # CHECK: %[[K:.*]] = arith.extf %{{.*}} : f32 to f64
+    # CHECK: nova.scale %[[A]], %[[K]] : !nova.tensor<f64>
+    # CHECK: %[[I:.*]] = arith.sitofp %{{.*}} : i32 to f64
+    # CHECK: nova.scale %[[A]], %[[I]] : !nova.tensor<f64>
+    print(2.0 * a)
+    print(a * 3)
+
+    # t / k: one division, then a scale
+    # CHECK: %[[ONE:.*]] = arith.constant 1.000000e+00 : f64
+    # CHECK: %[[INV:.*]] = arith.divf %[[ONE]], %{{.*}} : f64
+    # CHECK: nova.scale %[[A]], %[[INV]] : !nova.tensor<f64>
+    print(a / 4.0)
+
+    # CHECK: nova.add_scalar %[[A]], %{{.*}} : !nova.tensor<f64>
+    # CHECK: %[[NEG:.*]] = arith.negf %{{.*}} : f64
+    # CHECK: nova.add_scalar %[[A]], %[[NEG]] : !nova.tensor<f64>
+    print(a + 1.0)
+    print(a - 1.5)
+
+    # k - t and -t
+    # CHECK: %[[M1:.*]] = arith.constant -1.000000e+00 : f64
+    # CHECK: %[[N:.*]] = nova.scale %[[A]], %[[M1]] : !nova.tensor<f64>
+    # CHECK: nova.add_scalar %[[N]], %{{.*}} : !nova.tensor<f64>
+    # CHECK: nova.scale %[[A]], %{{.*}} : !nova.tensor<f64>
+    print(10.0 - a)
+    print(-a)
+
+    # t += u and t *= k make a new tensor, which a then names; the built-ins are the operators' ops
+    # CHECK: %[[S:.*]] = nova.add %[[A]], %[[B]]
+    # CHECK: %[[T:.*]] = nova.scale %[[S]], %{{.*}}
+    # CHECK: nova.add %[[T]], %[[B]]
+    # CHECK: nova.scale %[[T]], %{{.*}}
+    # CHECK: nova.print %[[T]] : !nova.tensor<f64>
+    a += b
+    a *= 2.0
+    print(tensor_add(a, b))
+    print(tensor_scale(a, 0.5))
+    print(a)

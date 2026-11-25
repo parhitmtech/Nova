@@ -1,6 +1,6 @@
 // Lowering the checked tree to MLIR (LowerTree.h). It covers numbers and bools, variables, arithmetic, comparisons,
 // print, if / elif / else and and / or (as scf.if), while, do-while and for (as scf.while) with break and
-// continue, functions and calls (func), and tensors: made, multiplied, and read and written by element (nova).
+// continue, functions and calls (func), and tensors: made, combined, and read and written by element (nova).
 // Anything else stops lowering with an error that names it, as lower.cc's unlowered() does.
 //
 // SSA. A Nova variable is assigned many times; an SSA value is defined once. Lowering keeps, for each variable, the
@@ -31,6 +31,8 @@
 // are nova.matmul; print(t) is nova.print. A tensor variable or return slot with no value yet holds ub.poison:
 // there is no tensor to start from, and no path reads it before something is assigned. t[i, j] is nova.get and
 // t[i, j] = x nova.set: a write changes the tensor in place, so it is an effect, not a new SSA value for t.
+// + - * / of two tensors are nova.add, sub, mul and div; a tensor and a number are nova.scale or nova.add_scalar,
+// in the forms the interpreter computes (tensor_arith()), so both give the same doubles, rounding and all.
 //
 // Generic functions. A function with an untyped parameter has no one type for it, and a func.func needs one. The
 // check pass has already made a copy of it for each set of argument types a call passes (check.h's Instance), with
@@ -126,6 +128,8 @@ class Lowerer
         mlir::Value logical(uint32_t n);
         mlir::Value arithmetic(uint32_t n, TokenType op, mlir::Value left, mlir::Value right, mlir::Type t);
         mlir::Value compare(uint32_t n, TokenType op, mlir::Value left, mlir::Value right);
+        mlir::Value tensor_arith(uint32_t n, TokenType op, mlir::Value left, mlir::Value right);  // a tensor on a side
+        mlir::Value negate(uint32_t n, mlir::Value t);  // -t, a new tensor
         llvm::SmallVector<mlir::Value> call(uint32_t n);  // the values it gives: none, one, or several
         llvm::SmallVector<mlir::Value> builtin(uint32_t n, llvm::StringRef name, const std::vector<uint32_t>& args);
         bool subscript(uint32_t n, mlir::Value& t, llvm::SmallVector<mlir::Value>& at);  // t[i, j]: t, and i, j
@@ -413,7 +417,10 @@ void Lowerer::statement(uint32_t n)
             }
             mlir::Value old = expr(kids[0]);
             mlir::Value value = expr(kids[1]);
-            if (ok()) assign(kids[0], arithmetic(n, op, old, convert(n, value, old.getType()), old.getType()));
+            if (!ok()) return;
+            if (llvm::isa<nova::TensorType>(old.getType()))  // t += u, t *= k: a new tensor, which t then names
+                assign(kids[0], tensor_arith(n, op, old, value));
+            else assign(kids[0], arithmetic(n, op, old, convert(n, value, old.getType()), old.getType()));
             return;
         }
         case NodeKind::ExprStatement:
@@ -719,7 +726,7 @@ mlir::Value Lowerer::unary(uint32_t n)
 {
     mlir::Value x = expr(tree.children(n)[0]);
     if (!ok()) return nullptr;
-    if (llvm::isa<nova::TensorType>(x.getType())) return fail(n, "this operator on tensors");
+    if (llvm::isa<nova::TensorType>(x.getType()) && tree.token(n).kind != NOT) return negate(n, x);
     if (tree.token(n).kind == NOT)
     {
         mlir::Value one = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getBoolAttr(true));
@@ -739,14 +746,15 @@ mlir::Value Lowerer::binary(uint32_t n)
     mlir::Value right = expr(kids[1]);
     if (!ok()) return nullptr;
     if (op == AT) return builder.create<nova::MatmulOp>(loc(n), left.getType(), left, right);
-    if (llvm::isa<nova::TensorType>(left.getType()) || llvm::isa<nova::TensorType>(right.getType()))
-        return fail(n, "this operator on tensors");  // + - * / on tensors: nova ops of a later slice
+    bool tensors = llvm::isa<nova::TensorType>(left.getType()) || llvm::isa<nova::TensorType>(right.getType());
     switch (op)
     {
         case EQEQ: case NOTEQUAL: case LESS: case GREATER: case LESSEQ: case GREATEREQ:
+            if (tensors) return fail(n, "a comparison of tensors");
             return compare(n, op, left, right);
         default:
         {
+            if (tensors) return tensor_arith(n, op, left, right);
             mlir::Type t = type_of(n);  // the check pass's: int with int, or the wider of float and double
             if (!t) return fail(n, "arithmetic on " + type_name(in, node_type(n)));
             return arithmetic(n, op, convert(n, left, t), convert(n, right, t), t);
@@ -840,6 +848,49 @@ mlir::Value Lowerer::compare(uint32_t n, TokenType op, mlir::Value l, mlir::Valu
     return builder.create<mlir::arith::CmpIOp>(at, p, convert(n, l, t), convert(n, r, t));
 }
 
+// + - * / with a tensor on a side; the check pass has allowed only these: two tensors, t * k and k * t, t / k, and
+// t + k, k + t, t - k and k - t. Two tensors are an element-wise op. With a number, the forms are the interpreter's
+// (lower.cc's tensor_binary): t / k is t * (1 / k), t - k is t + -k, and k - t is -t + k. Dividing each element by
+// k would round differently from multiplying it by 1 / k, and the two lowerings are to give the same doubles.
+mlir::Value Lowerer::tensor_arith(uint32_t n, TokenType op, mlir::Value l, mlir::Value r)
+{
+    if (!ok()) return nullptr;
+    mlir::Location at = loc(n);
+    bool lT = llvm::isa<nova::TensorType>(l.getType()), rT = llvm::isa<nova::TensorType>(r.getType());
+    if (lT && rT)
+    {
+        switch (op)
+        {
+            case PLUS:   return builder.create<nova::AddOp>(at, l.getType(), l, r);
+            case MINUS:  return builder.create<nova::SubOp>(at, l.getType(), l, r);
+            case MULT:   return builder.create<nova::MulOp>(at, l.getType(), l, r);
+            default:     return builder.create<nova::DivOp>(at, l.getType(), l, r);
+        }
+    }
+    mlir::Value t = lT ? l : r;
+    mlir::Type element = llvm::cast<nova::TensorType>(t.getType()).getElementType();
+    mlir::Value k = convert(n, lT ? r : l, element);  // the number, as the tensor's element type
+    if (!ok()) return nullptr;
+    if (op == MULT) return builder.create<nova::ScaleOp>(at, t.getType(), t, k);
+    if (op == DIV)
+    {
+        mlir::Value one = builder.create<mlir::arith::ConstantOp>(at, builder.getFloatAttr(element, 1.0));
+        mlir::Value inverse = builder.create<mlir::arith::DivFOp>(at, one, k);
+        return builder.create<nova::ScaleOp>(at, t.getType(), t, inverse);
+    }
+    if (op == MINUS && lT) k = builder.create<mlir::arith::NegFOp>(at, k);  // t - k: t + -k
+    if (op == MINUS && rT) t = negate(n, t);                                 // k - t: -t + k
+    return builder.create<nova::AddScalarOp>(at, t.getType(), t, k);
+}
+
+// -t is t * -1, a new tensor, as the interpreter computes it
+mlir::Value Lowerer::negate(uint32_t n, mlir::Value t)
+{
+    mlir::Type element = llvm::cast<nova::TensorType>(t.getType()).getElementType();
+    mlir::Value minusOne = builder.create<mlir::arith::ConstantOp>(loc(n), builder.getFloatAttr(element, -1.0));
+    return builder.create<nova::ScaleOp>(loc(n), t.getType(), t, minusOne);
+}
+
 // A call to one of the program's functions: func.call, each argument converted to its parameter's type. A call to
 // a generic function calls the copy the check pass chose for it, by that copy's name. A built-in is its nova op
 // (builtin()).
@@ -869,8 +920,8 @@ llvm::SmallVector<mlir::Value> Lowerer::call(uint32_t n)
 }
 
 // The built-ins the nova dialect has ops for: print and tensor_print, zeros and ones (tensor_zeros, tensor_ones),
-// matmul, tensor_get and tensor_set. The check pass has checked their arguments' number and types; the rest of the
-// built-ins come with their ops.
+// matmul, tensor_add, _sub, _mul, _div and _scale, tensor_get and tensor_set. The check pass has checked their
+// arguments' number and types; the rest of the built-ins come with their ops.
 llvm::SmallVector<mlir::Value> Lowerer::builtin(uint32_t n, llvm::StringRef name, const std::vector<uint32_t>& args)
 {
     llvm::SmallVector<mlir::Value> vals;
@@ -892,6 +943,12 @@ llvm::SmallVector<mlir::Value> Lowerer::builtin(uint32_t n, llvm::StringRef name
         return {builder.create<nova::OnesOp>(loc(n), t, sizes)};
     }
     if (name == "matmul") return {builder.create<nova::MatmulOp>(loc(n), vals[0].getType(), vals[0], vals[1])};
+    if (name == "tensor_add" || name == "tensor_sub" || name == "tensor_mul" || name == "tensor_div" ||
+        name == "tensor_scale")  // the operators' ops: tensor_add(a, b) is a + b, tensor_scale(t, k) is t * k
+    {
+        TokenType op = name == "tensor_add" ? PLUS : name == "tensor_sub" ? MINUS : name == "tensor_div" ? DIV : MULT;
+        return {tensor_arith(n, op, vals[0], vals[1])};
+    }
     if (name == "tensor_get" || name == "tensor_set")  // tensor_get(t, i, j); tensor_set(t, i, j, x)
     {
         bool set = name == "tensor_set";

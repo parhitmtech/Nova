@@ -1,5 +1,5 @@
-// The nova dialect's types and ops. Step C1 has the first of each: the tensor type, and the ops that make and
-// multiply tensors, read and write their elements, and print them.
+// The nova dialect's types and ops. Step C1 has the first of each: the tensor type, and the ops that make tensors,
+// combine them (matmul, element-wise, with a number), read and write their elements, and print them.
 #ifndef NOVA_OPS
 #define NOVA_OPS
 
@@ -81,6 +81,37 @@ def Nova_SetOp : Nova_Op<"set", [TypesMatchWith<"the value is the tensor's eleme
                          Variadic<Index>:$indices);
     let assemblyFormat = "$value `,` $tensor `[` $indices `]` attr-dict `:` qualified(type($tensor))";
 }
+
+// Element-wise: %c = nova.add %a, %b : !nova.tensor<f64>   (Nova's a + b and tensor_add(a, b); sub, mul, div)
+// A new tensor, each element the two operands' elements combined. The operands have the same shape, or (add and
+// sub) one is a 1xN row, which is combined with every row of the other: for add either one, for sub the right one.
+// Shapes are known only at run time, so the runtime checks them, as the interpreter's does.
+class Nova_ElementwiseOp<string mnemonic, string what> : Nova_Op<mnemonic, [AllTypesMatch<["lhs", "rhs", "result"]>]> {
+    let summary = "element-wise " # what # " of two tensors";
+    let arguments = (ins Arg<Nova_TensorType, "", [MemRead]>:$lhs, Arg<Nova_TensorType, "", [MemRead]>:$rhs);
+    let results = (outs Res<Nova_TensorType, "a new tensor", [MemAlloc]>:$result);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` qualified(type($result))";
+}
+
+def Nova_AddOp : Nova_ElementwiseOp<"add", "sum">;
+def Nova_SubOp : Nova_ElementwiseOp<"sub", "difference">;
+def Nova_MulOp : Nova_ElementwiseOp<"mul", "product">;  // the Hadamard product; a @ b is nova.matmul
+def Nova_DivOp : Nova_ElementwiseOp<"div", "quotient">;
+
+// A tensor and one number: %s = nova.scale %t, %k : !nova.tensor<f64>   (Nova's t * k and k * t; t / k is
+// t * (1 / k), and -t is t * -1, as the interpreter computes them). nova.add_scalar adds k to every element (t + k;
+// t - k is t + -k). The number is the tensor's element type, so the assembly writes only the tensor's type.
+class Nova_ScalarOp<string mnemonic, string what>
+    : Nova_Op<mnemonic, [AllTypesMatch<["tensor", "result"]>,
+                         TypesMatchWith<"the number is the tensor's element type", "tensor", "scalar", ElementType>]> {
+    let summary = what;
+    let arguments = (ins Arg<Nova_TensorType, "", [MemRead]>:$tensor, AnyType:$scalar);
+    let results = (outs Res<Nova_TensorType, "a new tensor", [MemAlloc]>:$result);
+    let assemblyFormat = "$tensor `,` $scalar attr-dict `:` qualified(type($tensor))";
+}
+
+def Nova_ScaleOp : Nova_ScalarOp<"scale", "every element times a number">;
+def Nova_AddScalarOp : Nova_ScalarOp<"add_scalar", "every element plus a number">;
 
 // nova.print %t : !nova.tensor<f64>   (Nova's print and tensor_print: writes, so not Pure)
 def Nova_PrintOp : Nova_Op<"print"> {

@@ -27,3 +27,21 @@ func.func @elements(%i: index, %j: index) -> f64 {
   nova.set %x, %t[%j, %i] : !nova.tensor<f64>
   return %x : f64
 }
+
+// Element-wise ops and the ops with a number: one type written, the number's type follows from the tensor's
+// CHECK-LABEL: func.func @arith
+func.func @arith(%a: !nova.tensor<f64>, %b: !nova.tensor<f64>, %k: f64) -> !nova.tensor<f64> {
+  // CHECK: %[[S:.*]] = nova.add %{{.*}}, %{{.*}} : !nova.tensor<f64>
+  %s = nova.add %a, %b : !nova.tensor<f64>
+  // CHECK: %[[D:.*]] = nova.sub %[[S]], %{{.*}} : !nova.tensor<f64>
+  %d = nova.sub %s, %b : !nova.tensor<f64>
+  // CHECK: %[[M:.*]] = nova.mul %[[D]], %{{.*}} : !nova.tensor<f64>
+  %m = nova.mul %d, %a : !nova.tensor<f64>
+  // CHECK: %[[Q:.*]] = nova.div %[[M]], %{{.*}} : !nova.tensor<f64>
+  %q = nova.div %m, %b : !nova.tensor<f64>
+  // CHECK: %[[K:.*]] = nova.scale %[[Q]], %{{.*}} : !nova.tensor<f64>
+  %scaled = nova.scale %q, %k : !nova.tensor<f64>
+  // CHECK: nova.add_scalar %[[K]], %{{.*}} : !nova.tensor<f64>
+  %shifted = nova.add_scalar %scaled, %k : !nova.tensor<f64>
+  return %shifted : !nova.tensor<f64>
+}
