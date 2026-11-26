@@ -353,6 +353,7 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 | [compiler/kernels/triton/IR_WALKTHROUGH.md](compiler/kernels/triton/IR_WALKTHROUGH.md) | Triton's compilation of the matmul, stage by stage |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance numbers, method, and the issues they found |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Nova next to Python/PyTorch, JAX, Mojo, Julia and others |
+| [docs/RELEASING.md](docs/RELEASING.md) | Publishing the VS Code extension to the Marketplace and Open VSX |
 
 ## 📁 Repository layout
 
@@ -362,6 +363,7 @@ server/      Node.js + Express backend: auth, execution, workspace, NovaBot
 frontend/    React + Vite IDE
 examples/    Nova example programs
 docs/        the documents above; docs/assets holds the README's graphics
+editors/     the VS Code extension (editors/vscode/nova)
 deploy/      Docker Compose and deploy script for the EC2 host
 tools/       SOL tunnel scripts, syntax migration scripts, the README graphics generator
 ```
@@ -381,3 +383,8 @@ A language change ships with a golden test in `compiler/tests/` (`name.nova` plu
 
 When benchmark numbers change, update them in `tools/readme/make_assets.py` and run
 `python3 tools/readme/make_assets.py docs/assets` to redraw the charts.
+
+## 📄 License
+
+Nova is licensed under the [Apache License 2.0](LICENSE). To report a security issue, see
+[SECURITY.md](SECURITY.md).
