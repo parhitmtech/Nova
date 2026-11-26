@@ -1,6 +1,12 @@
+# The package holds the bundled extension (dist/), its manifest and its assets; the sources, tests and
+# dependencies stay out (esbuild puts the dependencies into dist/extension.js)
 **/*.vsix
 node_modules/**
+src/**
+test/**
 .vscode/**
-**/*.map
+.vscode-test/**
 **/*.ts
+**/*.map
 tsconfig.json
+.gitignore

@@ -151,6 +151,20 @@ test('syntax errors: every one, in one run, with a fix for an editor', async () 
   assert.deepEqual(diags[0].data.fixes[0].newText, 'not ');
 });
 
+test('quick fixes: the fix a diagnostic carries, as a code action', async () => {
+  const broken = PROGRAM.replace('    print(s)', '    print(not s)\n    int z = 1;\n    print(z)');
+  const d = client.diagnosticsFor(URI);
+  client.notify('textDocument/didChange', { textDocument: { uri: URI }, contentChanges: [{ text: broken }] });
+  const diags = await d;
+  assert.equal(diags[0].code, 'E0108');
+  const r = (await client.request('textDocument/codeAction', { textDocument: { uri: URI }, range: diags[0].range,
+                                                               context: { diagnostics: diags } })).result;
+  assert.equal(r[0].title, "Remove the ';'");
+  assert.equal(r[0].kind, 'quickfix');
+  const edit = r[0].edit.changes[URI][0];
+  assert.deepEqual(edit, { range: { start: { line: 21, character: 13 }, end: { line: 21, character: 14 } }, newText: '' });
+});
+
 test('warnings are faded as unnecessary', async () => {
   const withUnused = PROGRAM.replace('    print(s)', '    int unused = 3\n    print(s)');
   const d = client.diagnosticsFor(URI);

@@ -199,7 +199,7 @@ jobs:
   vscode:
     name: VS Code extension
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: editors/vscode/nova
@@ -213,6 +213,22 @@ jobs:
       - run: npm ci
       # The extension ships its own copy of the license; it must stay the repository's
       - run: cmp LICENSE ../../../LICENSE
+      - name: Type-check
+        run: npm run typecheck
+      - name: The grammar's scopes (test/grammar)
+        run: npm run test:grammar
+      # The integration tests run the extension in VS Code, which starts the language server and runs the compiler
+      - name: Build nova and nova-lsp
+        working-directory: compiler
+        run: make -j4 && make lsp
+      - name: Build the extension
+        run: npm run build
+      - name: In VS Code 1.91, the oldest the extension supports
+        run: xvfb-run -a npm run test:extension
+      - name: In the latest VS Code
+        run: xvfb-run -a npm run test:extension
+        env:
+          VSCODE_VERSION: stable
       # vsce validates the manifest (publisher, icon, engines, links) as the Marketplace will
       - run: npm run package
       - name: Package holds exactly the expected files
@@ -220,10 +236,13 @@ jobs:
           unzip -Z1 nova-*.vsix | sort > files.txt
           cat files.txt
           for f in extension/package.json extension/LICENSE.txt extension/icon.png extension/readme.md \
-                   extension/changelog.md extension/language-configuration.json; do
+                   extension/changelog.md extension/language-configuration.json extension/dist/extension.js \
+                   extension/syntaxes/nova.tmLanguage.json extension/snippets/nova.json; do
             grep -qx "$f" files.txt || { echo "::error::$f is missing from the package"; exit 1; }
           done
-          if grep -q node_modules files.txt; then echo "::error::node_modules leaked into the package"; exit 1; fi
+          if grep -qE 'node_modules|/src/|/test/|\.ts$|\.map$' files.txt; then
+            echo "::error::sources, tests or dependencies leaked into the package"; exit 1
+          fi
 
   e2e:
     name: Frontend e2e (Playwright)

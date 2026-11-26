@@ -1,0 +1,64 @@
+# SYNTAX TEST "source.nova" "the scopes of Nova's tokens"
+
+orbit novatorch.nn
+# <----- keyword.control.import.nova
+#     ^^^^^^^^^^^^ entity.name.namespace.nova
+
+def square(int x) -> int:
+# <--- storage.type.function.nova
+#   ^^^^^^ entity.name.function.nova
+#          ^^^ storage.type.primitive.nova
+#              ^ variable.other.nova
+#                 ^^ keyword.operator.arrow.nova
+#                       ^ punctuation.separator.block.nova
+    return x * x
+#   ^^^^^^ keyword.control.flow.nova
+#            ^ keyword.operator.arithmetic.nova
+
+class Box<T> extends Base:
+# <----- storage.type.class.nova
+#     ^^^ entity.name.type.class.nova
+#            ^^^^^^^ storage.modifier.extends.nova
+#                    ^^^^ entity.name.type.nova
+    Tensor weights
+#   ^^^^^^ storage.type.primitive.nova
+
+    def init(T v):
+        self.weights = zeros(2, 3)
+#       ^^^^ variable.language.self.nova
+#            ^^^^^^^ variable.other.property.nova
+#                      ^^^^^ support.function.builtin.nova
+#                            ^ constant.numeric.integer.nova
+
+ignite:
+# <------ keyword.control.entry.nova
+    vector<int> v = vector<int>()
+#   ^^^^^^ support.type.nova
+    double d = 2.5e-3   # a comment
+#              ^^^^^^ constant.numeric.float.nova
+#                       ^^^^^^^^^ comment.line.number-sign.nova
+    string s = "it's # not a comment"
+#              ^^^^^^^^^^^^^^^^^^^^^^ string.quoted.double.nova
+    bool ok = not (d > 1.0) and true
+#             ^^^ keyword.operator.logical.nova
+#                    ^ keyword.operator.comparison.nova
+#                           ^^^ keyword.operator.logical.nova
+#                               ^^^^ constant.language.nova
+    Point p = Point(1, 2)
+#   ^^^^^ entity.name.type.nova
+#             ^^^^^ entity.name.type.nova
+    print(square(p.x) @ none)
+#   ^^^^^ support.function.builtin.nova
+#         ^^^^^^ entity.name.function.call.nova
+#                     ^ keyword.operator.matrix.nova
+#                       ^^^^ constant.language.nova
+    if (v.size() >= 1):
+#   ^^ keyword.control.flow.nova
+#         ^^^^ entity.name.function.call.nova
+#                ^^ keyword.operator.comparison.nova
+        print(hf.generate(s))
+#             ^^ entity.name.namespace.nova
+    string broken = "no closing quote
+#                   ^^^^^^^^^^^^^^^^^ string.quoted.double.nova
+    int after = 1
+#   ^^^ storage.type.primitive.nova

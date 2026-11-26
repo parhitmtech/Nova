@@ -1,0 +1,18 @@
+def square(int x) -> int:
+    return x * x
+
+class Box:
+    int width
+    int height
+
+    def init(int w, int h):
+        self.width = w
+        self.height = h
+
+    def area() -> int:
+        return self.width * self.height
+
+ignite:
+    int n = 7
+    Box b = Box(2, 3)
+    print(square(n) + b.area())
