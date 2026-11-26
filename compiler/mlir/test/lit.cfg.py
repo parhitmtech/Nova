@@ -19,3 +19,8 @@ config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py"]
 llvm_config.use_default_substitutions()
 llvm_config.with_environment("PATH", config.llvm_tools_dir, append_path=True)
 llvm_config.add_tool_substitutions(["nova-opt", "nova-lower"], [config.nova_tools_dir, config.llvm_tools_dir])
+
+# A test that compiles a program to a binary and runs it: mlir-translate and clang come with LLVM, and
+# %nova_runtime is the runtime library the binary links with
+llvm_config.add_tool_substitutions(["mlir-translate", "clang"], [config.llvm_tools_dir])
+config.substitutions.append(("%nova_runtime", os.path.join(config.nova_lib_dir, "libnova_runtime.a")))

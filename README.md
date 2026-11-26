@@ -323,8 +323,9 @@ broadcasting, forward and backward; GPU matmul kernels in CUDA and Triton, measu
 [design record](docs/DESIGN.md) of the decisions so far.
 
 **Now:** Nova IR as an MLIR dialect in SSA form. Its first slice is in `compiler/mlir/`: `!nova.tensor`,
-`nova.zeros`, `nova.matmul` and `nova.print`, a `nova-opt` driver, and lit/FileCheck tests. From there it lowers
-to native code through LLVM and to GPU code through `linalg`.
+`nova.zeros`, `nova.matmul` and `nova.print`, a `nova-opt` driver, and lit/FileCheck tests. `nova-lower` already
+lowers checked Nova programs into it: control flow as `scf`, functions and calls as `func`, and tensors as nova
+ops. From there it lowers to native code through LLVM and to GPU code through `linalg`.
 
 **Next:** a tile-level kernel language lowered to Triton, then a Triton backend for a simulated AI accelerator.
 The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).

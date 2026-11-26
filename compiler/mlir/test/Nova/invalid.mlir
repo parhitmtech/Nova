@@ -20,3 +20,30 @@ func.func @mixed(%n: index) {
   %c = nova.matmul %a, %b : !nova.tensor<f64>
   return
 }
+
+// -----
+
+// In the generic form, where every type is written, a get whose result is not the tensor's element type
+func.func @element(%t: !nova.tensor<f64>, %i: index) {
+  // expected-error @+1 {{'nova.get' op failed to verify that the result is the tensor's element type}}
+  %x = "nova.get"(%t, %i) : (!nova.tensor<f64>, index) -> f32
+  return
+}
+
+// -----
+
+// Element-wise ops take two tensors of one type
+func.func @mixed(%a: !nova.tensor<f64>, %b: !nova.tensor<f32>) {
+  // expected-error @+1 {{'nova.add' op failed to verify that all of {lhs, rhs, result} have same type}}
+  %c = "nova.add"(%a, %b) : (!nova.tensor<f64>, !nova.tensor<f32>) -> !nova.tensor<f64>
+  return
+}
+
+// -----
+
+// The number a tensor is scaled by is the tensor's element type
+func.func @scale(%t: !nova.tensor<f64>, %k: f32) {
+  // expected-error @+1 {{'nova.scale' op failed to verify that the number is the tensor's element type}}
+  %s = "nova.scale"(%t, %k) : (!nova.tensor<f64>, f32) -> !nova.tensor<f64>
+  return
+}

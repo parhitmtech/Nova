@@ -1,0 +1,53 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# A tensor's elements: t[i, j] and tensor_get are nova.get; t[i, j] = x, t[i, j] += x and tensor_set are nova.set.
+# A write changes the tensor in place, not which tensor a variable names, so no if or loop passes the tensor out.
+
+# CHECK-LABEL: func.func @main()
+# FOLD-LABEL: func.func @main()
+ignite:
+    int n = 3
+    # CHECK: %[[T:.*]] = nova.zeros
+    # FOLD: %[[T:.*]] = nova.zeros %c3, %c3 : !nova.tensor<f64>
+    Tensor t = zeros(n, n)
+
+    # The loop carries i and not t: the writes go to the one tensor t names
+    # CHECK: scf.while (%{{.*}} = %{{.*}}) : (i32) -> i32
+    # CHECK: %[[I:.*]] = arith.index_cast %{{.*}} : i32 to index
+    # CHECK: %[[J:.*]] = arith.index_cast %{{.*}} : i32 to index
+    # CHECK: nova.set %{{.*}}, %[[T]][%[[I]], %[[J]]] : !nova.tensor<f64>
+    # CHECK: scf.yield %{{.*}} : i32
+    for (int i = 0; i < n; i += 1):
+        t[i, i] = 1.0
+
+    # += reads, adds and writes back, with its subscripts lowered once
+    # CHECK: %[[OLD:.*]] = nova.get %[[T]][%[[R:.*]], %[[C:.*]]] : !nova.tensor<f64>
+    # CHECK: %[[NEW:.*]] = arith.addf %[[OLD]], %{{.*}} : f64
+    # CHECK: nova.set %[[NEW]], %[[T]][%[[R]], %[[C]]] : !nova.tensor<f64>
+    t[0, 1] += 2.5
+    # an int value becomes a double element
+    # CHECK: %[[FOUR:.*]] = arith.sitofp %{{.*}} : i32 to f64
+    # CHECK: nova.set %[[FOUR]], %[[T]]
+    tensor_set(t, 2, 0, 4)
+
+    # The read of t[0, 1] after the write is not merged with the one before it
+    # FOLD: nova.get %[[T]][%c0, %c1]
+    # FOLD: nova.set
+    # FOLD: nova.set
+    # FOLD: %[[A:.*]] = nova.get %[[T]][%c0, %c1]
+    # FOLD: %[[B:.*]] = nova.get %[[T]][%c2, %c0]
+    # FOLD: %[[S:.*]] = arith.addf %[[A]], %[[B]] : f64
+    # FOLD: nova.print %[[S]] : f64
+    double s = t[0, 1] + tensor_get(t, 2, 0)
+    print(s)
+
+    # The if has no results: the write is its only effect
+    # CHECK: %[[O:.*]] = nova.ones
+    # CHECK: scf.if %{{.*}} {
+    # CHECK: nova.set %{{.*}}, %[[O]]
+    # CHECK: nova.print %[[O]] : !nova.tensor<f64>
+    Tensor o = ones(2, 2)
+    if (s > 1.0):
+        o[0, 0] = s
+    tensor_print(o)

@@ -1,0 +1,64 @@
+# RUN: nova-lower %s | FileCheck %s
+# RUN: nova-lower %s | nova-opt --canonicalize | FileCheck %s --check-prefix=FOLD
+#
+# Tensors: a Tensor is !nova.tensor<f64>, zeros is nova.zeros (its sizes cast to index), @ and matmul are
+# nova.matmul, and print and tensor_print are nova.print. A tensor passes through calls, if and loops as any value
+# does; one not assigned yet is ub.poison.
+
+# CHECK-LABEL: func.func @mm(%arg0: !nova.tensor<f64>, %arg1: !nova.tensor<f64>) -> !nova.tensor<f64>
+# CHECK: ub.poison : !nova.tensor<f64>
+# CHECK: %[[P:.*]] = nova.matmul %arg0, %arg1 : !nova.tensor<f64>
+# CHECK: return %[[P]] : !nova.tensor<f64>
+# The return slot's poison is never returned, so it folds away
+# FOLD-LABEL: func.func @mm
+# FOLD-NEXT: %[[P:.*]] = nova.matmul %arg0, %arg1
+# FOLD-NEXT: return %[[P]]
+def mm(Tensor a, Tensor b) -> Tensor:
+    return a @ b
+
+# CHECK-LABEL: func.func @main()
+# FOLD-LABEL: func.func @main()
+ignite:
+    int n = 3
+    # CHECK: %[[R:.*]] = arith.index_cast %{{.*}} : i32 to index
+    # CHECK: %[[C:.*]] = arith.index_cast %{{.*}} : i32 to index
+    # CHECK: %[[A:.*]] = nova.zeros %[[R]], %[[C]] : !nova.tensor<f64>
+    # FOLD: %[[FA:.*]] = nova.zeros %c2, %c3 : !nova.tensor<f64>
+    Tensor a = zeros(2, n)
+    # CHECK: %[[B:.*]] = nova.zeros
+    # FOLD: %[[FB:.*]] = nova.zeros %c3, %c4
+    Tensor b = zeros(n, 4)
+    # CHECK: %[[M:.*]] = call @mm(%[[A]], %[[B]]) : (!nova.tensor<f64>, !nova.tensor<f64>) -> !nova.tensor<f64>
+    # CHECK: nova.print %[[M]] : !nova.tensor<f64>
+    # FOLD: call @mm(%[[FA]], %[[FB]])
+    print(mm(a, b))
+
+    # d starts as poison and is assigned on both branches, so the if's result is all that is printed. Folded, the
+    # condition n > 2 is known true, so the if is its then branch, and the poison goes.
+    # CHECK: ub.poison : !nova.tensor<f64>
+    # CHECK: %[[D:.*]] = scf.if %{{.*}} -> (!nova.tensor<f64>)
+    # CHECK: nova.matmul %[[A]], %[[B]]
+    # CHECK: } else {
+    # CHECK: nova.matmul %[[A]], %[[B]]
+    # CHECK: nova.print %[[D]] : !nova.tensor<f64>
+    # FOLD-NOT: scf.if
+    # FOLD-NOT: ub.poison
+    # FOLD: %[[FD:.*]] = nova.matmul %[[FA]], %[[FB]]
+    # FOLD-NEXT: nova.print %[[FD]]
+    Tensor d
+    if (n > 2):
+        d = a @ b
+    else:
+        d = matmul(a, b)
+    print(d)
+
+    # a is reassigned in the loop, so the loop carries it as a block argument next to i
+    # CHECK: %[[W:.*]]:2 = scf.while (%{{.*}} = %{{.*}}, %{{.*}} = %[[A]]) : (i32, !nova.tensor<f64>) -> (i32, !nova.tensor<f64>)
+    # CHECK: ^bb0(%{{.*}}: i32, %[[T:.*]]: !nova.tensor<f64>):
+    # CHECK: %[[Z:.*]] = nova.zeros
+    # CHECK: %[[N:.*]] = nova.matmul %[[T]], %[[Z]] : !nova.tensor<f64>
+    # CHECK: scf.yield %{{.*}}, %[[N]] : i32, !nova.tensor<f64>
+    # CHECK: nova.print %[[W]]#1 : !nova.tensor<f64>
+    for (int i = 0; i < 3; i += 1):
+        a = a @ zeros(n, n)
+    tensor_print(a)
