@@ -1,0 +1,34 @@
+{
+  "name": "nova",
+  "displayName": "Nova Programming Language",
+  "description": "Nova: a compiled, statically typed language with Python's syntax, built for machine learning.",
+  "version": "0.1.0",
+  "preview": true,
+  "publisher": "parhitmathur",
+  "license": "Apache-2.0",
+  "icon": "icon.png",
+  "galleryBanner": { "color": "#0e1226", "theme": "dark" },
+  "homepage": "https://github.com/parhitmtech/Nova#readme",
+  "repository": { "type": "git", "url": "https://github.com/parhitmtech/Nova.git", "directory": "editors/vscode/nova" },
+  "bugs": { "url": "https://github.com/parhitmtech/Nova/issues" },
+  "engines": { "vscode": "^1.90.0" },
+  "categories": ["Programming Languages"],
+  "keywords": ["nova", "compiler", "machine learning", "tensors", "autograd", "mlir", "llvm"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "nova",
+        "aliases": ["Nova", "nova"],
+        "extensions": [".nova"],
+        "configuration": "./language-configuration.json",
+        "icon": { "light": "./icon.png", "dark": "./icon.png" }
+      }
+    ]
+  },
+  "scripts": {
+    "package": "vsce package --no-dependencies"
+  },
+  "devDependencies": {
+    "@vscode/vsce": "4.1.0"
+  }
+}
