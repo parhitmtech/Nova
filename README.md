@@ -357,6 +357,7 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 | [compiler/kernels/triton/IR_WALKTHROUGH.md](compiler/kernels/triton/IR_WALKTHROUGH.md) | Triton's compilation of the matmul, stage by stage |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance numbers, method, and the issues they found |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Nova next to Python/PyTorch, JAX, Mojo, Julia and others |
+| [docs/GRAMMAR.md](docs/GRAMMAR.md) | The complete grammar of Nova, in EBNF: tokens, layout, statements, expressions |
 | [docs/ERRORS.md](docs/ERRORS.md) | Every error and warning, by code, with how to fix it |
 | [docs/RELEASING.md](docs/RELEASING.md) | Publishing the VS Code extension to the Marketplace and Open VSX |
 

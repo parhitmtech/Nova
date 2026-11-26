@@ -1,5 +1,8 @@
 # Nova syntax (target design, draft 3)
 
+> The grammar as the compiler implements it today, complete and in EBNF, is [GRAMMAR.md](GRAMMAR.md). This page
+> is the design that led to it.
+
 Status: draft for review. This is where the syntax is heading. The current parser gets there in
 small steps (see "Migration order" at the end); each step converts every test, example and stdlib
 file, so there is only ever one syntax.
