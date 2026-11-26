@@ -1,0 +1,3 @@
+# A module with an error in it, for the language server tests
+def broken(int w) -> int:
+    return w + "x"

@@ -130,6 +130,29 @@ jobs:
             compiler/fuzz/oom-*
           retention-days: 14
 
+  # nova-lsp, the language server VS Code runs: its protocol tests drive the real binary over stdio, then again
+  # built with ASan and UBSan (a leak or an invalid access fails the run, since the server's exit status is tested)
+  lsp:
+    name: Language server
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: compiler
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Build nova-lsp
+        run: make lsp
+      - name: Protocol tests
+        run: make lsp-test
+      - name: Protocol tests under ASan and UBSan
+        run: |
+          make lsp BUILD=build/asan CXX=clang++ CXXFLAGS="-O1 -g -fno-omit-frame-pointer -fsanitize=address,undefined -fno-sanitize-recover=undefined"
+          node lsp/test/run.js build/asan/nova-lsp
+
   mlir:
     name: MLIR dialect (nova-opt + lit)
     runs-on: ubuntu-24.04

@@ -95,6 +95,7 @@ You need `make`, a C++17 compiler (g++ or clang++) and Node.js 22.12+.
 git clone https://github.com/parhitmtech/Nova.git && cd Nova
 make -C compiler                      # builds compiler/build/nova
 make -C compiler test                 # the golden language tests
+make -C compiler lsp                  # builds compiler/build/nova-lsp, the language server editors run
 
 export NOVA_HOME=$PWD/compiler        # where `orbit` finds the standard library
 compiler/build/nova examples/xor.nova # trains a 2-layer network on XOR
@@ -365,6 +366,7 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ```
 compiler/    the Nova language: C++17 compiler, runtime, stdlib, tests, benchmarks, GPU kernels (kernels/)
+             and the language server (compiler/lsp/)
 server/      Node.js + Express backend: auth, execution, workspace, NovaBot
 frontend/    React + Vite IDE
 examples/    Nova example programs

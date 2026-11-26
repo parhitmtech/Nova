@@ -37,6 +37,10 @@ class SourceManager
         // The physical line that holds loc, without its line break, and the location of its first character
         std::string_view line_text(SourceLoc loc, SourceLoc* lineStart = nullptr) const;
         void clear();  // forgets every buffer (a language server or a fuzzer reuses one SourceManager)
+        // Forgets the buffer that starts at start. Locations are never reused, so one in another buffer stays valid
+        // (a language server drops a document's previous text when it reads the new one).
+        void remove_buffer(SourceLoc start);
+        SourceLoc next_location() const { return next; }  // where the next buffer would start
 
     private:
         struct Directive
