@@ -29,6 +29,18 @@ void SourceManager::clear()
     next = 1;
 }
 
+void SourceManager::remove_buffer(SourceLoc start)
+{
+    for (auto it = buffers.begin(); it != buffers.end(); ++it)
+    {
+        if ((*it)->start == start)
+        {
+            buffers.erase(it);  // the rest stay in order of their starts
+            return;
+        }
+    }
+}
+
 const SourceManager::Buffer* SourceManager::buffer_of(SourceLoc loc) const
 {
     if (loc == 0) return nullptr;

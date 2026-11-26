@@ -224,6 +224,26 @@ library.
 **Why.** A language server runs the front end on every keystroke, on text that is mostly wrong. Error recovery is
 exactly the code that only odd input reaches.
 
+### D5. A language server built on the compiler's own front end
+
+**Decision.** `nova-lsp` is a C++ program in the compiler's build, linked with the same front end (scanner,
+parser, check pass, diagnostics engine). An editor sends it each document whole on every change; it runs the front
+end, publishes the diagnostics, and answers hover, go to definition, the outline, completion and signature help from
+the parse tree and the check pass's result. It speaks JSON-RPC over stdio with a small JSON reader and writer of
+its own, so it needs no library.
+
+**Alternatives.** A server in TypeScript with its own Nova parser (what many language extensions start with); a
+tree-sitter grammar for the editor features; incremental reparsing.
+
+**Why.** One front end means the editor shows exactly the errors the compiler reports, with the same codes and
+ranges, and a language change reaches the editor with no second grammar to update. Sending the whole document is
+the simplest sync there is, and fast enough: a round trip from an edit to its diagnostics takes under a millisecond
+for the example programs, including the standard library they import. While a line is half typed the file does not
+parse, so hover and completion answer from the last version that did (after `p.`, the fields of `p`'s class).
+
+**Cost.** Completion inside a broken file is approximate (positions come from the last version that parsed), and
+scope is approximated by "declared earlier in the same function".
+
 ## Proposed: step C, the `nova` dialect
 
 The plan for Nova IR as an MLIR dialect in SSA form (roadmap step C), for review before it is built.

@@ -1,0 +1,3 @@
+# A module for the language server tests: imported by the documents the tests open
+def area(int w, int h) -> int:
+    return w * h
