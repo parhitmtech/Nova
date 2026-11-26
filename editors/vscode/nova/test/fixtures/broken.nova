@@ -1,0 +1,3 @@
+ignite:
+    int total = 0
+    print(totl)

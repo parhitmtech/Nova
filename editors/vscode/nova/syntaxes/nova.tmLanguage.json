@@ -1,0 +1,131 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Nova",
+  "scopeName": "source.nova",
+  "fileTypes": ["nova"],
+  "patterns": [
+    { "include": "#comment" },
+    { "include": "#string" },
+    { "include": "#orbit" },
+    { "include": "#function-definition" },
+    { "include": "#class-definition" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#builtins" },
+    { "include": "#names" },
+    { "include": "#operators" },
+    { "include": "#punctuation" }
+  ],
+  "repository": {
+    "comment": {
+      "name": "comment.line.number-sign.nova",
+      "match": "#.*$"
+    },
+    "string": {
+      "comment": "No escape sequences: a string ends at its closing quote, or (unterminated) at the end of its line",
+      "name": "string.quoted.double.nova",
+      "begin": "\"",
+      "beginCaptures": { "0": { "name": "punctuation.definition.string.begin.nova" } },
+      "end": "(\")|$",
+      "endCaptures": { "1": { "name": "punctuation.definition.string.end.nova" } }
+    },
+    "orbit": {
+      "match": "^\\s*(orbit)\\s+([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)",
+      "captures": {
+        "1": { "name": "keyword.control.import.nova" },
+        "2": { "name": "entity.name.namespace.nova" }
+      }
+    },
+    "function-definition": {
+      "match": "\\b(def)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.function.nova" },
+        "2": { "name": "entity.name.function.nova" }
+      }
+    },
+    "class-definition": {
+      "match": "\\b(class|struct)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "storage.type.class.nova" },
+        "2": { "name": "entity.name.type.class.nova" }
+      }
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.entry.nova", "match": "\\bignite\\b" },
+        { "name": "keyword.control.flow.nova", "match": "\\b(if|elif|else|while|do|for|switch|case|default|break|continue|return|pass)\\b" },
+        { "name": "keyword.operator.logical.nova", "match": "\\b(and|or|not)\\b" },
+        { "name": "storage.modifier.extends.nova", "match": "\\bextends\\b" },
+        { "name": "keyword.control.import.nova", "match": "\\bimport\\b" },
+        { "name": "constant.language.nova", "match": "\\b(true|false|none)\\b" },
+        { "name": "variable.language.self.nova", "match": "\\bself\\b" }
+      ]
+    },
+    "types": {
+      "patterns": [
+        { "name": "storage.type.primitive.nova", "match": "\\b(int|float|double|bool|string|Tensor)\\b" },
+        { "name": "support.type.nova", "match": "\\b(vector|map)\\b" }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.nova", "match": "\\b\\d+(?:\\.\\d*(?:[eE][+-]?\\d*)?|[eE][+-]?\\d*)" },
+        { "name": "constant.numeric.integer.nova", "match": "\\b\\d+\\b" }
+      ]
+    },
+    "builtins": {
+      "patterns": [
+        {
+          "comment": "The built-in modules, before a '.': hf.generate(...), sol.finetune(...)",
+          "name": "entity.name.namespace.nova",
+          "match": "\\b(hf|sol)\\b(?=\\s*\\.)"
+        },
+        {
+          "comment": "The built-in functions (the check pass's built-ins, builtins.cc)",
+          "name": "support.function.builtin.nova",
+          "match": "\\b(print|input|array|tensor|tensor_zeros|tensor_ones|tensor_randn|tensor_xavier|tensor_get|tensor_set|tensor_rows|tensor_cols|tensor_print|matmul|tensor_add|tensor_sub|tensor_mul|tensor_div|tensor_scale|tensor_sum|tensor_mean|tensor_max|tensor_clip|relu|sigmoid|tanh_t|softmax|relu_grad|sigmoid_grad|mse_loss|mse_grad|bce_grad|cross_entropy_loss|cross_entropy_grad|tensor_sum_rows|rand_int|tensor_get_row|tensor_set_row|tensor_slice_rows|tensor_load_csv|progress_bar|progress_update|progress_done|requires_grad|backward|tensor_grad|zero_grad|grad_step|tensor_live_count|tensor_rank|tensor_dim|tensor_reshape|zeros|ones|randn|xavier|reshape)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "names": {
+      "patterns": [
+        {
+          "comment": "A capitalized name is a class or a struct, by convention: Point p = Point(1, 2)",
+          "name": "entity.name.type.nova",
+          "match": "\\b[A-Z][A-Za-z0-9_]*\\b"
+        },
+        {
+          "comment": "A call: the name before '('",
+          "match": "\\b([a-z_][A-Za-z0-9_]*)\\s*(?=\\()",
+          "captures": { "1": { "name": "entity.name.function.call.nova" } }
+        },
+        {
+          "comment": "A member after '.': a field, or a method when a '(' follows (handled above)",
+          "match": "(?<=\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": { "1": { "name": "variable.other.property.nova" } }
+        },
+        { "name": "variable.other.nova", "match": "\\b[a-z_][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        { "name": "keyword.operator.arrow.nova", "match": "->" },
+        { "name": "keyword.operator.comparison.nova", "match": "==|!=|<>|<=|>=|<|>" },
+        { "name": "keyword.operator.assignment.compound.nova", "match": "\\+=|-=|\\*=|/=" },
+        { "name": "keyword.operator.assignment.nova", "match": "=" },
+        { "name": "keyword.operator.matrix.nova", "match": "@" },
+        { "name": "keyword.operator.arithmetic.nova", "match": "[+\\-*/%]" }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        { "name": "punctuation.separator.block.nova", "match": ":" },
+        { "name": "punctuation.separator.comma.nova", "match": "," },
+        { "name": "punctuation.accessor.nova", "match": "\\." },
+        { "name": "punctuation.section.parens.nova", "match": "[()]" },
+        { "name": "punctuation.section.brackets.nova", "match": "[\\[\\]]" }
+      ]
+    }
+  }
+}

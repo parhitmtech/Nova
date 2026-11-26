@@ -2,7 +2,7 @@
   "name": "nova",
   "displayName": "Nova Programming Language",
   "description": "Nova: a compiled, statically typed language with Python's syntax, built for machine learning.",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "preview": true,
   "publisher": "parhitmathur",
   "license": "Apache-2.0",
@@ -11,9 +11,22 @@
   "homepage": "https://github.com/parhitmtech/Nova#readme",
   "repository": { "type": "git", "url": "https://github.com/parhitmtech/Nova.git", "directory": "editors/vscode/nova" },
   "bugs": { "url": "https://github.com/parhitmtech/Nova/issues" },
-  "engines": { "vscode": "^1.90.0" },
-  "categories": ["Programming Languages"],
-  "keywords": ["nova", "compiler", "machine learning", "tensors", "autograd", "mlir", "llvm"],
+  "engines": { "vscode": "^1.91.0" },
+  "categories": ["Programming Languages", "Linters", "Snippets"],
+  "keywords": ["nova", "compiler", "machine learning", "tensors", "autograd", "mlir", "llvm", "language server"],
+  "main": "./dist/extension.js",
+  "activationEvents": [],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "description": "In an untrusted folder, Nova shows errors and completions but does not run programs, and the folder cannot change which Nova tools are used.",
+      "restrictedConfigurations": ["nova.server.path", "nova.compiler.path", "nova.home"]
+    },
+    "virtualWorkspaces": {
+      "supported": false,
+      "description": "Nova's tools read files from disk."
+    }
+  },
   "contributes": {
     "languages": [
       {
@@ -23,12 +36,134 @@
         "configuration": "./language-configuration.json",
         "icon": { "light": "./icon.png", "dark": "./icon.png" }
       }
+    ],
+    "grammars": [
+      { "language": "nova", "scopeName": "source.nova", "path": "./syntaxes/nova.tmLanguage.json" },
+      {
+        "scopeName": "markdown.nova.codeblock",
+        "path": "./syntaxes/nova.markdown.tmLanguage.json",
+        "injectTo": ["text.html.markdown"],
+        "embeddedLanguages": { "meta.embedded.block.nova": "nova" }
+      }
+    ],
+    "snippets": [{ "language": "nova", "path": "./snippets/nova.json" }],
+    "configurationDefaults": {
+      "[nova]": {
+        "editor.insertSpaces": true,
+        "editor.tabSize": 4,
+        "editor.detectIndentation": false
+      }
+    },
+    "commands": [
+      { "command": "nova.runFile", "title": "Run File", "category": "Nova", "icon": "$(play)" },
+      { "command": "nova.runFileOptimized", "title": "Run File with Optimizations", "category": "Nova" },
+      { "command": "nova.checkFile", "title": "Check File (without Running It)", "category": "Nova" },
+      { "command": "nova.openRepl", "title": "Open REPL", "category": "Nova" },
+      { "command": "nova.restartServer", "title": "Restart Language Server", "category": "Nova" },
+      { "command": "nova.showOutput", "title": "Show Output", "category": "Nova" }
+    ],
+    "menus": {
+      "editor/title/run": [
+        { "command": "nova.runFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "navigation@0" }
+      ],
+      "editor/context": [
+        { "command": "nova.runFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "nova@1" },
+        { "command": "nova.checkFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "nova@2" }
+      ],
+      "commandPalette": [
+        { "command": "nova.runFile", "when": "editorLangId == nova" },
+        { "command": "nova.runFileOptimized", "when": "editorLangId == nova" },
+        { "command": "nova.checkFile", "when": "editorLangId == nova" }
+      ]
+    },
+    "keybindings": [
+      { "command": "nova.runFile", "key": "ctrl+f5", "mac": "cmd+f5", "when": "editorLangId == nova" }
+    ],
+    "configuration": {
+      "title": "Nova",
+      "properties": {
+        "nova.server.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "The language server, `nova-lsp`. Empty: the one this extension ships, else the one on `PATH`. Build it with `make -C compiler lsp`."
+        },
+        "nova.compiler.path": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Nova's compiler and interpreter, `nova`, which **Run File** and the REPL use. Empty: the one this extension ships, else the one on `PATH`."
+        },
+        "nova.home": {
+          "type": "string",
+          "default": "",
+          "scope": "machine-overridable",
+          "markdownDescription": "Where `orbit` finds Nova's standard library (`NOVA_HOME`: the directory that holds `stdlib/`). Empty: the one this extension ships, else the `NOVA_HOME` environment variable."
+        },
+        "nova.warnings.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Show warnings (unused variables, unreachable code) as well as errors."
+        },
+        "nova.trace.server": {
+          "type": "string",
+          "enum": ["off", "messages", "verbose"],
+          "default": "off",
+          "description": "Log the messages between VS Code and the language server, in the Nova output."
+        }
+      }
+    },
+    "walkthroughs": [
+      {
+        "id": "nova.gettingStarted",
+        "title": "Get started with Nova",
+        "description": "Write and run your first Nova program.",
+        "steps": [
+          {
+            "id": "nova.tools",
+            "title": "Point the extension at Nova's tools",
+            "description": "Build Nova's compiler and language server, and tell the extension where they are.\n[Open the Nova settings](command:workbench.action.openSettings?%22nova%22)",
+            "media": { "markdown": "walkthrough/tools.md" }
+          },
+          {
+            "id": "nova.write",
+            "title": "Write a program",
+            "description": "Create a file that ends in .nova. Type `ignite` and pick the snippet for the entry point.\n[New Nova file](command:workbench.action.files.newUntitledFile?%7B%22languageId%22%3A%22nova%22%7D)",
+            "media": { "markdown": "walkthrough/write.md" }
+          },
+          {
+            "id": "nova.run",
+            "title": "Run it",
+            "description": "Press Ctrl+F5, or the run button at the top of the editor. Errors show as you type, each with a link that explains it.",
+            "media": { "markdown": "walkthrough/run.md" },
+            "completionEvents": ["onCommand:nova.runFile"]
+          }
+        ]
+      }
     ]
   },
   "scripts": {
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --sourcemap",
+    "watch": "npm run build -- --watch",
+    "typecheck": "tsc --noEmit",
+    "test:grammar": "vscode-tmgrammar-test -g syntaxes/nova.tmLanguage.json \"test/grammar/*.nova\"",
+    "test:extension": "tsc -p test && node test/out/runTests.js",
+    "test": "npm run test:grammar && npm run test:extension",
+    "vscode:prepublish": "npm run build -- --minify",
     "package": "vsce package --no-dependencies"
   },
+  "dependencies": {
+    "vscode-languageclient": "10.1.2"
+  },
   "devDependencies": {
-    "@vscode/vsce": "4.1.0"
+    "@types/mocha": "10.0.10",
+    "@types/node": "22.20.5",
+    "@types/vscode": "1.91.0",
+    "@vscode/test-electron": "3.1.0",
+    "@vscode/vsce": "4.1.0",
+    "esbuild": "0.28.2",
+    "mocha": "10.8.2",
+    "typescript": "5.9.3",
+    "vscode-tmgrammar-test": "0.1.3"
   }
 }

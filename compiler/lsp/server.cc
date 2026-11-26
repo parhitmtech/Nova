@@ -132,6 +132,7 @@ class Server
         Json document_symbols(const Json& params);
         Json completion(const Json& params);
         Json signature_help(const Json& params);
+        Json code_actions(const Json& params);
 };
 
 bool Server::read_message(string& body)
@@ -262,6 +263,7 @@ void Server::handle(const Json& message)
     if (method == "textDocument/documentSymbol") return respond(id, document_symbols(params));
     if (method == "textDocument/completion") return respond(id, completion(params));
     if (method == "textDocument/signatureHelp") return respond(id, signature_help(params));
+    if (method == "textDocument/codeAction") return respond(id, code_actions(params));
     if (request) respond_error(id, -32601, "method not found: " + method);  // a notification nobody needs is ignored
 }
 
@@ -283,6 +285,7 @@ Json Server::initialize(const Json& params)
     caps.set("definitionProvider", true);
     caps.set("documentSymbolProvider", true);
     caps.set("completionProvider", Json::object().set("triggerCharacters", Json::array().push(".")));
+    caps.set("codeActionProvider", Json::object().set("codeActionKinds", Json::array().push("quickfix")));
     caps.set("signatureHelpProvider",
              Json::object().set("triggerCharacters", Json::array().push("(").push(",")));
     Json result = Json::object();
@@ -513,6 +516,34 @@ Json Server::signature_help(const Json& params)
     Json sig = Json::object().set("label", s.label).set("parameters", ps);
     int active = s.params.empty() ? 0 : min(s.active, (int)s.params.size() - 1);
     return Json::object().set("signatures", Json::array().push(sig)).set("activeSignature", 0).set("activeParameter", active);
+}
+
+// Quick fixes: a diagnostic that carries fixes (data.fixes, as publish() sends them) becomes a code action. The
+// editor sends back the diagnostics under the cursor, so the fixes need no recomputing.
+Json Server::code_actions(const Json& params)
+{
+    Json out = Json::array();
+    const string& uri = params["textDocument"]["uri"].as_string();
+    for (const Json& d : params["context"]["diagnostics"].items())
+    {
+        const Json& fixes = d["data"]["fixes"];
+        if (fixes.items().empty()) continue;
+        const string& code = d["code"].as_string();
+        const Json& first = fixes.items()[0];
+        string title = code == "E0107" ? "Write the comment with '#'"
+                     : code == "E0108" ? "Remove the ';'"
+                     : code == "E0112" ? "Write 'not'"
+                     : first["newText"].as_string().empty() ? "Remove it"
+                     : "Replace with '" + first["newText"].as_string() + "'";
+        Json edits = Json::array();
+        for (const Json& f : fixes.items()) edits.push(Json::object().set("range", f["range"]).set("newText", f["newText"]));
+        Json action = Json::object();
+        action.set("title", title).set("kind", "quickfix").set("isPreferred", true);
+        action.set("diagnostics", Json::array().push(d));
+        action.set("edit", Json::object().set("changes", Json::object().set(uri, edits)));
+        out.push(action);
+    }
+    return out;
 }
 
 int main(int argc, char** argv)
