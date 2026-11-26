@@ -1,5 +1,5 @@
-Error at line 3: 'string(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
-Error at line 4: 'bool(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
-Error at line 5: 'int(...)' converts a number, not string
-Error at line 6: 'int(...)' converts one value
-Error at line 7: 'vector<int>()' takes no arguments
+:3:16: error[E0513]: 'string(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
+:4:14: error[E0513]: 'bool(...)' is not a conversion: only int(x), float(x) and double(x) convert a value
+:5:13: error[E0513]: 'int(...)' converts a number, not string
+:6:13: error[E0513]: 'int(...)' converts one value
+:7:21: error[E0503]: 'vector<int>()' takes no arguments

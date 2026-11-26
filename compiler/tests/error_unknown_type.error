@@ -1,1 +1,1 @@
-Error at line 3: unknown type 'Pointt'
+:3:5: error[E0406]: unknown type 'Pointt'

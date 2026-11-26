@@ -1,1 +1,1 @@
-Error at line 4: return statement outside of a function
+:4:5: error[E0410]: return statement outside of a function

@@ -1,1 +1,1 @@
-Error at line 4: call to undefined function 'dobule'
+:4:11: error[E0406]: call to undefined function 'dobule'

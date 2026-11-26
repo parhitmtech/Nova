@@ -14,6 +14,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include "diagnostics.h"
 #include "parse_tree.h"
 
 using TypeId= uint32_t;
@@ -116,10 +117,15 @@ struct CheckResult
     std::vector<uint32_t> refs;     // by node: the entity a name refers to or a declaration declares; else NoEntity
     std::vector<TypeId> nodeTypes;  // by node: an expression's type (in a copy's body, the last copy checked's)
     std::unordered_map<uint32_t, uint32_t> calls;  // by Call node outside any copy: the generic function copy it calls
-    std::vector<std::string> errors;  // "Error at line N: ...", in the order they were found
 };
 
+// Checks the tree; errors go to the diagnostics engine (the result is complete when diagnostics.has_errors() is
+// false). Run it on a tree without parse errors: a tree with Error nodes in it is not checked.
 CheckResult check_tree(const ParseTree& tree);
+
+// Reports a diagnostic about node n: the caret at its token, and the whole expression underlined when n is one (a
+// definition or a statement underlines only its token, not its body)
+Diagnostic& report_node(const ParseTree& tree, uint32_t n, DiagCode code, const std::string& message);
 
 void check_types(const ParseTree& tree, CheckResult& out);      // the second step (check_types.cc)
 std::string type_name(const CheckResult& checked, TypeId type);  // as messages write it: int, vector<int>, Point

@@ -21,6 +21,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#include "diagnostics.h"
 #include "lexer.h"
 #include "parse_tree.h"
 #include "check.h"
@@ -35,6 +36,8 @@
 #include "tensor_ops.h"
 
 using namespace std;
+
+string program_file = "<stdin>";  // runtime.h: the file being run, for runtime errors
 
 // main
 
@@ -52,6 +55,10 @@ int main(int argc, char* argv[])
     bool flag_repl         = false;
     int  bench_iters       = 10000;
     bool flag_emit_cuda    = false;
+    bool flag_warnings     = false;  // --warnings: report warnings when running too (--check always does)
+    bool flag_json         = false;  // --diagnostics=json: errors and warnings as one JSON document on stderr
+    string colorMode       = "auto"; // --color=auto|always|never
+    int errorLimit         = 20;     // --error-limit=N; 0: no limit
     string cudaOutputFile  = "";
 
     for (int i = 1; i < argc; i++)
@@ -65,6 +72,26 @@ int main(int argc, char* argv[])
         if (arg == "--repl")           { flag_repl           = true; continue; }
         if (arg == "--debug")          { debug_mode = true; debug_step = true; continue; }
         if (arg == "--emit-cuda")      { flag_emit_cuda      = true; continue; }
+        if (arg == "--warnings")       { flag_warnings       = true; continue; }
+        if (arg == "--diagnostics=json" || arg == "--diagnostics=text")
+        {
+            flag_json = arg == "--diagnostics=json";
+            continue;
+        }
+        if (arg == "--color=auto" || arg == "--color=always" || arg == "--color=never")
+        {
+            colorMode = arg.substr(8);
+            continue;
+        }
+        if (arg.compare(0, 14, "--error-limit=") == 0)
+        {
+            string n = arg.substr(14);
+            if (!n.empty() && n.size() <= 6 && n.find_first_not_of("0123456789") == string::npos)
+            {
+                errorLimit = atoi(n.c_str());
+                continue;
+            }
+        }
         if (arg[0] != '-')             { inputFile = arg; continue; }
 
         if (arg == "--iters" && i + 1 < argc)
@@ -73,11 +100,24 @@ int main(int argc, char* argv[])
             continue;
         }
 
-        fprintf(stderr, "Unknown flag: %s\n", arg.c_str());
-        fprintf(stderr, "Usage: %s [file.csl] [--check] [--dump-tree] [--dump-ir] [--optimize] [--benchmark] [--iters N] [--emit-cuda] [--repl] [--debug]\n",
-                argv[0]);
+        fprintf(stderr, "nova: error: unknown option '%s'\n", arg.c_str());
+        fprintf(stderr, "usage: nova [file.nova] [--check] [--warnings] [--diagnostics=text|json] [--color=auto|always|never]\n"
+                        "            [--error-limit=N] [--dump-tree] [--dump-ir] [--optimize] [--benchmark] [--iters N]\n"
+                        "            [--emit-cuda] [--repl] [--debug]\n");
         return 1;
     }
+
+    diagnostics.set_error_limit(errorLimit);
+    diagnostics.set_warnings(flag_check || flag_warnings || flag_json);
+    bool color = colorMode == "always" || (colorMode == "auto" && !flag_json && stderr_supports_color());
+    diagnostics.set_output(flag_json, color);  // a runtime error prints the same way
+    if (!inputFile.empty()) program_file = inputFile;
+    // Prints what the compiler found, when there is something to say. With --diagnostics=json, a run that only
+    // checks (--check) always prints its document, even an empty one, since a tool waits for it; a program that runs
+    // prints one only when there is something in it, and a runtime error prints its own.
+    auto report = [&]() {
+        if (!diagnostics.all().empty() || (flag_json && flag_check)) diagnostics.print(stderr);
+    };
 
     // REPL mode 
     if (flag_repl)
@@ -97,13 +137,16 @@ int main(int argc, char* argv[])
         if (inputFile.size() >= 6 && inputFile.substr(inputFile.size() - 5) == ".nova") validExt = true;
         if (!validExt)
         {
-            fprintf(stderr, "Error: file must have a .csl or .nova extension\n");
+            diagnostics.report_at(DiagCode::FileExtension, inputFile, 0,
+                                  "'" + inputFile + "' is not a Nova file: the file name must end in .nova");
+            report();
             return 1;
         }
         FILE* test = fopen(inputFile.c_str(), "r");
         if (!test)
         {
-            fprintf(stderr, "Error: file '%s' not found\n", inputFile.c_str());
+            diagnostics.report_at(DiagCode::FileNotFound, inputFile, 0, "cannot open '" + inputFile + "': no such file");
+            report();
             return 1;
         }
         fclose(test);
@@ -113,7 +156,7 @@ int main(int argc, char* argv[])
         size_t last_slash = base_dir.find_last_of("/\\");
         base_dir = (last_slash != string::npos) ? base_dir.substr(0, last_slash) : ".";
         set<string> already_imported;
-        processed = preprocess_import(raw_source, base_dir, already_imported);
+        processed = preprocess_import(raw_source, base_dir, already_imported, inputFile);
     }
     else
     {
@@ -122,36 +165,32 @@ int main(int argc, char* argv[])
         raw_stream << cin.rdbuf();
         string raw_source = raw_stream.str();
         set<string> already_imported;
-        processed = preprocess_import(raw_source, ".", already_imported);
+        processed = preprocess_import(raw_source, ".", already_imported, "<stdin>");
     }
 
     // The front end: the scanner's tokens, the parse tree, the check pass, then lowering to the instructions the
     // interpreter runs. --dump-tree prints the tree without checking it, and --check stops after the check pass.
     struct InstructionNode* program = nullptr;
     {
-        vector<LexToken> tokens = scan_program(processed);
+        vector<LexToken> tokens = scan_program(processed, inputFile.empty() ? "<stdin>" : inputFile);
         ParseTree tree = build_parse_tree(tokens);
-        vector<string> errors = tree.errors;
+        // The check pass runs on a file that read without errors: on a tree with holes in it, most of what it
+        // would say (an unknown name, a wrong type) would follow from those errors
         CheckResult checked;
-        if (errors.empty() && !flag_dump_tree)
+        if (!diagnostics.has_errors() && !flag_dump_tree) checked = check_tree(tree);
+        if (!diagnostics.has_errors() && !flag_dump_tree && !flag_check)
         {
-            checked = check_tree(tree);
-            errors = checked.errors;
+            uint32_t n = unlowered(tree, checked);
+            if (n != NoNode) report_node(tree, n, DiagCode::NotLowered, "the compiler cannot lower this yet");
         }
-        for (const string& err : errors) fprintf(stderr, "%s\n", err.c_str());
-        if (!errors.empty()) return 1;
+        report();
+        if (diagnostics.has_errors()) return 1;
         if (flag_dump_tree)
         {
             tree.print(cout);
             return 0;
         }
         if (flag_check) return 0;
-        uint32_t n = unlowered(tree, checked);
-        if (n != NoNode)
-        {
-            fprintf(stderr, "Error at line %d: the compiler cannot lower this yet\n", tree.token(n).line);
-            return 1;
-        }
         program = lower_tree(tree, checked);
     }
 

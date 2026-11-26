@@ -1,1 +1,1 @@
-Error at line 3: comments start with '#', not '//'
+:3:15: error[E0107]: comments start with '#', not '//'

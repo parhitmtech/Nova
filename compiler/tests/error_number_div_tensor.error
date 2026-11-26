@@ -1,1 +1,1 @@
-Error at line 4: '/' is not defined between float and Tensor
+:4:20: error[E0507]: '/' is not defined between float and Tensor

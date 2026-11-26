@@ -83,13 +83,11 @@ void execute_program(struct InstructionNode* program)
 
         if (simple_budget <= 0)
         {
-            fprintf(stderr,
-                "\nError: execution limit reached (~500M instructions). "
-                "Check for an infinite loop.\n"
-                "Tip: ML training programs won't hit this limit — "
-                "each tensor op grants extra budget.\n");
-            exit(1);
+            runtime_failure(DiagCode::ExecutionLimit, pc->line_no, "execution limit reached (about 500 million "
+                          "instructions): check for an infinite loop (tensor work raises the limit, so training is "
+                          "not stopped)");
         }
+        runtime_pc = pc;  // where a runtime error is reported
 
         switch (pc->type)  // main instruction dispatch switch
         {

@@ -1,1 +1,1 @@
-Error at line 4: redeclaration of 'x'
+:4:12: error[E0405]: redeclaration of 'x'

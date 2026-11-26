@@ -1,1 +1,1 @@
-Error at line 6: function 'inc' expects 1 argument(s) but got 2
+:6:11: error[E0503]: function 'inc' expects 1 argument(s) but got 2

@@ -1,0 +1,7 @@
+# A bracket that is never closed ends at the next line that plainly starts a new statement: that line, and the
+# rest of the file, are read as usual (the error on the last line is found too).
+ignite:
+    int x = max(1, (2 + 3)
+    if (x > 2):
+        print(x)
+    int y = 2;

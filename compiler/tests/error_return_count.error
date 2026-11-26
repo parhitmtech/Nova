@@ -1,1 +1,1 @@
-Error at line 4: function 'split' returns 2 value(s) but this return gives 1
+:4:9: error[E0505]: function 'split' returns 2 value(s) but this return gives 1

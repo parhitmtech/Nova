@@ -1,1 +1,1 @@
-Error at line 10: class 'Point' has no field 'y'
+:10:13: error[E0510]: class 'Point' has no field 'y'

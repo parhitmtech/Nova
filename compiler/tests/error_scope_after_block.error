@@ -1,1 +1,1 @@
-Error at line 7: undeclared variable 'x'
+:7:11: error[E0406]: undeclared variable 'x'

@@ -14,6 +14,7 @@
 
 struct CallFrame {
     struct InstructionNode* returnAddress;
+    struct InstructionNode* callSite = nullptr;  // the CALL instruction, for a runtime error's call stack
     int dest_index;
     VarType dest_type = TYPE_UNKNOWN;
     int slot_base;
@@ -27,6 +28,8 @@ struct CallFrame {
 
 // src/runtime/state.cc
 extern std::stack<CallFrame> callStack;
+extern const struct InstructionNode* runtime_pc;  // the instruction running, for runtime errors (errors.cc)
+extern std::string program_file;                    // the file being run, as given (main.cc)
 extern bool suppress_output;
 extern bool debug_mode;
 extern bool debug_step;                 // pause on every instruction (vs. only at breakpoints)
@@ -47,8 +50,9 @@ std::string debug_wait_command();
 // src/frontend/imports.cc
 std::string read_file(const std::string& path);
 std::string get_stdlib_path();
+// Inlines the modules src brings in with 'orbit'; file is src's name, for diagnostics and "#@line" directives
 std::string preprocess_import(const std::string& src, const std::string& base_dir,
-                              std::set<std::string>& already_imported);
+                              std::set<std::string>& already_imported, const std::string& file);
 
 // src/runtime/memoize.cc
 void detect_memoizable_functions();

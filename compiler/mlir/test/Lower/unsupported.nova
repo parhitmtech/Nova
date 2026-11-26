@@ -3,6 +3,6 @@
 # What lowering does not cover yet stops it with the line and what it is, as the interpreter's lowering does.
 
 ignite:
-    # CHECK: Error at line [[@LINE+1]]: nova-lower cannot lower a variable of type string yet
+    # CHECK: unsupported.nova:[[@LINE+1]]:12: error[E0601]: nova-lower cannot lower a variable of type string yet
     string s = "abc"
     print(s)

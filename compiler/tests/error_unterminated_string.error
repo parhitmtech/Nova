@@ -1,2 +1,1 @@
-unterminated string literal
-line 3
+:3:11: error[E0105]: unterminated string literal

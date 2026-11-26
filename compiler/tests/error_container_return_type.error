@@ -1,1 +1,1 @@
-Error at line 4: 'f' returns vector<int>, not vector<double>
+:4:5: error[E0504]: 'f' returns vector<int>, not vector<double>

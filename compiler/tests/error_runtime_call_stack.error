@@ -1,0 +1,4 @@
+:3:14: runtime error[R0001]: integer division by zero
+:7:16: note: called from here
+:8:12: note: called from here 5 times in a row (recursion)
+:12:11: note: called from here

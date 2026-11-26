@@ -140,14 +140,19 @@ class Lowerer
 
 mlir::Value Lowerer::fail(uint32_t n, const std::string& what)
 {
-    if (ok()) error = "Error at line " + std::to_string(tree.token(n).line) + ": nova-lower cannot lower " + what + " yet";
+    if (ok())
+    {
+        error = "nova-lower cannot lower " + what + " yet";
+        report_node(tree, n, DiagCode::NotLowered, error);
+    }
     return nullptr;
 }
 
 // Every op records the Nova line it came from: MLIR's errors cite it, and --mlir-print-debuginfo prints it
 mlir::Location Lowerer::loc(uint32_t n)
 {
-    return mlir::FileLineColLoc::get(builder.getContext(), file, tree.token(n).line, 1);
+    PresumedLoc p = sourceManager.presumed(tree.token(n).loc);
+    return mlir::FileLineColLoc::get(builder.getContext(), file, tree.token(n).line, p.column > 0 ? p.column : 1);
 }
 
 // Nova's types as MLIR's builtin ones (docs/DESIGN.md, C2): int is i32, as the interpreter's int is

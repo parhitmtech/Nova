@@ -78,7 +78,7 @@ router.post("/run-stream", async (req, res) => {
 
     const execTimeout = getExecutionTimeout(source);
     let child;
-    try { child = spawnCompiler([tmpFile], { cwd: tmpDir, timeoutMs: execTimeout, userId: req.user.userId }); }
+    try { child = spawnCompiler([path.basename(tmpFile)], { cwd: tmpDir, timeoutMs: execTimeout, userId: req.user.userId }); }
     catch (err) { cleanupTempFile(tmpFile, tmpDir); return res.status(503).json({ error: err.message }); }
 
     res.setHeader('Content-Type', 'text/event-stream');

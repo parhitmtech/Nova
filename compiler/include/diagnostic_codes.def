@@ -1,0 +1,103 @@
+// Every diagnostic the compiler can report, once: DIAG(enumerator, code, severity, title).
+//
+// A code is stable: once released it keeps its meaning, and a retired code is never reused, so a code can be
+// searched for, written in a bug report, and linked to its entry in docs/ERRORS.md (a test checks that every code
+// here has one). The title is the kind of problem; each report has its own message with the names and types.
+//
+// E01: layout and characters   E02: syntax   E03: files and modules   E04: names and scopes   E05: types
+// E06: not supported yet       W00: warnings        R00: runtime errors (the program stopped while running)
+
+// Layout and characters (the scanner)
+DIAG(TabIndentation,          "E0101", Error, "indentation uses a tab")
+DIAG(UnexpectedIndentation,   "E0102", Error, "unexpected indentation")
+DIAG(InconsistentIndentation, "E0103", Error, "indentation matches no enclosing block")
+DIAG(ExpectedIndentedBlock,   "E0104", Error, "expected an indented block")
+DIAG(UnterminatedString,      "E0105", Error, "unterminated string literal")
+DIAG(UnclosedBracket,         "E0106", Error, "unclosed bracket")
+DIAG(SlashComment,            "E0107", Error, "comment written with '//'")
+DIAG(Semicolon,               "E0108", Error, "';' at the end of a statement")
+DIAG(BraceBlock,              "E0109", Error, "block written with braces")
+DIAG(UnexpectedCharacter,     "E0110", Error, "unexpected character")
+DIAG(TensorDtype,             "E0111", Error, "Tensor with an element type")
+DIAG(BangOperator,            "E0112", Error, "'!' used for 'not'")
+DIAG(UnmatchedBracket,        "E0113", Error, "closing bracket without an opening one")
+
+// Syntax (the parser)
+DIAG(ExpectedToken,           "E0201", Error, "expected a token")
+DIAG(ExpectedExpression,      "E0202", Error, "expected an expression")
+DIAG(ExpectedType,            "E0203", Error, "expected a type")
+DIAG(ExpectedDefinition,      "E0204", Error, "expected a definition or the 'ignite' block")
+DIAG(ConditionParentheses,    "E0205", Error, "condition without parentheses")
+DIAG(ChainedComparison,       "E0206", Error, "chained comparison")
+DIAG(StatementAfterColon,     "E0207", Error, "compound statement after ':' on the same line")
+
+// Files and modules
+DIAG(OrbitName,               "E0301", Error, "'orbit' without a module name")
+DIAG(ModuleNotFound,          "E0302", Error, "module not found")
+DIAG(ImportKeyword,           "E0303", Error, "'import' used for 'orbit'")
+DIAG(FileNotFound,            "E0304", Error, "cannot open the file")
+DIAG(FileExtension,           "E0305", Error, "not a Nova file")
+DIAG(NovaHomeNotSet,          "E0306", Error, "NOVA_HOME is not set")
+
+// Names and scopes
+DIAG(NoEntryPoint,            "E0401", Error, "no entry point")
+DIAG(IgniteNotLast,           "E0402", Error, "'ignite' block before a definition")
+DIAG(DuplicateIgnite,         "E0403", Error, "more than one 'ignite' block")
+DIAG(DuplicateDefinition,     "E0404", Error, "duplicate definition")
+DIAG(Redeclaration,           "E0405", Error, "variable declared twice")
+DIAG(UnknownName,             "E0406", Error, "unknown name")
+DIAG(InvalidParentClass,      "E0407", Error, "invalid parent class")
+DIAG(MissingTypeArguments,    "E0408", Error, "generic type without type arguments")
+DIAG(UnexpectedTypeArguments, "E0409", Error, "type arguments on a type that takes none")
+DIAG(ReturnOutsideFunction,   "E0410", Error, "'return' outside a function")
+DIAG(BreakOutsideLoop,        "E0411", Error, "'break' or 'continue' outside a loop")
+DIAG(SelfOutsideMethod,       "E0412", Error, "'self' outside a method")
+
+// Types
+DIAG(TypeMismatch,            "E0501", Error, "value of the wrong type")
+DIAG(ArgumentType,            "E0502", Error, "argument of the wrong type")
+DIAG(ArgumentCount,           "E0503", Error, "wrong number of arguments")
+DIAG(ReturnType,              "E0504", Error, "return value of the wrong type")
+DIAG(ReturnCount,             "E0505", Error, "wrong number of return values")
+DIAG(MissingReturnType,       "E0506", Error, "return type must be written")
+DIAG(OperandType,             "E0507", Error, "operator on the wrong types")
+DIAG(ComparisonType,          "E0508", Error, "values that cannot be compared")
+DIAG(StringCondition,         "E0509", Error, "string used as a condition")
+DIAG(NoMember,                "E0510", Error, "no such field or member")
+DIAG(NoMethod,                "E0511", Error, "no such method")
+DIAG(NoConstructor,           "E0512", Error, "class without a constructor")
+DIAG(InvalidConversion,       "E0513", Error, "invalid conversion")
+DIAG(TypeArgumentCount,       "E0514", Error, "wrong number of type arguments")
+DIAG(InvalidTypeArgument,     "E0515", Error, "invalid type argument")
+DIAG(InvalidElementType,      "E0516", Error, "invalid element type")
+DIAG(InvalidMapKey,           "E0517", Error, "invalid map key type")
+DIAG(IndexType,               "E0518", Error, "index of the wrong type")
+DIAG(SwitchType,              "E0519", Error, "switch on a value that is not an int")
+DIAG(MultipleValues,          "E0520", Error, "several values from something that does not give them")
+DIAG(KeywordArgument,         "E0521", Error, "invalid keyword argument")
+DIAG(MissingInitializer,      "E0522", Error, "variable needs an initial value")
+DIAG(StructNotAllowed,        "E0523", Error, "struct where it cannot go")
+DIAG(InvalidField,            "E0524", Error, "invalid field")
+DIAG(OverrideMismatch,        "E0525", Error, "method does not match the one it overrides")
+DIAG(InvalidAssignment,       "E0526", Error, "invalid assignment")
+DIAG(ContainerMethod,         "E0527", Error, "invalid use of a container method")
+
+// Not supported yet
+DIAG(NotLowered,              "E0601", Error, "not supported by this compiler yet")
+
+// Runtime errors: reported by the interpreter when a running program cannot go on
+DIAG(DivisionByZero,          "R0001", Error, "integer division by zero")
+DIAG(IndexOutOfRange,         "R0002", Error, "index out of range")
+DIAG(ShapeMismatch,           "R0003", Error, "tensors of incompatible shapes")
+DIAG(InvalidDimension,        "R0004", Error, "invalid size or dimension")
+DIAG(EmptyContainer,          "R0005", Error, "empty container")
+DIAG(MissingKey,              "R0006", Error, "key not in the map")
+DIAG(NoneObject,              "R0007", Error, "object is none")
+DIAG(UseAfterFree,            "R0008", Error, "value used before it was set or after it was freed")
+DIAG(MissingMethod,           "R0009", Error, "object's class has no such method")
+DIAG(ExecutionLimit,          "R0010", Error, "execution limit reached")
+DIAG(FileReadFailed,          "R0011", Error, "file could not be read")
+
+// Warnings
+DIAG(UnusedVariable,          "W0001", Warning, "unused variable")
+DIAG(UnreachableCode,         "W0002", Warning, "unreachable code")

@@ -381,7 +381,18 @@ namespace
             bool container(uint32_t n) const { return kind_of(n) == TypeKind::Vector || kind_of(n) == TypeKind::Map; }
             TypeId var_type_id(uint32_t entity) const { return variable_type(in, entity, instance); }
             VarType var_type_of(uint32_t entity) const { return var_type(in.types[var_type_id(entity)].kind); }
-            int line(uint32_t n) const { return tree.token(n).line; }
+            // A node's line; the node is remembered, so the instructions made for that line point at its token
+            // (a runtime error shows the exact expression)
+            int line(uint32_t n) const
+            {
+                const LexToken& t = tree.token(n);
+                lastLoc = t.loc;
+                lastLength = t.length;
+                lastLine = t.line;
+                return t.line;
+            }
+            mutable uint32_t lastLoc = 0, lastLength = 0;
+            mutable int lastLine = 0;
             string text(uint32_t n) const { return string(tree.spelling(n)); }
 
             // Instructions and slots
@@ -515,6 +526,11 @@ namespace
         InstructionNode* node = new InstructionNode();
         node->type = NOOP;
         node->line_no = line;
+        if (line == lastLine)
+        {
+            node->loc = lastLoc;
+            node->loc_length = lastLength;
+        }
         return node;
     }
 

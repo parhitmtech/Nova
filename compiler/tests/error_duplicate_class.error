@@ -1,0 +1,4 @@
+:6:7: error[E0404]: duplicate class definition 'Point'
+:3:7: note: first defined here
+:15:8: error[E0404]: duplicate struct definition 'Pair'
+:12:8: note: first defined here

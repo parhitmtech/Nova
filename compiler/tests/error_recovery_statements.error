@@ -1,0 +1,5 @@
+:4:16: error[E0202]: expected an expression, got the end of the line
+:6:13: error[E0106]: '(' was never closed
+:8:13: error[E0201]: expected ',' or ')' in the call's arguments, got 'b'
+:10:13: error[E0202]: expected an expression, got '*'
+4 errors.

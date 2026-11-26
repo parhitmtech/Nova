@@ -15,8 +15,8 @@ struct CheckResult;  // check.h
 
 namespace nova
 {
-// The program as a module, or null with the first thing lowering does not cover yet in 'error'
-// ("Error at line N: ..."). 'file' names the source in the ops' locations.
+// The program as a module, or null when lowering met something it does not cover yet: that is reported to the
+// diagnostics engine (E0601), and its message is in 'error' too. 'file' names the source in the ops' locations.
 mlir::OwningOpRef<mlir::ModuleOp> lower_to_mlir(mlir::MLIRContext& context, const ParseTree& tree,
                                                 const CheckResult& checked, const std::string& file,
                                                 std::string& error);

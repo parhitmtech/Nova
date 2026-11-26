@@ -74,11 +74,10 @@ int alloc_tensor_like(int src)
     return alloc_tensor_nd(shape);
 }
 
-// Runtime shape errors stop the program with the line number, like the freed-handle errors do.
+// Tensors whose shapes do not fit stop the program (R0003)
 [[noreturn]] void tensor_shape_error(int line, const std::string& msg)
 {
-    fprintf(stderr, "Runtime error at line %d: %s\n", line, msg.c_str());
-    exit(1);
+    runtime_failure(DiagCode::ShapeMismatch, line, msg);
 }
 
 // Flat offset of an N-D index, with rank and bounds checks.
@@ -86,7 +85,7 @@ size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int
 {
     if (n != T.ndim())
     {
-        tensor_shape_error(line, std::string(op) + ": a rank-" + std::to_string(T.ndim()) +
+        runtime_failure(DiagCode::IndexOutOfRange, line, std::string(op) + ": a rank-" + std::to_string(T.ndim()) +
                            " tensor needs " + std::to_string(T.ndim()) + " indices, got " + std::to_string(n));
     }
     size_t off = 0;
@@ -94,7 +93,7 @@ size_t tensor_offset(const Tensor& T, const int* idx, int n, const char* op, int
     {
         if (idx[k] < 0 || idx[k] >= T.shape[k])
         {
-            tensor_shape_error(line, std::string(op) + ": index " + std::to_string(idx[k]) +
+            runtime_failure(DiagCode::IndexOutOfRange, line, std::string(op) + ": index " + std::to_string(idx[k]) +
                                " out of range for dimension " + std::to_string(k) +
                                " (size " + std::to_string(T.shape[k]) + ")");
         }
@@ -213,18 +212,18 @@ void require_elementwise(int a, int b, const char* op, int line, bool rowBroadca
 int ten_reshape(int a, std::vector<int> shape, int line)
 {
     if (shape.empty() || (int)shape.size() > TENSOR_MAX_RANK)
-        tensor_shape_error(line, "tensor_reshape needs 1 to " + std::to_string(TENSOR_MAX_RANK) + " dimensions");
+        runtime_failure(DiagCode::InvalidDimension, line, "tensor_reshape needs 1 to " + std::to_string(TENSOR_MAX_RANK) + " dimensions");
     long long known = 1;
     int inferred = -1;
     for (int i = 0; i < (int)shape.size(); i++)
     {
         if (shape[i] == -1)
         {
-            if (inferred >= 0) tensor_shape_error(line, "tensor_reshape: only one dimension can be -1");
+            if (inferred >= 0) runtime_failure(DiagCode::InvalidDimension, line, "tensor_reshape: only one dimension can be -1");
             inferred = i;
         }
         else if (shape[i] <= 0)
-            tensor_shape_error(line, "tensor_reshape: dimensions must be positive (or -1), got " +
+            runtime_failure(DiagCode::InvalidDimension, line, "tensor_reshape: dimensions must be positive (or -1), got " +
                                std::to_string(shape[i]));
         else
             known *= shape[i];
@@ -233,7 +232,7 @@ int ten_reshape(int a, std::vector<int> shape, int line)
     if (inferred >= 0)
     {
         if (count % known != 0)
-            tensor_shape_error(line, "tensor_reshape: cannot infer the -1 dimension for " + std::to_string(count) + " elements");
+            runtime_failure(DiagCode::InvalidDimension, line, "tensor_reshape: cannot infer the -1 dimension for " + std::to_string(count) + " elements");
         shape[inferred] = (int)(count / known);
         known = count;
     }

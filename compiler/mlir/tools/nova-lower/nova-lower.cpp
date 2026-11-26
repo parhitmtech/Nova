@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "check.h"
+#include "diagnostics.h"
 #include "lexer.h"
 
 #include "Nova/LowerTree.h"
@@ -25,27 +26,26 @@ int main(int argc, char** argv)
         llvm::errs() << "usage: nova-lower file.nova\n";
         return 1;
     }
-    std::ifstream file(argv[1]);
+    std::ifstream file(argv[1], std::ios::binary);
     if (!file)
     {
-        llvm::errs() << "Error: cannot open '" << argv[1] << "'\n";
+        diagnostics.report_at(DiagCode::FileNotFound, argv[1], 0, std::string("cannot open '") + argv[1] + "'");
+        diagnostics.print_text(stderr, stderr_supports_color());
         return 1;
     }
     std::stringstream source;
     source << file.rdbuf();
 
     // The front end, as the interpreter's driver runs it (main.cc), without imports for now
-    std::vector<LexToken> tokens = scan_program(source.str());
+    std::vector<LexToken> tokens = scan_program(source.str(), argv[1]);
     ParseTree tree = build_parse_tree(tokens);
-    std::vector<std::string> errors = tree.errors;
     CheckResult checked;
-    if (errors.empty())
+    if (!diagnostics.has_errors()) checked = check_tree(tree);
+    if (diagnostics.has_errors())
     {
-        checked = check_tree(tree);
-        errors = checked.errors;
+        diagnostics.print_text(stderr, stderr_supports_color());
+        return 1;
     }
-    for (const std::string& e : errors) llvm::errs() << e << "\n";
-    if (!errors.empty()) return 1;
 
     // The dialects lowering writes: their ops can be made only once they are loaded
     mlir::MLIRContext context;
@@ -56,7 +56,7 @@ int main(int argc, char** argv)
     mlir::OwningOpRef<mlir::ModuleOp> module = nova::lower_to_mlir(context, tree, checked, argv[1], error);
     if (!module)
     {
-        llvm::errs() << error << "\n";
+        diagnostics.print_text(stderr, stderr_supports_color());
         return 1;
     }
     // A last check on lowering itself: every op's own verifier, and SSA's rule that a value is defined before it

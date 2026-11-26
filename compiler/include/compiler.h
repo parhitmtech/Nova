@@ -1,6 +1,7 @@
 #ifndef _COMPILER_H_
 #define _COMPILER_H_
 
+#include <cstdint>
 #include <string>
 #include <vector>
 #include <map>
@@ -186,6 +187,8 @@ struct InstructionNode
 {
     InstructionType type;
     int line_no;
+    uint32_t loc = 0;         // the source location (a SourceLoc) of the expression it runs, when lowering knows it
+    uint32_t loc_length = 0;  // and the length of its token, for the underline under a runtime error
     union
     {
         struct

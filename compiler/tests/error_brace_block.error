@@ -1,1 +1,1 @@
-Error at line 3: blocks are written with ':' and an indented body, not braces
+:3:16: error[E0109]: blocks are written with ':' and an indented body, not braces

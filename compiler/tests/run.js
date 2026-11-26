@@ -9,6 +9,7 @@
 //   foo.expected      — expected stdout, one value per line
 //   foo.input         — (optional) stdin inputs, one value per line
 //   foo.error         — instead of .expected: the program must fail, and stderr must contain each line
+//   foo.warnings      — instead of .expected: the program must succeed, and stderr must contain each line
 //   foo.args          — (optional) compiler flags for this test, e.g. --dump-tree
 //
 
@@ -84,7 +85,26 @@ function normalise(s) {
   }).join("\n");
 }
 
+// ── the error codes and their documentation ───────────────────────────────────
+
+// Every code in include/diagnostic_codes.def has an entry in docs/ERRORS.md, and every entry there is a code: a code
+// the compiler prints can always be looked up.
+function checkErrorDocs() {
+  const defPath  = path.join(COMPILER_ROOT, "include", "diagnostic_codes.def");
+  const docsPath = path.resolve(COMPILER_ROOT, "..", "docs", "ERRORS.md");
+  if (!fs.existsSync(docsPath)) return [];  // the compiler built on its own, outside the repository
+  const codes = [...fs.readFileSync(defPath, "utf8").matchAll(/^DIAG\(\w+,\s*"([EW]\d{4})"/gm)].map(m => m[1]);
+  const documented = [...fs.readFileSync(docsPath, "utf8").matchAll(/^### ([EW]\d{4}):/gm)].map(m => m[1]);
+  const problems = [];
+  for (const c of codes) if (!documented.includes(c)) problems.push(`${c} has no entry in docs/ERRORS.md`);
+  for (const c of documented) if (!codes.includes(c)) problems.push(`docs/ERRORS.md documents ${c}, which is not a code`);
+  for (const c of new Set(codes)) if (codes.filter(x => x === c).length > 1) problems.push(`${c} is used twice`);
+  return problems;
+}
+
 // ── collect tests ─────────────────────────────────────────────────────────────
+
+const docProblems = checkErrorDocs();
 
 const novaFiles = fs.readdirSync(TESTS_DIR)
   .filter(f => f.endsWith(".nova") && (!filter || f.includes(filter)))
@@ -137,6 +157,26 @@ let passed = 0, failed = 0, skipped = 0;
       continue;
     }
 
+    // Warnings test: the program must succeed (exit 0) and stderr must contain every line of .warnings.
+    const warnPath = path.join(TESTS_DIR, base + ".warnings");
+    if (fs.existsSync(warnPath)) {
+      const wanted = fs.readFileSync(warnPath, "utf8").split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+      const inputs = fs.existsSync(inpPath) ? fs.readFileSync(inpPath, "utf8") : "";
+      const result = await runCompiler(fs.readFileSync(srcPath, "utf8"), inputs, args);
+      const missing = result.reason === "TIMEOUT" ? ["(timed out)"]
+        : result.code !== 0 ? [`(exited with status ${result.code}: ${(result.stderr || "").trim()})`]
+        : wanted.filter(w => !(result.stderr || "").includes(w));
+      if (missing.length === 0) {
+        console.log(`  ${GREEN}PASS${RESET}  ${base}  (expected warnings)`);
+        passed++;
+      } else {
+        console.log(`  ${RED}FAIL${RESET}  ${base}`);
+        for (const m of missing) console.log(`        ${RED}→ stderr lacks: ${m}${RESET}`);
+        failed++;
+      }
+      continue;
+    }
+
     if (!fs.existsSync(expPath)) {
       console.log(`  ${YELLOW}SKIP${RESET}  ${base}  (no .expected or .error file)`);
       skipped++;
@@ -178,6 +218,11 @@ let passed = 0, failed = 0, skipped = 0;
       }
       failed++;
     }
+  }
+
+  for (const p of docProblems) {
+    console.log(`  ${RED}FAIL${RESET}  error codes: ${p}`);
+    failed++;
   }
 
   console.log(`\n${BOLD}Results:${RESET}  ${GREEN}${passed} passed${RESET}  ${failed > 0 ? RED : ""}${failed} failed${RESET}  ${skipped > 0 ? YELLOW : ""}${skipped} skipped${RESET}\n`);

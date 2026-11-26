@@ -1,0 +1,6 @@
+:3:14: error[E0108]: Nova does not use ';' to end statements: start a new line instead
+:4:5: error[E0107]: comments start with '#', not '//'
+:5:9: error[E0112]: Nova writes 'not', not '!'
+:7:14: error[E0202]: expected an expression, got '@'
+:9:13: error[E0110]: unexpected character '`'
+5 errors.

@@ -1,1 +1,1 @@
-Error at line 4: 'break' is only allowed inside a loop
+:4:17: error[E0411]: 'break' is only allowed inside a loop

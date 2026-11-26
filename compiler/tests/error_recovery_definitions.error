@@ -1,0 +1,5 @@
+:2:8: error[E0106]: '(' was never closed
+:7:11: error[E0201]: expected the end of the line after the field, got 'z'
+:9:18: error[E0203]: expected a type, got ':'
+:13:14: error[E0110]: unexpected character '$'
+4 errors.

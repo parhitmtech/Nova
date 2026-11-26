@@ -21,6 +21,7 @@
 #ifndef _WIN32
 #include <unistd.h>
 #endif
+#include "diagnostics.h"
 #include "lexer.h"
 #include "compiler.h"
 #include "autograd.h"
@@ -35,11 +36,8 @@ using namespace std;
 
 string read_file(const string& path) 
 {
-    ifstream f(path);
-    if (!f.is_open()) {
-        cerr << "Error: cannot open file '" << path << "'\n";
-        return "";
-    }
+    ifstream f(path, ios::binary);
+    if (!f.is_open()) return "";  // the caller reports it: it knows the line that asked for the file
     ostringstream ss;
     ss << f.rdbuf();
     string content = ss.str();
@@ -56,12 +54,7 @@ string read_file(const string& path)
 string get_stdlib_path()
 {
     const char* nova_home = getenv("NOVA_HOME");
-    if (!nova_home)
-    {
-        cerr << "Error: NOVA_HOME environment variable is not set.\n";
-        cerr << "       Set it to your Nova install directory (e.g. export NOVA_HOME=/usr/local/nova)\n";
-        return "";
-    }
+    if (!nova_home || !*nova_home) return "";  // the caller reports it
     string path = string(nova_home);
     // normalize: strip trailing slash if present
     if (!path.empty() && (path.back() == '/' || path.back() == '\\'))
@@ -111,14 +104,21 @@ static bool file_exists(const string& path)
     return f.good();
 }
 
-// Errors in orbit lines stop compilation with the line, like the lexer's layout errors.
-[[noreturn]] static void module_error(int line, const string& msg)
+// A file name in a "#@line" directive: in quotes, and without a quote or line break of its own
+static string quoted(const string& path)
 {
-    fprintf(stderr, "Error at line %d: %s\n", line, msg.c_str());
-    exit(1);
+    string s = "\"";
+    for (char c : path) if (c != '"' && c != '\n' && c != '\r') s += c;
+    return s + "\"";
 }
 
-string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported)
+// An error in an 'orbit' line: the line is dropped and preprocessing goes on, so every bad line is reported
+static void module_error(DiagCode code, const string& file, int line, const string& msg)
+{
+    diagnostics.report_at(code, file, line, msg);
+}
+
+string preprocess_import(const string& src, const string& base_dir, set<string>& already_imported, const string& file)
 {
     string result;
     istringstream stream(src);
@@ -143,32 +143,51 @@ string preprocess_import(const string& src, const string& base_dir, set<string>&
             if (nameEnd != string::npos) name = name.substr(0, nameEnd);
             if (name.empty())
             {
-                module_error(lineNo, "'orbit' needs a module name, e.g. orbit novatorch.nn");
+                module_error(DiagCode::OrbitName, file, lineNo, "'orbit' needs a module name, e.g. orbit novatorch.nn");
+                result += "\n";
+                continue;
             }
             if (name == "hf" || name == "sol") { result += "\n"; continue; }
 
             string localName = name;
             replace(localName.begin(), localName.end(), '.', '/');
             string localPath = base_dir + "/" + localName + ".nova";
-            string stdlibPath = get_stdlib_path() + "/" + name + ".nova";
+            string stdlib = get_stdlib_path();
+            string stdlibPath = stdlib + "/" + name + ".nova";
             string full_path = file_exists(localPath) ? localPath : stdlibPath;
             if (!file_exists(full_path))
             {
-                module_error(lineNo, "cannot find module '" + name + "' (looked for " + localPath + 
-                                     " and " + stdlibPath + ")");
+                if (stdlib.empty())
+                {
+                    module_error(DiagCode::NovaHomeNotSet, file, lineNo, "cannot find module '" + name +
+                                 "' (looked for " + localPath + "); NOVA_HOME, the Nova installation that holds the "
+                                 "standard library, is not set");
+                }
+                else
+                {
+                    module_error(DiagCode::ModuleNotFound, file, lineNo, "cannot find module '" + name +
+                                 "' (looked for " + localPath + " and " + stdlibPath + ")");
+                }
+                result += "\n";
+                continue;
             }
 
             if (already_imported.count(full_path)) { result += "\n"; continue; } // module is loaded once
             already_imported.insert(full_path);
 
             string module_dir = full_path.substr(0, full_path.find_last_of("/\\"));
-            string inlined = preprocess_import(strip_ignite_blocks(read_file(full_path)), module_dir, already_imported);
-            result += "#@line 1\n" + inlined + "#@line " + to_string(lineNo + 1) + "\n";
+            string inlined = preprocess_import(strip_ignite_blocks(read_file(full_path)), module_dir, already_imported,
+                                               full_path);
+            result += "#@line 1 " + quoted(full_path) + "\n" + inlined + "#@line " + to_string(lineNo + 1) + " " +
+                      quoted(file) + "\n";
             continue;
         }
         if (trimmed.compare(0, 7, "import ") == 0)
         {
-            module_error(lineNo, "use 'orbit NAME' to bring in a module (e.g. orbit novatorch.nn), not import");
+            module_error(DiagCode::ImportKeyword, file, lineNo,
+                         "use 'orbit NAME' to bring in a module (e.g. orbit novatorch.nn), not import");
+            result += "\n";
+            continue;
         }
 
         // not an import line - keep it as it is

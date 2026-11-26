@@ -1,0 +1,8 @@
+# --diagnostics=json: the errors and warnings as one JSON document, in source order, with codes and exact ranges
+def square(int x) -> int:
+    return x * x
+
+ignite:
+    print(square("four"))
+    int y = 1
+    int y = 2

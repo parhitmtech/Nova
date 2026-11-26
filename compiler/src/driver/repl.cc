@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 #include "check.h"
+#include "diagnostics.h"
 #include "lexer.h"
 #include "lower.h"
 #include "parse_tree.h"
@@ -27,39 +28,40 @@ namespace
         return n;
     }
 
-    // "Error at line N: ..." with N counted from the entry's first line (first: the program's line it starts on)
-    string from_entry(const string& error, int first)
+    // The program with a "#@line" directive before line first, where the entry starts: diagnostics then number
+    // the entry's lines from 1, as the person typed them
+    string numbered_from_entry(const string& source, int first)
     {
-        const string at = "Error at line ";
-        size_t colon = error.find(':');
-        if (error.compare(0, at.size(), at) != 0 || colon == string::npos) return error;
-        int line = atoi(error.c_str() + at.size());
-        if (line < first) return error;
-        return at + to_string(line - first + 1) + error.substr(colon);
+        size_t at = 0;
+        for (int line = 1; line < first && at != string::npos; line++)
+        {
+            at = source.find('\n', at);
+            if (at != string::npos) at++;
+        }
+        if (at == string::npos) return source;
+        return source.substr(0, at) + "#@line 1 \"<repl>\"\n" + source.substr(at);
     }
 
     // Compiles and runs one program. On an error (printed) nothing runs and the session is as it was.
     bool run(const string& source, int first, vector<ReplVariable>* session)
     {
+        diagnostics.clear();
         set<string> imported;
-        string processed = preprocess_import(source, ".", imported);
-        vector<LexToken> tokens = scan_program(processed);
+        string processed = preprocess_import(numbered_from_entry(source, first), ".", imported, "<repl>");
+        vector<LexToken> tokens = scan_program(processed, "<repl>");
         ParseTree tree = build_parse_tree(tokens);
-        vector<string> errors = tree.errors;
         CheckResult checked;
-        if (errors.empty())
-        {
-            checked = check_tree(tree);
-            errors = checked.errors;
-        }
-        if (errors.empty())
+        if (!diagnostics.has_errors()) checked = check_tree(tree);
+        if (!diagnostics.has_errors())
         {
             uint32_t n = unlowered(tree, checked);
-            if (n != NoNode) errors.push_back("Error at line " + to_string(tree.token(n).line) +
-                                              ": the compiler cannot lower this yet");
+            if (n != NoNode) report_node(tree, n, DiagCode::NotLowered, "the compiler cannot lower this yet");
         }
-        for (const string& e : errors) fprintf(stderr, "%s\n", from_entry(e, first).c_str());
-        if (!errors.empty()) return false;
+        if (diagnostics.has_errors())
+        {
+            diagnostics.print_text(stderr, stderr_supports_color());
+            return false;
+        }
         InstructionNode* program = lower_tree(tree, checked, session);
         input_replay_index = -1;  // live stdin
         execute_program(program);
@@ -69,6 +71,7 @@ namespace
 
 void run_repl()
 {
+    diagnostics.set_warnings(false);
     printf("\n");
     printf("  NovaComp v2.0 REPL\n");
     printf("  Type statements one at a time.\n");

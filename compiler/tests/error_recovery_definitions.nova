@@ -1,0 +1,16 @@
+# Errors in several definitions: each definition that does not parse is skipped, and the next one is read.
+def add(int a, int b -> int:
+    return a + b
+
+struct Point:
+    int x
+    int y z
+
+class Box extends:
+    int v
+
+def ok(int a) -> int:
+    return a $ 2
+
+ignite:
+    print(ok(1))

@@ -1,1 +1,1 @@
-Error at line 6: comparisons cannot be chained
+:6:15: error[E0206]: comparisons cannot be chained

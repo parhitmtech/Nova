@@ -1,0 +1,6 @@
+# --error-limit=2: two errors are reported, then the compiler says it stopped.
+ignite:
+    print(a)
+    print(b)
+    print(c)
+    print(d)

@@ -1,0 +1,9 @@
+# Every lexical error in the file is reported, in one run.
+ignite:
+    int x = 1;
+    // a comment in another language's style
+    if (!false):
+        print(x)
+    print(x @@ 2)
+    print("tab\there")
+    print(x ` 2)

@@ -1,1 +1,1 @@
-Error at line 9: argument 1 of 'Box<int>' constructor expects int but got string
+:9:18: error[E0502]: argument 1 of 'Box<int>' constructor expects int but got string

@@ -123,8 +123,7 @@ InstructionNode* exec_assign(InstructionNode* pc)
                     // Both would otherwise kill the process with SIGFPE and no message.
                     if (op2 == 0)
                     {
-                        fprintf(stderr, "Runtime error at line %d: integer division by zero\n", pc->line_no);
-                        exit(1);
+                        runtime_failure(DiagCode::DivisionByZero, pc->line_no, "integer division by zero");
                     }
                     result = (op1 == INT_MIN && op2 == -1) ? INT_MIN : op1 / op2;  // wraps, like the hardware would
                     break;
@@ -254,8 +253,8 @@ InstructionNode* exec_array_read(InstructionNode* pc)
             int idx  = mem[pc->array_inst.index_slot];
             if (idx < 0 || idx >= size)
             {
-                printf("Runtime error at line %d: array index %d out of bounds (size %d)\n", pc->array_inst.line_no, idx, size);
-                exit(1);
+                runtime_failure(DiagCode::IndexOutOfRange, pc->array_inst.line_no, "array index " + std::to_string(idx) +
+                              " out of range (size " + std::to_string(size) + ")");
             }
             mem[pc->array_inst.target_index] = mem[base + idx];
             pc = pc->next;
@@ -276,9 +275,8 @@ InstructionNode* exec_array_write(InstructionNode* pc)
             int idx  = mem[pc->array_inst.index_slot];
             if (idx < 0 || idx >= size)
             {
-                printf("Runtime error at line %d: array index %d out of bounds (size %d)\n",
-                       pc->array_inst.line_no, idx, pc->array_inst.array_size);
-                exit(1);
+                runtime_failure(DiagCode::IndexOutOfRange, pc->array_inst.line_no, "array index " + std::to_string(idx) +
+                              " out of range (size " + std::to_string(size) + ")");
             }
             mem[base + idx] = mem[pc->array_inst.target_index];
             pc = pc->next;
@@ -293,8 +291,8 @@ InstructionNode* exec_alloc(InstructionNode* pc)
             int size = mem[pc->alloc_inst.size_slot];
             if (size <= 0)
             {
-                printf("Runtime error: array size must > 0, got %d\n", size);
-                exit(1);
+                runtime_failure(DiagCode::InvalidDimension, pc->line_no, "an array's size must be more than 0, got " +
+                              std::to_string(size));
             }
             // size new slots in one block: an array is base..base+size-1 (alloc_slot could reuse a freed slot instead)
             int base = next_available;

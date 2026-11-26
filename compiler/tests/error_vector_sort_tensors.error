@@ -1,1 +1,1 @@
-Error at line 4: 't.sort()' needs comparable elements, but 't' holds Tensor
+:4:5: error[E0527]: 't.sort()' needs comparable elements, but 't' holds Tensor

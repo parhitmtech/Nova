@@ -113,9 +113,9 @@ namespace {
                 if (context.instance != NoInstance) out.instances[context.instance].nodeTypes[n] = t;
                 return t;
             }
-            void error(uint32_t n, const string& message)
+            void error(uint32_t n, DiagCode code, const string& message)
             {
-                out.errors.push_back("Error at line " + to_string(tree.token(n).line) + ": " + message);
+                report_node(tree, n, code, message);
             }
             bool is_reference(TypeId t) const 
             {
@@ -210,6 +210,7 @@ namespace {
     // A class's parent class, or NoEntity
     uint32_t Typer::parent(uint32_t classEntity) const
     {
+        if (classEntity >= out.entities.size() || out.entities[classEntity].decl == NoNode) return NoEntity;
         for (uint32_t m : tree.children(out.entities[classEntity].decl))
         {
             if (tree.kind(m) == NodeKind::Extends) return out.refs[tree.children(m)[0]];
@@ -292,7 +293,11 @@ namespace {
     {
         for (uint32_t n : tree.children(tree.root()))
         {
-            switch (tree.kind(n))
+            // a second definition of a name has no entity (its error is reported): there is nothing to type
+            NodeKind k = tree.kind(n);
+            bool definition = k == NodeKind::FunctionDecl || k == NodeKind::StructDecl || k == NodeKind::ClassDecl;
+            if (definition && out.refs[n] == NoEntity) continue;
+            switch (k)
             {
                 case NodeKind::FunctionDecl:
                 {
@@ -361,7 +366,7 @@ namespace {
             {
                 if (report)
                 {
-                    error(n, "class '" + text(n) + "' takes " + to_string(want) + " type argument(s) but got " +
+                    error(n, DiagCode::TypeArgumentCount, "class '" + text(n) + "' takes " + to_string(want) + " type argument(s) but got " +
                              to_string(args.size()));
                 }
                 return Unknown;
@@ -377,7 +382,7 @@ namespace {
                 bool isGenericClass = ae != NoEntity && out.entities[ae].kind == EntityKind::Class && is_generic_class(ae);
                 if ((nested || isStruct || isGenericClass) && report)
                 {
-                    error(n, "'" + spell(a) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, "
+                    error(n, DiagCode::InvalidTypeArgument, "'" + spell(a) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, "
                              "a class, vector<T> or map<K, V>");
                 }
                 types.push_back(written(a, report));
@@ -394,7 +399,7 @@ namespace {
         {
             if (report)
             {
-                error(n, string(isMap ? "map takes 2 type arguments (map<K, V>)" : "vector takes 1 type argument (vector<T>)") + 
+                error(n, DiagCode::TypeArgumentCount, string(isMap ? "map takes 2 type arguments (map<K, V>)" : "vector takes 1 type argument (vector<T>)") + 
                          " but got " + to_string(args.size()));
             }
             return Unknown;
@@ -406,7 +411,7 @@ namespace {
         {
             if (report)
             {
-                error(n, "'" + spell(args.back()) + "' cannot be an element type: use int, float, double, bool, string, "
+                error(n, DiagCode::InvalidElementType, "'" + spell(args.back()) + "' cannot be an element type: use int, float, double, bool, string, "
                          "Tensor or a class");
             }
             return Unknown;
@@ -415,7 +420,7 @@ namespace {
         TypeId key = written(args[0], report);
         if (key != Int && key != String && key != Unknown)
         {
-            if (report) error(n, "a map key must be int or string, not '" + spell(args[0]) + "'");
+            if (report) error(n, DiagCode::InvalidMapKey, "a map key must be int or string, not '" + spell(args[0]) + "'");
             return Unknown;
         }
         return out.types.intern({TypeKind::Map, key, elem});
@@ -522,7 +527,7 @@ namespace {
             if (!type.empty()) written(type[0], true);
             if (kind(sig.params[i]) == TypeKind::Struct)
             {
-                error(p, "'" + label + "' cannot take a struct ('" + text(p) + "' is a " + name(sig.params[i]) +
+                error(p, DiagCode::StructNotAllowed, "'" + label + "' cannot take a struct ('" + text(p) + "' is a " + name(sig.params[i]) +
                          "): pass its fields, or make " + name(sig.params[i]) + " a class");
             }
             set_variable(p, sig.params[i++]);
@@ -534,7 +539,7 @@ namespace {
                 TypeId r = written(t, true);
                 if (kind(r) == TypeKind::Struct)
                 {
-                    error(t, "'" + label + "' cannot return a struct (" + name(r) + "): return its fields, or make " +
+                    error(t, DiagCode::StructNotAllowed, "'" + label + "' cannot return a struct (" + name(r) + "): return its fields, or make " +
                              name(r) + " a class");
                 }
             }
@@ -603,7 +608,7 @@ namespace {
             Signature mine = signature(m, true), theirs = signature(over, true);  // copies: the table may grow
             if (mine.params != theirs.params || mine.returns != theirs.returns)
             {
-                error(m, "'" + text(classDecl) + "." + text(m) + "' must take and return the same types as '" +
+                error(m, DiagCode::OverrideMismatch, "'" + text(classDecl) + "." + text(m) + "' must take and return the same types as '" +
                          string(names.text(out.entities[owner].name)) + "." + text(m) + "', which it overrides");
             }
         }
@@ -618,20 +623,20 @@ namespace {
         if (kids.size() > 1)
         {
             expr(kids[1]);
-            if (!isClass) error(n, "a struct's field cannot be an array ('" + text(n) + "'): use a class");
+            if (!isClass) error(n, DiagCode::InvalidField, "a struct's field cannot be an array ('" + text(n) + "'): use a class");
             else if (t != Int || tree.kind(kids[1]) != NodeKind::IntLiteral)
             {
-                error(n, "an array field is written int " + text(n) + "[N], with N a number");
+                error(n, DiagCode::InvalidField, "an array field is written int " + text(n) + "[N], with N a number");
             }
         }
         else if (!isClass && (kind(t) == TypeKind::Class || is_container(t)))
         {
-            error(n, "a struct's field cannot be an object or a container ('" + text(n) + "' is " + a_name(t) +
+            error(n, DiagCode::InvalidField, "a struct's field cannot be an object or a container ('" + text(n) + "' is " + a_name(t) +
                      "): use a class");
         }
         else if (isClass && kind(t) == TypeKind::Struct)
         {
-            error(n, "a class's field cannot be a struct ('" + text(n) + "' is a " + name(t) + "): make " + name(t) +
+            error(n, DiagCode::InvalidField, "a class's field cannot be a struct ('" + text(n) + "' is a " + name(t) + "): make " + name(t) +
                      " a class");
         }
     }
@@ -662,7 +667,7 @@ namespace {
                 if (kids.size() > 1) check_assign(n, expr(kids[1]), declared);
                 else if (declared == String)
                 {
-                    error(n, "string '" + text(n) + "' needs an initial value, e.g. string " + text(n) + " = \"\"");
+                    error(n, DiagCode::MissingInitializer, "string '" + text(n) + "' needs an initial value, e.g. string " + text(n) + " = \"\"");
                 }
                 set_variable(n, declared);
                 return;
@@ -684,19 +689,19 @@ namespace {
                 if (named && e == NoEntity) return;  // reported with the names
                 if (e == NoEntity || out.entities[e].kind != EntityKind::Function)
                 {
-                    error(value, "only a function call gives several values, and '" + path(value) + "' is not one");
+                    error(value, DiagCode::MultipleValues, "only a function call gives several values, and '" + path(value) + "' is not one");
                     return;
                 }
                 const Signature& sig = out.signatures[out.entities[e].decl];
                 string f = text(callee);
                 if (sig.generic)
                 {
-                    error(callee, "'" + f + "' has untyped parameters, so it cannot return several values: give its "
+                    error(callee, DiagCode::MultipleValues, "'" + f + "' has untyped parameters, so it cannot return several values: give its "
                                   "parameters types");
                 }  
                 else if (sig.returns.size() != vars.size())
                 {
-                    error(callee, "function '" + f + "' returns " + to_string(sig.returns.size()) + " value(s) but " + 
+                    error(callee, DiagCode::MultipleValues, "function '" + f + "' returns " + to_string(sig.returns.size()) + " value(s) but " + 
                                   to_string(vars.size()) + " variables given");
                 }
                 else
@@ -705,7 +710,7 @@ namespace {
                     {
                         if (sig.returns[i] != Unknown && vars[i] != Unknown && sig.returns[i] != vars[i])
                         {
-                            error(callee, "return value " + to_string(i + 1) + " of '" + f + "': expected " + 
+                            error(callee, DiagCode::MultipleValues, "return value " + to_string(i + 1) + " of '" + f + "': expected " + 
                                           name(sig.returns[i]) + " but got " + name(vars[i]));
                         }
                     }
@@ -768,11 +773,11 @@ namespace {
             case NodeKind::Switch:  // on an int, with int case values
             {
                 TypeId value = expr(kids[0]);
-                if (value != Int && value != Unknown) error(kids[0], "switch takes an int, not " + a_name(value));
+                if (value != Int && value != Unknown) error(kids[0], DiagCode::SwitchType, "switch takes an int, not " + a_name(value));
                 for (size_t i = 1; i < kids.size(); i++)
                 {
                     vector<uint32_t> part = tree.children(kids[i]);  // Case: value, Block; Default: Block
-                    if (part.size() == 2 && expr(part[0]) != Int) error(part[0], "a case value must be an int");
+                    if (part.size() == 2 && expr(part[0]) != Int) error(part[0], DiagCode::SwitchType, "a case value must be an int");
                     check_block(part.back());
                 }
                 return;
@@ -801,7 +806,7 @@ namespace {
         {
             if (kind(types[i]) == TypeKind::Struct)
             {
-                error(n, "'" + f + "' cannot return a struct (" + name(types[i]) + "): return its fields, or make " +
+                error(n, DiagCode::StructNotAllowed, "'" + f + "' cannot return a struct (" + name(types[i]) + "): return its fields, or make " +
                          name(types[i]) + " a class");
                 return;
             }
@@ -811,18 +816,18 @@ namespace {
         {
             if (types.size() > 1)
             {
-                error(n, "function '" + f + "' returns several values: write their types after '->'");
+                error(n, DiagCode::MissingReturnType, "function '" + f + "' returns several values: write their types after '->'");
             }
             else if (context.selfCalled && (types[0] == Float || types[0] == Double || types[0] == Tensor || types[0] == String))
             {
-                error(n, "function '" + f + "' calls itself before its first return, so its return type must be written: "
+                error(n, DiagCode::MissingReturnType, "function '" + f + "' calls itself before its first return, so its return type must be written: "
                          "add '-> " + name(types[0]) + "'");
             }
             sig.returns = {types[0]};
         }
         if (types.size() != sig.returns.size())
         {
-            error(n, "function '" + f + "' returns " + to_string(sig.returns.size()) + " value(s) but this return gives " + 
+            error(n, DiagCode::ReturnCount, "function '" + f + "' returns " + to_string(sig.returns.size()) + " value(s) but this return gives " + 
                      to_string(types.size()));
             return;
         }
@@ -832,11 +837,11 @@ namespace {
             if (fits(got, want)) continue;
             if ((kind(want) == TypeKind::Class && kind(got) == TypeKind::Class) || (is_container(want) && kind(got) == kind(want)))
             {
-                error(n, "'" + f + "' returns " + name(want) + ", not " + name(got));  // another class, or element type
+                error(n, DiagCode::ReturnType, "'" + f + "' returns " + name(want) + ", not " + name(got));  // another class, or element type
             }
             else
             {
-                error(n, "'" + f + "' returns " + name(got) + " but is declared '-> " + name(want) + "'");
+                error(n, DiagCode::ReturnType, "'" + f + "' returns " + name(got) + " but is declared '-> " + name(want) + "'");
             }
         }
     }
@@ -849,22 +854,22 @@ namespace {
         if (fits(value, declared)) return;
         if (kind(declared) == TypeKind::Class && !is_object(value))
         {
-            error(n, "a " + name(declared) + " is created with " + name(declared) + "(...), which runs its init");
+            error(n, DiagCode::TypeMismatch, "a " + name(declared) + " is created with " + name(declared) + "(...), which runs its init");
         }
         else if (kind(declared) == TypeKind::Class || is_container(declared))
         {
-            error(n, "'" + text(n) + "' is a " + name(declared) + ", not " + a_name(value));
+            error(n, DiagCode::TypeMismatch, "'" + text(n) + "' is a " + name(declared) + ", not " + a_name(value));
         }
         else
         {
-            error(n, "cannot assign " + name(value) + " to " + name(declared) + " variable '" + text(n) + "'");
+            error(n, DiagCode::TypeMismatch, "cannot assign " + name(value) + " to " + name(declared) + " variable '" + text(n) + "'");
         }
     }
 
     // Any number (or tensor, or object) can be a condition, as in C; a string cannot.
     void Typer::condition(uint32_t n)
     {
-        if (expr(n) == String) error(n, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
+        if (expr(n) == String) error(n, DiagCode::StringCondition, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
     }
 
     // A value stored into a variable (the first known value fixes an implicitly declared variable's type, and an
@@ -923,13 +928,13 @@ namespace {
         uint32_t f = find_field(out.types[object].a, field);
         if (f == NoNode)
         {
-            error(target, owner + " has no field '" + field + "'");
+            error(target, DiagCode::NoMember, owner + " has no field '" + field + "'");
             return;
         }
         TypeId want = typed(target, field_type(f, binding(object, f)));
         if (want == Array)
         {
-            error(target, "'" + field + "' is an array field: assign its elements, " + field + "[i] = x");
+            error(target, DiagCode::InvalidAssignment, "'" + field + "' is an array field: assign its elements, " + field + "[i] = x");
         }
         else if (fits(value, want))
         {
@@ -937,12 +942,12 @@ namespace {
         }
         else if (is_object(want) || is_object(value) || (is_container(want) && is_container(value)))
         {
-            error(target, "'" + path(target) + "' is " + (is_container(want) ? "a " : "") + a_name(want) + ", not " +
+            error(target, DiagCode::TypeMismatch, "'" + path(target) + "' is " + (is_container(want) ? "a " : "") + a_name(want) + ", not " +
                           a_name(value));
         }
         else
         {
-            error(target, "cannot assign " + name(value) + " to " + name(want) + " field '" + field + "' of " + owner);
+            error(target, DiagCode::TypeMismatch, "cannot assign " + name(value) + " to " + name(want) + " field '" + field + "' of " + owner);
         }
     }
 
@@ -979,7 +984,7 @@ namespace {
             case NodeKind::Member:      return typed(n, member(n));
             case NodeKind::KeywordArg:
             {
-                error(n, "a keyword argument (" + text(n) + "=...) is allowed only in an hf.* or sol.* call");
+                error(n, DiagCode::KeywordArgument, "a keyword argument (" + text(n) + "=...) is allowed only in an hf.* or sol.* call");
                 return expr(tree.children(n)[0]);
             }
             default:                    return Unknown;
@@ -991,11 +996,11 @@ namespace {
         TypeId t = expr(tree.children(n)[0]);
         if (tree.token(n).kind == NOT)
         {
-            if (t == String) error(n, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
+            if (t == String) error(n, DiagCode::StringCondition, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
             return Bool;
         }
         if (t == Unknown || t == Int || t == Float || t == Double || t == Tensor) return t;  // -x
-        error(n, "unary '-' needs a number, got " + name(t));
+        error(n, DiagCode::OperandType, "unary '-' needs a number, got " + name(t));
         return Unknown;
     }
 
@@ -1009,22 +1014,22 @@ namespace {
             case AND:
             case OR:
             {
-                if (lt == String || rt == String) error(n, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
+                if (lt == String || rt == String) error(n, DiagCode::StringCondition, "a string is not a condition; compare it instead, e.g. (s == \"yes\")");
                 return Bool;
             }
             case EQEQ: case NOTEQUAL: case LESS: case GREATER: case LESSEQ: case GREATEREQ:
             {
                 if (kind(lt) == TypeKind::Struct || kind(rt) == TypeKind::Struct)
                 {
-                    error(n, "structs cannot be compared: compare their fields");
+                    error(n, DiagCode::ComparisonType, "structs cannot be compared: compare their fields");
                     return Bool;
                 }
                 if (is_container(lt) || is_container(rt))  // v == w: the same container or not
                 {
-                    if (op != EQEQ && op != NOTEQUAL) error(n, "containers are compared with == and != only");
+                    if (op != EQEQ && op != NOTEQUAL) error(n, DiagCode::ComparisonType, "containers are compared with == and != only");
                     else if (lt != rt && lt != Unknown && rt != Unknown)
                     {
-                        error(n, "cannot compare " + name(lt) + " with " + name(rt));
+                        error(n, DiagCode::ComparisonType, "cannot compare " + name(lt) + " with " + name(rt));
                     }
                     return Bool;
                 }
@@ -1032,21 +1037,21 @@ namespace {
                 {
                     if (op != EQEQ && op != NOTEQUAL)
                     {
-                        error(n, "objects are compared with == and != only");
+                        error(n, DiagCode::ComparisonType, "objects are compared with == and != only");
                     }
                     else if (lt != Unknown && rt != Unknown && is_object(lt) != is_object(rt))
                     {
-                        error(n, "cannot compare " + name(lt) + " with " + name(rt));
+                        error(n, DiagCode::ComparisonType, "cannot compare " + name(lt) + " with " + name(rt));
                     }
                     else if (!fits(lt, rt) && !fits(rt, lt))
                     {
-                        error(n, "cannot compare a " + name(lt) + " with a " + name(rt));
+                        error(n, DiagCode::ComparisonType, "cannot compare a " + name(lt) + " with a " + name(rt));
                     }
                     return Bool;
                 }
                 if ((lt == String) != (rt == String) && lt != Unknown && rt != Unknown && !is_reference(lt) && !is_reference(rt))
                 {
-                    error(n, "cannot compare " + name(lt) + " with " + name(rt));
+                    error(n, DiagCode::ComparisonType, "cannot compare " + name(lt) + " with " + name(rt));
                 }
                 return Bool;
             }
@@ -1061,21 +1066,21 @@ namespace {
         }
         if (op == MOD)
         {
-            if (lt != Int || rt != Int) error(n, "'%' needs int operands, got " + name(lt) + " and " + name(rt));
+            if (lt != Int || rt != Int) error(n, DiagCode::OperandType, "'%' needs int operands, got " + name(lt) + " and " + name(rt));
             return Int;
         }
         if (op == PLUS && lt == String)
         {
-            if (rt != String) error(n, "cannot concatenate string with " + name(rt));
+            if (rt != String) error(n, DiagCode::OperandType, "cannot concatenate string with " + name(rt));
             return String;
         }
         if (lt == Float || lt == Double)
         {
-            if (rt != Float && rt != Double) error(n, "arithmetic requires float/double operands, got " + name(rt));
+            if (rt != Float && rt != Double) error(n, DiagCode::OperandType, "arithmetic requires float/double operands, got " + name(rt));
             return (lt == Double || rt == Double) ? Double : Float;
         }
-        if (lt != Int) error(n, "arithmetic requires int operands, got " + name(lt));
-        if (rt != Int) error(n, "arithmetic requires int operands, got " + name(rt));
+        if (lt != Int) error(n, DiagCode::OperandType, "arithmetic requires int operands, got " + name(lt));
+        if (rt != Int) error(n, DiagCode::OperandType, "arithmetic requires int operands, got " + name(rt));
         return Int;
     } 
 
@@ -1100,10 +1105,10 @@ namespace {
         }
         if (op == DIV && lT)
         {
-            if (!is_number(rt)) error(n, "arithmetic requires float/double operands, got " + name(rt));
+            if (!is_number(rt)) error(n, DiagCode::OperandType, "arithmetic requires float/double operands, got " + name(rt));
             return Tensor;
         }
-        error(n, what + " is not defined between " + name(lt) + " and " + name(rt));
+        error(n, DiagCode::OperandType, what + " is not defined between " + name(lt) + " and " + name(rt));
         return Unknown;
     }
 
@@ -1124,7 +1129,7 @@ namespace {
             if ((want == 'T' && t == Tensor) || (want == 'n' && is_number(t)) || (want == 's' && t == String)) continue;
             string got = i < argNames.size() && !argNames[i].empty() ? "but '" + argNames[i] + "' is " + name(t)
                                                                      : "got " + name(t);
-            error(n, "argument " + to_string(i + 1) + " of " + what + " must be " + 
+            error(n, DiagCode::ArgumentType, "argument " + to_string(i + 1) + " of " + what + " must be " + 
                      (want == 'T' ? "a Tensor" : want == 'n' ? "a number" : "a string") + ", " + got);
         }
     }
@@ -1149,18 +1154,18 @@ namespace {
                 {
                     if (t != Int && t != Float && t != Double)
                     {
-                        error(callee, "'" + text(callee) + "(...)' is not a conversion: only int(x), float(x) and "
+                        error(callee, DiagCode::InvalidConversion, "'" + text(callee) + "(...)' is not a conversion: only int(x), float(x) and "
                                       "double(x) convert a value");
                         return Unknown;
                     }
-                    if (types.size() != 1) error(n, "'" + text(callee) + "(...)' converts one value");
+                    if (types.size() != 1) error(n, DiagCode::InvalidConversion, "'" + text(callee) + "(...)' converts one value");
                     else if (!is_number(types[0]) && types[0] != Unknown)
                     {
-                        error(n, "'" + text(callee) + "(...)' converts a number, not " + a_name(types[0]));
+                        error(n, DiagCode::InvalidConversion, "'" + text(callee) + "(...)' converts a number, not " + a_name(types[0]));
                     }
                     return t;
                 }
-                if (is_container(t) && !args.empty()) error(n, "'" + spell(callee) + "()' takes no arguments");
+                if (is_container(t) && !args.empty()) error(n, DiagCode::ArgumentCount, "'" + spell(callee) + "()' takes no arguments");
                 if (kind(t) == TypeKind::Class) construct(n, t, types);
                 return is_container(t) || kind(t) == TypeKind::Class ? t : Unknown;
             }
@@ -1190,7 +1195,7 @@ namespace {
                 for (uint32_t f : tree.children(ent.decl)) fields += tree.kind(f) == NodeKind::FieldDecl;
                 if (args.size() != fields)
                 {
-                    error(n, text(callee) + " has " + to_string(fields) + " field(s); give one value for each");
+                    error(n, DiagCode::ArgumentCount, text(callee) + " has " + to_string(fields) + " field(s); give one value for each");
                 }
                 return out.types.intern({TypeKind::Struct, e});
             }
@@ -1213,20 +1218,20 @@ namespace {
         uint32_t init = find_method(out.types[type].a, "init", &owner);
         if (init == NoNode)
         {
-            error(n, "class '" + cls + "' has no constructor 'init'");
+            error(n, DiagCode::NoConstructor, "class '" + cls + "' has no constructor 'init'");
             return;
         }
         Signature sig = signature(init, true, binding(type, init));
         if (args.size() != sig.params.size())
         {
-            error(n, "'" + cls + "' constructor takes " + to_string(sig.params.size()) + " argument(s) but got " +
+            error(n, DiagCode::ArgumentCount, "'" + cls + "' constructor takes " + to_string(sig.params.size()) + " argument(s) but got " +
                      to_string(args.size()));
         }
         for (size_t i = 0; i < args.size() && i < sig.params.size(); i++)
         {
             if (!fits(args[i], sig.params[i]))
             {
-                error(n, "argument " + to_string(i + 1) + " of '" + cls + "' constructor expects " + name(sig.params[i]) +
+                error(n, DiagCode::ArgumentType, "argument " + to_string(i + 1) + " of '" + cls + "' constructor expects " + name(sig.params[i]) +
                          " but got " + name(args[i]));
             }
         }
@@ -1238,7 +1243,7 @@ namespace {
         Signature sig = signature(fn, false);  // a copy: checking the callee below adds signatures
         if (args.size() != sig.params.size())
         {
-            error(n, "function '" + f + "' expects " + to_string(sig.params.size()) + " argument(s) but got " +
+            error(n, DiagCode::ArgumentCount, "function '" + f + "' expects " + to_string(sig.params.size()) + " argument(s) but got " +
                      to_string(args.size()));
             return Unknown;
         }
@@ -1255,7 +1260,7 @@ namespace {
         {
             if (!fits(args[i], sig.params[i]))
             {
-                error(n, "argument " + to_string(i + 1) + " of '" + label + "' expects " + name(sig.params[i]) + " but got " +
+                error(n, DiagCode::ArgumentType, "argument " + to_string(i + 1) + " of '" + label + "' expects " + name(sig.params[i]) + " but got " +
                          name(args[i]));
             }
         }
@@ -1284,7 +1289,7 @@ namespace {
         auto it = TENSOR_OP_MAP.find(f);
         if (it == TENSOR_OP_MAP.end()) return Unknown;
         TensorOp op = it->second;
-        if (types.size() > 8) error(n, "'" + f + "' takes at most 8 arguments");
+        if (types.size() > 8) error(n, DiagCode::ArgumentCount, "'" + f + "' takes at most 8 arguments");
 
         // the ops that take one argument per dimension
         int lo = -1, hi = -1;
@@ -1299,7 +1304,7 @@ namespace {
         }
         if (lo >= 0 && ((int)types.size() < lo || (int)types.size() > hi))
         {
-            error(n, "'" + f + "' takes " + to_string(lo) + " to " + to_string(hi) + " arguments, got " + to_string(types.size()));
+            error(n, DiagCode::ArgumentCount, "'" + f + "' takes " + to_string(lo) + " to " + to_string(hi) + " arguments, got " + to_string(types.size()));
         }
 
         vector<string> argNames;
@@ -1322,7 +1327,7 @@ namespace {
         for (uint32_t a : args) types.push_back(expr(a));
         if (kind(b) == TypeKind::Class) return call_method(n, callee, b, types);
         if (is_container(b)) return call_container(n, callee, b, types, statement);
-        if (b == Tensor) error(callee, "a Tensor has no member '" + text(callee) + "' (it has .T, .rows, .cols, and .rank)");
+        if (b == Tensor) error(callee, DiagCode::NoMember, "a Tensor has no member '" + text(callee) + "' (it has .T, .rows, .cols, and .rank)");
         return Unknown;
     }
 
@@ -1356,7 +1361,7 @@ namespace {
         if (!m)
         {
             for (uint32_t a : args) expr(tree.kind(a) == NodeKind::KeywordArg ? tree.children(a)[0] : a);
-            error(n, "unknown " + module + " method: " + module + "." + method + "()");
+            error(n, DiagCode::NoMethod, "unknown " + module + " method: " + module + "." + method + "()");
             return Unknown;
         }
         string label = "'" + module + "." + method + "'";
@@ -1371,12 +1376,12 @@ namespace {
             string what = keyword ? text(a) : method == "generate" && count == 3 ? "max_tokens" : "";
             if (keyword && !m->keywords.count(what))
             {
-                error(a, label + " has no argument named '" + what + "'");
+                error(a, DiagCode::KeywordArgument, label + " has no argument named '" + what + "'");
                 continue;
             }
             if (!what.empty() && !given.insert(what).second)
             {
-                error(a, "'" + what + "' is given twice");
+                error(a, DiagCode::KeywordArgument, "'" + what + "' is given twice");
                 continue;
             }
             if (what == "max_tokens" || what == "epochs" || what == "batch_size" || what == "lr")
@@ -1385,25 +1390,25 @@ namespace {
                 NodeKind k = tree.kind(v);
                 if (k != NodeKind::IntLiteral && !(real && k == NodeKind::FloatLiteral))
                 {
-                    error(v, "'" + what + "' must be " + (real ? "a number" : "a whole number") + " written out, e.g. " +
+                    error(v, DiagCode::ArgumentType, "'" + what + "' must be " + (real ? "a number" : "a whole number") + " written out, e.g. " +
                              what + "=" + (real ? "0.00002" : "3"));
                 }
             }
             else if (!fits(t, String))
             {
-                error(v, (keyword ? "'" + what + "'" : "argument " + to_string(count)) + " of " + label +
+                error(v, DiagCode::ArgumentType, (keyword ? "'" + what + "'" : "argument " + to_string(count)) + " of " + label +
                          " expects string but got " + name(t));
             }
         }
         if (method == "finetune")
         {
-            if (count) error(n, label + " takes name=value arguments only: sol.finetune(model=\"...\", task=\"...\", ...)");
-            else if (!given.count("model") || !given.count("task")) error(n, label + " needs model=\"...\" and task=\"...\"");
+            if (count) error(n, DiagCode::KeywordArgument, label + " takes name=value arguments only: sol.finetune(model=\"...\", task=\"...\", ...)");
+            else if (!given.count("model") || !given.count("task")) error(n, DiagCode::KeywordArgument, label + " needs model=\"...\" and task=\"...\"");
         }
         else if (count < m->least || count > m->most)
         {
             string takes = to_string(m->least) + (m->least == m->most ? "" : " or " + to_string(m->most));
-            error(n, label + " takes " + takes + " argument(s) but got " + to_string(count));
+            error(n, DiagCode::ArgumentCount, label + " takes " + takes + " argument(s) but got " + to_string(count));
         }
         return m->returns ? String : Unknown;
     }
@@ -1417,7 +1422,7 @@ namespace {
         uint32_t m = find_method(out.types[object].a, method, &owner);
         if (m == NoNode)
         {
-            error(n, "class '" + cls + "' has no method '" + method + "'");
+            error(n, DiagCode::NoMethod, "class '" + cls + "' has no method '" + method + "'");
             return Unknown;
         }
         Signature sig = signature(m, true, binding(object, m));
@@ -1425,13 +1430,13 @@ namespace {
         {
             if (!fits(args[i], sig.params[i]))
             {
-                error(n, "argument " + to_string(i + 1) + " of " + label + " expects " + name(sig.params[i]) + " but got " +
+                error(n, DiagCode::ArgumentType, "argument " + to_string(i + 1) + " of " + label + " expects " + name(sig.params[i]) + " but got " +
                          name(args[i]));
             }
         }
         if (args.size() != sig.params.size())
         {
-            error(n, label + " takes " + to_string(sig.params.size()) + " argument(s) but got " + to_string(args.size()));
+            error(n, DiagCode::ArgumentCount, label + " takes " + to_string(sig.params.size()) + " argument(s) but got " + to_string(args.size()));
         }
         return sig.returns.size() == 1 ? sig.returns[0] : Unknown;
     }
@@ -1453,7 +1458,7 @@ namespace {
                       kind(elem) == TypeKind::Class ? (m == "contains" || m == "index_of") : elem != Tensor;
             if (!ok)
             {
-                error(n, "'" + v + "." + m + "()' needs " + (m == "sum" ? "numbers" : "comparable elements") + ", but '" + v +
+                error(n, DiagCode::ContainerMethod, "'" + v + "." + m + "()' needs " + (m == "sum" ? "numbers" : "comparable elements") + ", but '" + v +
                          "' holds " + name(elem));
             }
             return ok;
@@ -1474,7 +1479,7 @@ namespace {
                 return m == "contains" ? Bool : Int;
             }
             if (!isMap && (m == "min" || m == "max" || m == "sum") && noArgs) return allows() ? elem : Unknown;
-            error(n, "'" + v + "." + m + "(...)' does not give a value here; a " +
+            error(n, DiagCode::ContainerMethod, "'" + v + "." + m + "(...)' does not give a value here; a " +
                      (isMap ? "map has m[k], has(k), size()"
                             : "vector has v[i], size(), pop(), contains(x), index_of(x), binary_search(x), min(), max(), sum()"));
             return Unknown;
@@ -1496,7 +1501,7 @@ namespace {
             allows();
             return Unknown;
         }
-        error(n, "'" + v + "." + m + "(...)' is not a " + (isMap ? "map" : "vector") + " method: a " +
+        error(n, DiagCode::ContainerMethod, "'" + v + "." + m + "(...)' is not a " + (isMap ? "map" : "vector") + " method: a " +
                  (isMap ? "map has m[k] = x, remove(k), clear()" : "vector has v[i] = x, push(x), pop(), sort(), reverse(), clear()"));
         return Unknown;
     }
@@ -1508,7 +1513,7 @@ namespace {
         TypeId want = isMap ? out.types[type].a : Int;
         if (!fits(key, want))
         {
-            error(n, string(isMap ? "key" : "index") + " of '" + path(container) + "' must be " + name(want) + ", got " +
+            error(n, DiagCode::IndexType, string(isMap ? "key" : "index") + " of '" + path(container) + "' must be " + name(want) + ", got " +
                      name(key));
         }
     }
@@ -1517,7 +1522,7 @@ namespace {
     void Typer::check_element(uint32_t n, uint32_t container, TypeId type, TypeId value)
     {
         TypeId elem = kind(type) == TypeKind::Map ? out.types[type].b : out.types[type].a;
-        if (!fits(value, elem)) error(n, "'" + path(container) + "' holds " + name(elem) + ", not " + name(value));
+        if (!fits(value, elem)) error(n, DiagCode::TypeMismatch, "'" + path(container) + "' holds " + name(elem) + ", not " + name(value));
     }
 
     // t[i, j] reads one element of a Tensor (a double); a[i] one of an array (an int); v[i] and m[k] one of a container
@@ -1548,13 +1553,13 @@ namespace {
         {
             uint32_t f = find_field(out.types[b].a, m);
             if (f != NoNode) return field_type(f, binding(b, f));
-            error(n, string(kind(b) == TypeKind::Class ? "class '" : "struct '") + name(b) + "' has no field '" + m + "'");
+            error(n, DiagCode::NoMember, string(kind(b) == TypeKind::Class ? "class '" : "struct '") + name(b) + "' has no field '" + m + "'");
             return Unknown;
         }
         if (b != Tensor) return Unknown;
         if (m == "T") return Tensor;
         if (m == "rows" || m == "cols" || m == "rank") return Int;
-        error(n, "a Tensor has no member '" + m + "' (it has .T, .rows, .cols, and .rank)");
+        error(n, DiagCode::NoMember, "a Tensor has no member '" + m + "' (it has .T, .rows, .cols, and .rank)");
         return Unknown;
     }
 }  // namespace

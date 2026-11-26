@@ -102,6 +102,34 @@ jobs:
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
 
+  # The front end runs on every keystroke in an editor, so no input may crash it: libFuzzer feeds it changed
+  # versions of the golden tests and the standard library, under ASan and UBSan, for two minutes per pull request.
+  fuzz:
+    name: Fuzz the front end
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: compiler/fuzz
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the fuzz target
+        run: make CXX=clang++
+      - name: The inputs that once failed
+        run: make regress CXX=clang++
+      - name: Fuzz for two minutes
+        run: make run SECONDS=120 CXX=clang++
+      - name: Upload the input that failed
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: fuzz-failure
+          path: |
+            compiler/fuzz/crash-*
+            compiler/fuzz/timeout-*
+            compiler/fuzz/oom-*
+          retention-days: 14
+
   mlir:
     name: MLIR dialect (nova-opt + lit)
     runs-on: ubuntu-24.04

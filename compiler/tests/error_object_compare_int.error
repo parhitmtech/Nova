@@ -1,1 +1,1 @@
-Error at line 10: cannot compare P with int
+:10:13: error[E0508]: cannot compare P with int

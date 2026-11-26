@@ -1,1 +1,1 @@
-Error at line 6: argument 1 of 'square' expects int but got string
+:6:11: error[E0502]: argument 1 of 'square' expects int but got string

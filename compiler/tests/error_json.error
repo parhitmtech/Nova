@@ -1,0 +1,5 @@
+{"version":1,"diagnostics":[{"severity":"error","code":"E0502","title":"argument of the wrong type","message":"argument 1 of 'square' expects int but got string",
+"range":{"start":{"line":6,"column":11},"end":{"line":6,"column":24}},"caret":{"line":6,"column":11},"notes":[],"fixes":[]},{"severity":"warning","code":"W0001","title":"unused variable","message":"variable 'y' is never used (name it _y if that is on purpose)",
+"range":{"start":{"line":7,"column":9},"end":{"line":7,"column":10}},"caret":{"line":7,"column":9},"notes":[],"fixes":[]},{"severity":"error","code":"E0405","title":"variable declared twice","message":"redeclaration of 'y'",
+"notes":[{"severity":"note","message":"first declared here",
+"range":{"start":{"line":7,"column":9},"end":{"line":7,"column":10}},"caret":{"line":7,"column":9}}],"fixes":[]}],"errors":2,"warnings":1,"truncated":false}

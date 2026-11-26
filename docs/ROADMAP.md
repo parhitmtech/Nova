@@ -232,8 +232,9 @@ kernels.
   DMA overlapped with compute, data layouts chosen for the matrix unit, and instruction scheduling across the
   units.
 
-**F. Later, as the steps above need them.** Error recovery (one error per mistake, with columns); strings and
-arrays as reference-counted heap values and `weak` fields for cycles; and the fixes listed in section 0.
+**F. Later, as the steps above need them.** Strings and arrays as reference-counted heap values and `weak` fields
+for cycles; and the fixes listed in section 0. (Error recovery, one error per mistake with columns, is done: see
+[ERRORS.md](ERRORS.md) and DESIGN.md's diagnostics.)
 
 ## What stays our own
 

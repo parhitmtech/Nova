@@ -1,1 +1,1 @@
-Error at line 10: cannot assign float to int field 'value' of class 'Box<int>'
+:10:7: error[E0501]: cannot assign float to int field 'value' of class 'Box<int>'

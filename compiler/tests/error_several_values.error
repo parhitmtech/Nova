@@ -1,3 +1,3 @@
-Error at line 13: only a function call gives several values, and 'm.pair(...)' is not one
-Error at line 17: containers are compared with == and != only
-Error at line 19: cannot compare vector<int> with vector<double>
+:13:20: error[E0520]: only a function call gives several values, and 'm.pair(...)' is not one
+:17:11: error[E0508]: containers are compared with == and != only
+:19:11: error[E0508]: cannot compare vector<int> with vector<double>

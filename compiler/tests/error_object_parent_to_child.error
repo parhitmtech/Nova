@@ -1,1 +1,1 @@
-Error at line 14: 'd' is a Dog, not a Animal
+:14:9: error[E0501]: 'd' is a Dog, not a Animal

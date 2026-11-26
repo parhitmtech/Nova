@@ -1,1 +1,1 @@
-Error at line 5: duplicate function definition 'f'
+:5:5: error[E0404]: duplicate function definition 'f'
