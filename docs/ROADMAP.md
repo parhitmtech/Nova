@@ -211,8 +211,10 @@ the LICM safety rules, broadcasting through `MatmulPlan`, and the kernel steps. 
   MemAlloc / MemRead / MemWrite instead of `Pure`, so CSE, LICM and canonicalize treat tensors as references. A
   generic function is lowered once per copy the check pass made, each copy a `func.func` named with its argument
   types (`@"scale<int, int>"`). `+ - * /` with tensors are `nova.add` / `sub` / `mul` / `div`, `nova.scale` and
-  `nova.add_scalar`, in the interpreter's forms (`t / k` is `t * (1 / k)`), so both round alike. Next: lowering
-  nova, scf and func to LLVM.
+  `nova.add_scalar`, in the interpreter's forms (`t / k` is `t * (1 / k)`), so both round alike. A program without
+  tensors compiles to a native binary: `--convert-nova-to-runtime` turns nova ops into calls to a C runtime, and
+  `nova-opt --nova-to-llvm` then runs MLIR's own conversions to the llvm dialect, for `mlir-translate` and `clang`.
+  Next: tensors through the runtime, and a test that runs each program both ways and compares the output.
 - Frames, variable lifetimes and memory (phase 6) come from the dialect's lowering instead of slot ranges.
 
 **D. A tile-level kernel language in Nova.** `kernel` functions that work on blocks of a tensor, as Triton's do:

@@ -1,0 +1,56 @@
+# RUN: nova-lower %s | nova-opt --nova-to-llvm | mlir-translate --mlir-to-llvmir -o %t.ll
+# RUN: clang -Wno-override-module %t.ll %nova_runtime -o %t.exe
+# RUN: %t.exe | FileCheck %s
+#
+# A Nova program compiled through MLIR and LLVM to a native binary, run: loops with break and continue, a function
+# returning two values, generic copies that recurse, floats, doubles and bools. The CHECK lines are what the
+# interpreter prints for this program, line for line.
+
+def divmod(int a, int b) -> int, int:
+    return a / b, a % b
+
+def fact(n):
+    if (n <= 1):
+        return 1
+    return n * fact(n - 1)
+
+def half(x, n):
+    if (n == 0):
+        return x
+    return half(x / 2.0, n - 1)
+
+ignite:
+    int s = 0
+    for (int i = 0; i < 10; i += 1):
+        if (i == 7):
+            break
+        if (i % 2 == 0):
+            continue
+        s += i
+    print(s)
+    int q, int r = divmod(17, 5)
+    print(q)
+    print(r)
+    print(fact(10))
+    print(half(8.0, 3))
+    double d = 2.5
+    print(d * 3.0)
+    bool b = s > 5 and q == 3
+    print(b)
+    print(not b)
+    int k = 0
+    do:
+        k += 3
+    while (k < 10)
+    print(k)
+
+# CHECK:      9
+# CHECK-NEXT: 3
+# CHECK-NEXT: 2
+# CHECK-NEXT: 3628800
+# CHECK-NEXT: 1.000000
+# CHECK-NEXT: 7.500000
+# CHECK-NEXT: 1
+# CHECK-NEXT: 0
+# CHECK-NEXT: 12
+# CHECK-EMPTY:
