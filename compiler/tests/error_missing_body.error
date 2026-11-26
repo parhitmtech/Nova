@@ -1,1 +1,1 @@
-Error at line 4: expected an indented block after the ':' on line 3
+:4:5: error[E0104]: expected an indented block after the ':' on line 3

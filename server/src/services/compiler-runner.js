@@ -104,7 +104,9 @@ function runCompiler(tmpFile, extraArgs = [], inputs = "", timeoutMs = MAX_EXECU
     let stderr = "";
     let timedOut = false;
 
-    const child = spawnCompiler( [tmpFile, ...extraArgs], {
+    // The file by its name in the job directory (the working directory): compiler errors say program.csl:3:5, not
+    // the server's path to it
+    const child = spawnCompiler( [path.basename(tmpFile), ...extraArgs], {
       stdio: ["pipe", "pipe", "pipe"],
       cwd: path.dirname(tmpFile),
       timeoutMs, userId,

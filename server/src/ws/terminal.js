@@ -330,7 +330,7 @@ async function createShellSession(ws, userId) {
       const flags = Array.isArray(meta.extraArgs) ? meta.extraArgs : [];
       if (flags.some(flag => !['--optimize', '--dump-ir'].includes(flag))) { cleanupTempFile(tmpFile, tmpDir); send('Invalid compiler options'); resolve(); return; }
       let proc;
-      try { proc = spawnCompiler([tmpFile, ...flags], { cwd: tmpDir, timeoutMs: MAX_EXECUTION_MS, userId }); }
+      try { proc = spawnCompiler([path.basename(tmpFile), ...flags], { cwd: tmpDir, timeoutMs: MAX_EXECUTION_MS, userId }); }
       catch (err) { cleanupTempFile(tmpFile, tmpDir); send(err.message); resolve(); return; }
       currentProc = proc;
       proc.__killed = false;

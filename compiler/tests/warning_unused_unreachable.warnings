@@ -1,0 +1,6 @@
+:3:9: warning[W0001]: variable 'tmp' is never used (name it _tmp if that is on purpose)
+:5:5: warning[W0002]: this statement never runs: it comes after 'return'
+:4:5: note: the block ends here
+:11:5: warning[W0001]: variable 'total' is never used
+:15:9: warning[W0002]: this statement never runs: it comes after 'break'
+4 warnings.

@@ -1,1 +1,1 @@
-Error at line 6: 'self.items' holds int, not string
+:6:9: error[E0501]: 'self.items' holds int, not string

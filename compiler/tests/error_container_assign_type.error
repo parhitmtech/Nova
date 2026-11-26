@@ -1,1 +1,1 @@
-Error at line 4: 'd' is a vector<double>, not vector<int>
+:4:20: error[E0501]: 'd' is a vector<double>, not vector<int>

@@ -52,8 +52,8 @@ static void release_element(const Container& c, double v)
 static Container& container_at(int h, int line)
 {
     if (h <= 0 || h >= (int)container_heap.size())
-        tensor_shape_error(line, "container used before it was created");
-    if (container_heap[h].freed) tensor_shape_error(line, "container used after it was freed");
+        runtime_failure(DiagCode::UseAfterFree, line, "container used before it was created");
+    if (container_heap[h].freed) runtime_failure(DiagCode::UseAfterFree, line, "container used after it was freed");
     return container_heap[h];
 }
 
@@ -90,17 +90,17 @@ static double& element(Container& c, int slot, int line)
     {
         int i = mem[slot];
         if (i < 0 || i >= (int)c.items.size())
-            tensor_shape_error(line, "vector index " + to_string(i) + " out of range (size " + to_string(c.items.size()) + ")");
+            runtime_failure(DiagCode::IndexOutOfRange, line, "vector index " + to_string(i) + " out of range (size " + to_string(c.items.size()) + ")");
         return c.items[i];
     }
     if (c.key == TYPE_STRING)
     {
         auto it = c.stringKeys.find(strMem[mem[slot]]);
-        if (it == c.stringKeys.end()) tensor_shape_error(line, "map has no key " + key_text(c, slot));
+        if (it == c.stringKeys.end()) runtime_failure(DiagCode::MissingKey, line, "map has no key " + key_text(c, slot));
         return it->second;
     }
     auto it = c.intKeys.find(mem[slot]);
-    if (it == c.intKeys.end()) tensor_shape_error(line, "map has no key " + key_text(c, slot));
+    if (it == c.intKeys.end()) runtime_failure(DiagCode::MissingKey, line, "map has no key " + key_text(c, slot));
     return it->second;
 }
 
@@ -120,7 +120,7 @@ static bool element_equal(const Container& c, double a, double b)
 // The smallest (or largest) element of a non-empty vector.
 static double extreme(const Container& c, bool largest, int line)
 {
-    if (c.items.empty()) tensor_shape_error(line, string(largest ? "max()" : "min()") + " of an empty vector");
+    if (c.items.empty()) runtime_failure(DiagCode::EmptyContainer, line, string(largest ? "max()" : "min()") + " of an empty vector");
     double best = c.items[0];
     for (double v : c.items)
     {
@@ -169,7 +169,7 @@ InstructionNode* exec_container_call(InstructionNode* pc)
         case CON_POP: case CON_POP_D:  // v.pop(): the last element; its Tensor reference moves to the result
         {
             Container& c = container_at(mem[a[0]], line);
-            if (c.items.empty()) tensor_shape_error(line, "pop() on an empty vector");
+            if (c.items.empty()) runtime_failure(DiagCode::EmptyContainer, line, "pop() on an empty vector");
             double v = c.items.back();
             c.items.pop_back();
             if (c.elem == TYPE_CLASS) objects_take_temp((int)v);  // an object's: the running call's temporary

@@ -45,7 +45,7 @@ static InstructionNode* virtual_call_target(InstructionNode* pc)
     auto c = virtualTable.find(cls);
     if (c == virtualTable.end() || !c->second.count(pc->call_inst.virtual_method))
     {
-        tensor_shape_error(pc->line_no, "the object's class has no such method");
+        runtime_failure(DiagCode::MissingMethod, pc->line_no, "the object's class has no such method");
     }
     const MethodTarget& t = c->second[pc->call_inst.virtual_method];
     copy = new InstructionNode(*pc);
@@ -60,6 +60,7 @@ static InstructionNode* virtual_call_target(InstructionNode* pc)
 
 InstructionNode* exec_call(InstructionNode* pc)
 {
+    InstructionNode* site = pc;  // the call as written: a runtime error inside the call lists it
     if (pc->call_inst.virtual_method) pc = virtual_call_target(pc); // its next is the call site's next
     do {
             if (pc->call_inst.function_head == NULL)
@@ -155,6 +156,7 @@ InstructionNode* exec_call(InstructionNode* pc)
                 if (pt == TYPE_CLASS || pt == TYPE_VECTOR || pt == TYPE_MAP) objects_bind_param(pSlot, mem[pSlot], pt);
             }
 
+            frame.callSite = site;
             callStack.push(frame);
             pc = pc->call_inst.function_head;
             break;

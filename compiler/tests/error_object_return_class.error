@@ -1,1 +1,1 @@
-Error at line 15: 'make' returns P, not Q
+:15:5: error[E0504]: 'make' returns P, not Q

@@ -1,2 +1,1 @@
-tensor_reshape: new shape has 10 elements but the tensor has 12
-line 4
+:4:16: runtime error[R0003]: tensor_reshape: new shape has 10 elements but the tensor has 12

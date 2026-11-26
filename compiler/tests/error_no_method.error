@@ -1,1 +1,1 @@
-Error at line 16: class 'Dog' has no method 'fly'
+:16:11: error[E0511]: class 'Dog' has no method 'fly'

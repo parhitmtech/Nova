@@ -1,1 +1,1 @@
-Error at line 5: a class cannot extend the generic class 'Box'
+:5:21: error[E0407]: a class cannot extend the generic class 'Box'

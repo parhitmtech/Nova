@@ -1,1 +1,1 @@
-Error at line 2: use 'orbit NAME' to bring in a module
+:2: error[E0303]: use 'orbit NAME' to bring in a module

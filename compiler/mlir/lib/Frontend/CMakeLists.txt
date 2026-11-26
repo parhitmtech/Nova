@@ -3,6 +3,7 @@
 set(NOVA_FRONTEND ${PROJECT_SOURCE_DIR}/../src/frontend)
 add_library(NovaFrontend STATIC
     ${NOVA_FRONTEND}/source.cc
+    ${NOVA_FRONTEND}/diagnostics.cc
     ${NOVA_FRONTEND}/interner.cc
     ${NOVA_FRONTEND}/lexer.cc
     ${NOVA_FRONTEND}/parse.cc

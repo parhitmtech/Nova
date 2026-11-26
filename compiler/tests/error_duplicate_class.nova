@@ -1,0 +1,19 @@
+# A class, struct or function defined twice is an error at the second definition, whose body is not checked.
+# (The compiler used to crash on a class defined twice: found by fuzzing the front end.)
+class Point:
+    int x
+
+class Point:
+    int y
+
+    def get() -> int:
+        return self.y
+
+struct Pair:
+    int a
+
+struct Pair:
+    int b
+
+ignite:
+    print(1)

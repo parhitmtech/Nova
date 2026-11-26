@@ -1,0 +1,11 @@
+# After a syntax error the parser goes on at the next statement, so one run reports every broken statement,
+# and the statements between them are still read (each error below is reported once, with nothing after it).
+ignite:
+    int a = 1 +
+    print(a)
+    int b = (2 * 3
+    print(b)
+    print(a b)
+    int c = 4
+    c = c * * 2
+    print(c)

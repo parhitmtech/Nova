@@ -23,13 +23,28 @@ static const struct { const char* name; bool spelled; bool ownLine; } kinds[] = 
     {"BoolLiteral", true, false},   {"Name", true, false},          {"Self", false, false},
     {"Paren", false, false},        {"Unary", true, false},         {"Binary", true, false},
     {"Call", false, false},         {"Index", false, false},        {"Member", true, false},
+    {"Error", false, true},
 };
-static_assert(sizeof(kinds) / sizeof(kinds[0]) == (size_t)NodeKind::Member + 1, "kinds must list every NodeKind");
+static_assert(sizeof(kinds) / sizeof(kinds[0]) == (size_t)NodeKind::Error + 1, "kinds must list every NodeKind");
 
 string_view ParseTree::spelling(uint32_t n) const 
 {
     const LexToken& t = token(n);
     return string_view(sourceManager.text_at(t.loc), t.length);
+}
+
+SourceRange ParseTree::range(uint32_t n) const
+{
+    uint32_t first = n + 1 - nodes[n].size;
+    uint32_t lo = nodes[n].token, hi = nodes[n].token;
+    for (uint32_t i = first; i < n; i++)
+    {
+        lo = min(lo, nodes[i].token);
+        hi = max(hi, nodes[i].token);
+    }
+    const LexToken& a = (*tokens)[lo];
+    const LexToken& b = (*tokens)[hi];
+    return SourceRange{a.loc, b.loc + (b.length ? b.length : 1)};
 }
 
 // The last child is the node just before n; each earlier one ends just before the subtree of the one after it.

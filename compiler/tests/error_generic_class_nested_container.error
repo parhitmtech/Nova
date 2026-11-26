@@ -1,1 +1,1 @@
-Error at line 12: 'vector<vector<int>>' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, vector<T> or map<K, V>
+:12:5: error[E0515]: 'vector<vector<int>>' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, vector<T> or map<K, V>

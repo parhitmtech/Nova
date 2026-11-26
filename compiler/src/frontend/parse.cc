@@ -38,8 +38,12 @@ namespace {
             Symbol pass;
             uint32_t pos = 0;
             bool failed = false;
+            bool stopped = false;  // the error limit was reached: parsing ends
 
-            // After an error every token reads as the end of the file, so each loop ends and the parser returns.
+            // After an error every token reads as the end of the file, so every loop ends and each function returns
+            // up to the nearest loop of statements (or definitions, members, cases). That loop recovers: it replaces
+            // the failed statement with an Error node and goes on at the next statement (recover()). Recovering
+            // where statements are listed needs no exceptions (the MLIR build has none) and no checks in between.
             TokenType kind_at(uint32_t i) const { return failed || i >= toks.size() ? END_OF_FILE : toks[i].kind; }
             TokenType kind() const { return kind_at(pos); }
             TokenType peek() const { return kind_at(pos + 1); }
@@ -56,14 +60,23 @@ namespace {
                 take();
                 return true;
             }
-            uint32_t expect(TokenType k, const char* message)
+            uint32_t expect(TokenType k, const char* message, DiagCode code = DiagCode::ExpectedToken)
             {
-                if (!at(k)) error_got(message);
+                if (!at(k)) error_got(message, code);
                 return take();
             }
-            void error(const string& message);
-            void error_got(const char* message) { error(string(message) + ", got " + describe(pos)); }
+            void error(DiagCode code, const string& message);
+            void error_got(const char* message, DiagCode code = DiagCode::ExpectedToken)
+            {
+                error(code, string(message) + ", got " + describe(pos));
+            }
             string describe(uint32_t i) const;
+            // A statement (or definition, member, case) that started at token first, with its nodes from start,
+            // failed: it becomes one Error node, and parsing goes on after it.
+            void recover(size_t start, uint32_t first);
+            void skip_block();  // at an INDENT: to after its DEDENT
+            bool layout(TokenType k) const { return k == NEWLINE || k == INDENT || k == DEDENT; }
+            void expect_block(uint32_t colon, const char* what);  // after a ':' line: its INDENT
 
             // A node over everything pushed since start: those nodes are its children's subtrees.
             size_t mark() const { return tree.nodes.size(); }
@@ -101,11 +114,83 @@ namespace {
             void parse_primary();
     };
 
-    void Parser::error(const string& message)
+    void Parser::error(DiagCode code, const string& message)
     {
         if (failed) return;
-        tree.errors.push_back("Error at line " + to_string(toks[pos].line) + ": " + message);
         failed = true;
+        // At the end of a line or of the file, the caret goes right after the line's last token
+        uint32_t i = pos < toks.size() ? pos : (uint32_t)toks.size() - 1;
+        TokenType k = toks[i].kind;
+        bool atEnd = k == NEWLINE || k == END_OF_FILE;
+        if (k == DEDENT)  // the DEDENTs that close the file's last blocks
+        {
+            uint32_t j = i;
+            while (j < toks.size() && toks[j].kind == DEDENT) j++;
+            atEnd = j < toks.size() && toks[j].kind == END_OF_FILE;
+        }
+        if (atEnd)
+        {
+            uint32_t j = i;
+            while (j > 0 && (layout(toks[j - 1].kind) || toks[j - 1].kind == END_OF_FILE)) j--;
+            if (j > 0)
+            {
+                diagnostics.report(code, toks[j - 1].loc + toks[j - 1].length, 1, message);
+                return;
+            }
+        }
+        diagnostics.report(code, toks[i].loc, toks[i].length ? toks[i].length : 1, message);
+    }
+
+    void Parser::skip_block()
+    {
+        int depth = 0;
+        while (pos + 1 < toks.size())
+        {
+            TokenType k = toks[pos].kind;
+            pos++;
+            if (k == INDENT) depth++;
+            else if (k == DEDENT && --depth == 0) return;
+        }
+    }
+
+    void Parser::recover(size_t start, uint32_t first)
+    {
+        tree.nodes.resize(start);
+        add(NodeKind::Error, first, start);
+        if (diagnostics.limit_reached())
+        {
+            stopped = true;  // failed stays set: every loop ends
+            return;
+        }
+        failed = false;
+        // Where the error is decides what to skip. In the middle of a line (or at its first token, having read
+        // nothing): the rest of the line, and the block under it (the failed statement's own). At the start of a
+        // line, having read the line before it (a ':' line without its block): nothing; that line is the next
+        // statement. Then the elif / else lines of a failed if, which cannot start a statement of their own.
+        bool lineStart = pos == 0 || layout(toks[pos - 1].kind);
+        if (pos == first || !lineStart)
+        {
+            if (kind() != INDENT)
+            {
+                while (!at(NEWLINE) && !at(END_OF_FILE) && !at(DEDENT) && !at(INDENT)) pos++;
+                consume(NEWLINE);
+            }
+            if (at(INDENT)) skip_block();
+        }
+        while (at(ELIF) || at(ELSE))
+        {
+            while (!at(NEWLINE) && !at(END_OF_FILE) && !at(DEDENT) && !at(INDENT)) pos++;
+            consume(NEWLINE);
+            if (at(INDENT)) skip_block();
+        }
+    }
+
+    // A ':' line (the colon at token colon) needs an indented block under it
+    void Parser::expect_block(uint32_t colon, const char* what)
+    {
+        if (at(INDENT)) return;
+        error(DiagCode::ExpectedIndentedBlock, string("expected ") + what + " after the ':' on line " +
+                                              to_string(toks[colon].line));
     }
 
     string Parser::describe(uint32_t i) const 
@@ -129,6 +214,8 @@ namespace {
         size_t start = mark();
         while (!at(END_OF_FILE))
         {
+            size_t s = mark();
+            uint32_t first = pos;
             switch(kind())
             {
                 case DEF:       parse_function(); break;
@@ -136,16 +223,22 @@ namespace {
                 case CLASS:     parse_class(); break;
                 case IGNITE:
                 {
-                    size_t s = mark();
                     uint32_t t = take();
                     parse_block();
                     add(NodeKind::Ignite, t, s);
                     break;
                 }
-                default: error_got("expected a definition (def, struct or class) or the 'ignite' block"); break;
+                case INDENT:    error(DiagCode::UnexpectedIndentation, "unexpected indentation"); break;
+                case DEDENT:    take(); continue;  // cannot happen: the scanner closes every block it opens
+                default:
+                    error_got("expected a definition (def, struct or class) or the 'ignite' block",
+                              DiagCode::ExpectedDefinition);
+                    break;
             }
+            if (failed && !stopped) recover(s, first);
         }
-        add(NodeKind::File, pos, start);
+        if (stopped) failed = false;
+        add(NodeKind::File, pos < toks.size() ? pos : (uint32_t)toks.size() - 1, start);
     }
 
     // def name(params) -> types: block
@@ -223,14 +316,20 @@ namespace {
     // The indented body of a struct (fields) or a class (fields and methods); 'pass' for an empty one
     void Parser::parse_members(bool methods)
     {
-        expect(COLON, "expected ':' to start the body");
+        uint32_t colon = expect(COLON, "expected ':' to start the body");
         expect(NEWLINE, "expected the body on the lines after ':'");
-        expect(INDENT, "expected an indented body");
+        expect_block(colon, "an indented body");
+        take();  // the INDENT
         while (!at(DEDENT) && !at(END_OF_FILE))
         {
-            if (at_pass())
+            size_t s = mark();
+            uint32_t first = pos;
+            if (at(INDENT))
             {
-                size_t s = mark();
+                error(DiagCode::UnexpectedIndentation, "unexpected indentation");
+            }
+            else if (at_pass())
+            {
                 add(NodeKind::Pass, take(), s);
                 take();  // the end of the line
             }
@@ -238,10 +337,11 @@ namespace {
             {
                 parse_function();
             }
-            else 
+            else
             {
                 parse_field();
             }
+            if (failed && !stopped) recover(s, first);
         }
         expect(DEDENT, "expected the end of the body");
     }
@@ -267,7 +367,7 @@ namespace {
         size_t start = mark();
         if (!is_type_keyword(kind()) && !at(ID))
         {
-            error_got("expected a type");
+            error_got("expected a type", DiagCode::ExpectedType);
             return;
         }
         uint32_t name = take();
@@ -316,15 +416,23 @@ namespace {
         uint32_t colon = expect(COLON, "expected ':' to start the block");
         if (consume(NEWLINE))
         {
-            expect(INDENT, "expected an indented block");
-            while (!at(DEDENT) && !at(END_OF_FILE)) parse_statement();
+            expect_block(colon, "an indented block");
+            take();  // the INDENT
+            while (!at(DEDENT) && !at(END_OF_FILE))
+            {
+                size_t s = mark();
+                uint32_t first = pos;
+                parse_statement();
+                if (failed && !stopped) recover(s, first);
+            }
             expect(DEDENT, "expected the end of the block");
         }
         else
         {
             if (at(IF) || at(WHILE) || at(DO) || at(FOR) || at(SWITCH))
             {
-                error_got("only a simple statement can follow ':' on the same line; start the block on the next line");
+                error_got("only a simple statement can follow ':' on the same line; start the block on the next line",
+                          DiagCode::StatementAfterColon);
             }
             parse_simple_statement();
             expect(NEWLINE, "expected the end of the line");
@@ -336,6 +444,7 @@ namespace {
     {
         switch (kind())
         {
+            case INDENT:    error(DiagCode::UnexpectedIndentation, "unexpected indentation"); return;
             case IF:        parse_if(); return;
             case WHILE:     parse_while(); return;
             case DO:        parse_do_while(); return;
@@ -435,14 +544,15 @@ namespace {
     {
         if (!at(LPAREN))
         {
-            error(string("'") + keyword + "' needs its condition in parentheses: " + keyword + " (...)");
+            error(DiagCode::ConditionParentheses, string("'") + keyword + "' needs its condition in parentheses: " +
+                                                  keyword + " (...)");
             return;
         }
         take();
         parse_expression();
         if (!at(RPAREN))
         {
-            error(string("missing ')' after the condition of '") + keyword + "'");
+            error(DiagCode::ExpectedToken, string("missing ')' after the condition of '") + keyword + "'");
             return;
         }
         take();
@@ -527,13 +637,19 @@ namespace {
         size_t start = mark();
         uint32_t t = take();
         parse_condition("switch");
-        expect(COLON, "expected ':' after the switch's value");
+        uint32_t colon = expect(COLON, "expected ':' after the switch's value");
         expect(NEWLINE, "expected the cases on the lines after 'switch (...):'");
-        expect(INDENT, "expected indented 'case' labels");
+        expect_block(colon, "indented 'case' labels");
+        take();  // the INDENT
         while (!at(DEDENT) && !at(END_OF_FILE))
         {
             size_t s = mark();
-            if (at(CASE))
+            uint32_t first = pos;
+            if (at(INDENT))
+            {
+                error(DiagCode::UnexpectedIndentation, "unexpected indentation");
+            }
+            else if (at(CASE))
             {
                 uint32_t c = take();
                 parse_expression();
@@ -550,6 +666,7 @@ namespace {
             {
                 error_got("expected 'case' or 'default'");
             }
+            if (failed && !stopped) recover(s, first);
         }
         expect(DEDENT, "expected the end of the switch");
         add(NodeKind::Switch, t, start);
@@ -582,7 +699,7 @@ namespace {
             add(NodeKind::Binary, op, start);
             if (level == 4 && precedence(kind()) == 4)
             {
-                error("comparisons cannot be chained; use 'and', e.g. (a < b and b < c)");
+                error(DiagCode::ChainedComparison, "comparisons cannot be chained; use 'and', e.g. (a < b and b < c)");
             }
         }
     }
@@ -684,7 +801,7 @@ namespace {
             default:
             {
                 if (is_type_keyword(kind())) parse_type();  // float(x), int(y): a conversion
-                else error_got("expected an expression");
+                else error_got("expected an expression", DiagCode::ExpectedExpression);
                 return;
             }
         }

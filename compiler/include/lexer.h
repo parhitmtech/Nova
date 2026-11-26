@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include "interner.h"
+#include "diagnostics.h"
 #include "source.h"
 
 using namespace std;
@@ -68,31 +69,48 @@ struct LexToken
   int line;       // the line as a person reads it (after "#@line" directives)
 };
 
-// Scans one buffer, start.. '\0', into tokens. Layout and lexical errors stop compilation with the line, as the 
-// parser's errors do.
-class Scanner 
+// Scans one buffer of size bytes (followed by a '\0') into tokens. Errors are reported to the diagnostics engine
+// (diagnostics.h) and scanning goes on, so one run finds every lexical error: a character Nova does not use is
+// skipped, '!' reads as 'not', an unterminated string ends at the end of its line, and a bracket left open is closed
+// where a line plainly starts a new statement. The parser reports what is wrong with the layout itself (a missing
+// or unexpected indented block), where it can say what it expected.
+class Scanner
 {
   public:
-    Scanner(SourceLoc start, const char* text) : base(start), begin(text), p(text) {}
+    Scanner(SourceLoc start, const char* text, size_t size) : base(start), begin(text), end(text + size), p(text) {}
     void scan(std::vector<LexToken>& out);
 
   private:
+    struct Bracket
+    {
+      const char* at;
+      char c;
+      int indent;  // the indentation of the line it opened on
+    };
     void begin_line(std::vector<LexToken>& out);  // at a line start: indentation and blank lines
+    void end_line(std::vector<LexToken>& out);    // the end of a logical line: NEWLINE, and a block if it ended with ':'
     void scan_token(std::vector<LexToken>& out);
     void push(std::vector<LexToken>& out, TokenType kind, const char* start, Symbol symbol = 0);
+    void comment();                               // p at '#': to the end of the line, reading a "#@line" directive
+    bool starts_statement(const char* q) const;   // a keyword that only starts a statement or a definition is at q
+    void error(DiagCode code, const char* at, uint32_t length, const std::string& message);
     SourceLoc loc_of(const char* q) const { return base + (SourceLoc)(q - begin); }
 
     SourceLoc base;
     const char* begin;
+    const char* end;
     const char* p;
     int line = 1;
-    std::vector<int> indents = {0};  // indentation of each open block, outermost first
-    std::vector<int> openBrackets;   // line of each '(' / '[' still open
-    bool needBody = false;           // the last logical line ended with ':', so the next one must be indented
-    int headerLine = 0;
+    std::vector<int> indents = {0};     // indentation of each open block, outermost first
+    std::vector<Bracket> openBrackets;  // each '(' / '[' still open
+    bool needBody = false;              // the last logical line ended with ':', so the next one must be indented
+    bool tabReported = false;           // a tab in indentation is reported once
+    size_t lineStart = 0;               // the first token of the current logical line
+    int colons = 0;                     // ':' outside brackets on the current logical line
 };
 
-// Scans a whole program into tokens: the source becomes one buffer of sourceManager ("<input>").
-std::vector<LexToken> scan_program(const std::string& source);
+// Scans a whole program into tokens: the source becomes one buffer of sourceManager, named name (the file name
+// diagnostics print).
+std::vector<LexToken> scan_program(const std::string& source, const std::string& name = "<input>");
 
 #endif  // NOVA_LEXER_H

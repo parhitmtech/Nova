@@ -1,1 +1,1 @@
-Runtime error at line 5: matmul: a batched matmul needs a left side of rank 2 or more (got rank 1)
+:5:16: runtime error[R0003]: matmul: a batched matmul needs a left side of rank 2 or more (got rank 1)

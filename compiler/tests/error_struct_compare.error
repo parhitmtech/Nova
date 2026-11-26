@@ -1,1 +1,1 @@
-Error at line 9: structs cannot be compared: compare their fields
+:9:11: error[E0508]: structs cannot be compared: compare their fields

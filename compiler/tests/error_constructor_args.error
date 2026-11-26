@@ -1,1 +1,1 @@
-Error at line 9: 'Point' constructor takes 1 argument(s) but got 0
+:9:15: error[E0503]: 'Point' constructor takes 1 argument(s) but got 0

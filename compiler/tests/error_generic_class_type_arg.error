@@ -1,1 +1,1 @@
-Error at line 10: 'n' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, vector<T> or map<K, V>
+:10:9: error[E0515]: 'n' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, vector<T> or map<K, V>

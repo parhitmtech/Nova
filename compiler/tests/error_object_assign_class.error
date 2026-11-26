@@ -1,1 +1,1 @@
-Error at line 17: 'p' is a P, not a Q
+:17:5: error[E0501]: 'p' is a P, not a Q

@@ -1,1 +1,1 @@
-Error at line 5: the 'ignite' block must come last
+:5:5: error[E0402]: the 'ignite' block must come last

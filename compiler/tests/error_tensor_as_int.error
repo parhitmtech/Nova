@@ -1,1 +1,1 @@
-Error at line 3: cannot assign Tensor to int variable 't'
+:3:9: error[E0501]: cannot assign Tensor to int variable 't'

@@ -23,12 +23,21 @@ SourceLoc SourceManager::add_buffer(const string& name, string text)
     return buffers.back()->start;
 }
 
-const SourceManager::Buffer* SourceManager:: buffer_of(SourceLoc loc) const
+void SourceManager::clear()
 {
+    buffers.clear();
+    next = 1;
+}
+
+const SourceManager::Buffer* SourceManager::buffer_of(SourceLoc loc) const
+{
+    if (loc == 0) return nullptr;
     // the last buffer that starts at or before loc
     auto it = upper_bound(buffers.begin(), buffers.end(), loc,
                           [](SourceLoc l, const unique_ptr<Buffer>& b) { return l < b->start; });
-    return (it == buffers.begin()) ? nullptr : (it - 1)->get();
+    if (it == buffers.begin()) return nullptr;
+    const Buffer* b = (it - 1)->get();
+    return loc - b->start <= b->text.size() ? b : nullptr;
 }
 
 const char* SourceManager::text_at(SourceLoc loc) const
@@ -37,16 +46,17 @@ const char* SourceManager::text_at(SourceLoc loc) const
     return b ? b->text.c_str() + (loc - b->start) : "";
 }
 
-void SourceManager::add_line_directive(SourceLoc loc, int line)
+void SourceManager::add_line_directive(SourceLoc loc, int line, const string& file)
 {
     Buffer* b = const_cast<Buffer*>(buffer_of(loc));
     if (!b) return;
     uint32_t offset = loc - b->start;
     int physical = (int)(upper_bound(b->lineStarts.begin(), b->lineStarts.end(), offset) - b->lineStarts.begin());
-    b->directives.push_back({physical + 1, line});  // physical is 1-based: the directive's own line
+    string name = file.empty() ? presumed(loc).file : file;
+    b->directives.push_back({physical + 1, line, name});  // physical is 1-based: the directive's own line
 }
 
-PresumedLoc SourceManager::presumed(SourceLoc loc) const 
+PresumedLoc SourceManager::presumed(SourceLoc loc) const
 {
     PresumedLoc p;
     const Buffer* b = buffer_of(loc);
@@ -59,11 +69,32 @@ PresumedLoc SourceManager::presumed(SourceLoc loc) const
     p.line = physical;
     for (auto d = b->directives.rbegin(); d != b->directives.rend(); ++d)
     {
-        if (d->first <= physical)
+        if (d->physical <= physical)
         {
-            p.line = d->second + (physical - d->first);
+            p.line = d->line + (physical - d->physical);
+            p.file = d->file;
             break;
         }
     }
     return p;
+}
+
+string SourceManager::buffer_name(SourceLoc loc) const
+{
+    const Buffer* b = buffer_of(loc);
+    return b ? b->name : string();
+}
+
+string_view SourceManager::line_text(SourceLoc loc, SourceLoc* lineStart) const
+{
+    const Buffer* b = buffer_of(loc);
+    if (!b) return {};
+    uint32_t offset = loc - b->start;
+    auto it = upper_bound(b->lineStarts.begin(), b->lineStarts.end(), offset);
+    uint32_t first = *(it - 1);
+    uint32_t last = first;
+    while (last < b->text.size() && b->text[last] != '\n') last++;
+    if (last > first && b->text[last - 1] == '\r') last--;
+    if (lineStart) *lineStart = b->start + first;
+    return string_view(b->text.data() + first, last - first);
 }

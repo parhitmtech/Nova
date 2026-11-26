@@ -1,1 +1,1 @@
-Error at line 6: 'self.items' is a vector<int>, not vector<double>
+:6:14: error[E0501]: 'self.items' is a vector<int>, not vector<double>

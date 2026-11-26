@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 #include "compiler.h"
+#include "diagnostics.h"
 
 using std::string;
 
@@ -23,7 +24,10 @@ struct MatmulPlan
     std::vector<int> shape;             // the result's shape
 };
 std::string matmul_plan(int a, int b, MatmulPlan& plan);  // "" if the shapes fit, or why they do not
-[[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // "Runtime error at line N: msg", exit 1 
+// A runtime error (an R code of diagnostic_codes.def) at the given line: reported at the expression the current
+// instruction runs, with the calls that led to it, and the program stops (src/runtime/errors.cc)
+[[noreturn]] void runtime_failure(DiagCode code, int line, const std::string& message);
+[[noreturn]] void tensor_shape_error(int line, const std::string& msg);  // runtime_failure(ShapeMismatch, ...)
 int ten_reshape(int a, std::vector<int> shape, int line);  // one dimension may be -1
 int ten_zeros(const std::vector<int>& shape);
 int ten_ones(const std::vector<int>& shape);

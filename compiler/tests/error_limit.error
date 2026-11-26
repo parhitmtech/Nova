@@ -1,0 +1,3 @@
+:3:11: error[E0406]: undeclared variable 'a'
+:4:11: error[E0406]: undeclared variable 'b'
+nova: note: stopped after 2 errors; --error-limit=0 shows them all

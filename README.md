@@ -105,7 +105,11 @@ compiler/build/nova examples/xor.nova # trains a 2-layer network on XOR
 
 | Flag | Does |
 |---|---|
-| `--check` | Type-check only |
+| `--check` | Check the file without running it: every error, and the warnings |
+| `--warnings` | Report warnings when running too |
+| `--diagnostics=json` | Errors and warnings as one JSON document, for tools ([format](docs/ERRORS.md#the-json-format)) |
+| `--error-limit=N` | Stop after N errors (default 20; 0: no limit) |
+| `--color=auto\|always\|never` | Colors in error messages (`auto`: in a terminal, unless `NO_COLOR` is set) |
 | `--optimize` | Constant folding, copy propagation, dead-code elimination, LICM, inlining |
 | `--dump-tree` | Print the parse tree |
 | `--dump-ir` | Print the IR |
@@ -302,7 +306,7 @@ flowchart TB
     end
     subgraph next["Next"]
         direction LR
-        D["D · Tile-level<br/>kernel language → Triton"] --> E["E · Triton backend for a<br/>simulated accelerator"] --> F["F · Error recovery, refcounted<br/>strings, weak fields"]
+        D["D · Tile-level<br/>kernel language → Triton"] --> E["E · Triton backend for a<br/>simulated accelerator"] --> F["F · Refcounted strings,<br/>weak fields"]
     end
     done --> now --> next
 
@@ -353,6 +357,8 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 | [compiler/kernels/triton/IR_WALKTHROUGH.md](compiler/kernels/triton/IR_WALKTHROUGH.md) | Triton's compilation of the matmul, stage by stage |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Performance numbers, method, and the issues they found |
 | [docs/COMPARISON.md](docs/COMPARISON.md) | Nova next to Python/PyTorch, JAX, Mojo, Julia and others |
+| [docs/GRAMMAR.md](docs/GRAMMAR.md) | The complete grammar of Nova, in EBNF: tokens, layout, statements, expressions |
+| [docs/ERRORS.md](docs/ERRORS.md) | Every error and warning, by code, with how to fix it |
 | [docs/RELEASING.md](docs/RELEASING.md) | Publishing the VS Code extension to the Marketplace and Open VSX |
 
 ## 📁 Repository layout

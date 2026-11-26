@@ -1,1 +1,1 @@
-Error at line 4: unexpected indentation
+:4:9: error[E0102]: unexpected indentation

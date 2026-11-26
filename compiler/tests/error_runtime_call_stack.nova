@@ -1,0 +1,12 @@
+# A runtime error inside calls lists them, the latest first; a call repeated in a row (recursion) is one note
+def divide(int a, int b) -> int:
+    return a / b
+
+def down(int n) -> int:
+    if (n == 0):
+        return divide(10, n)
+    return down(n - 1)
+
+ignite:
+    print(1)
+    print(down(5))

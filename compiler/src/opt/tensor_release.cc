@@ -323,6 +323,8 @@ static void insert_tensor_releases_in_body(struct InstructionNode* bodyHead, con
         {
             struct InstructionNode* rel = new InstructionNode();
             rel->line_no = n->line_no;
+            rel->loc = n->loc;
+            rel->loc_length = n->loc_length;
             rel->type = TENSOR_RELEASE;
             rel->tensor_release_inst.slot = s;
             rel->next = n->next;

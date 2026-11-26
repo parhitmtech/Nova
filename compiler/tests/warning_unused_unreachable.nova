@@ -1,0 +1,16 @@
+# --check reports warnings: a variable never used (one named _ is unused on purpose) and code after a return
+def f(int a, int unused_param) -> int:
+    int tmp = a * 2
+    return a
+    print(a)
+    print(a + 1)
+
+ignite:
+    int _ignored = 3
+    int count = 0
+    total = 5
+    while (count < 3):
+        count += 1
+        break
+        count += 2
+    print(f(count, 0))

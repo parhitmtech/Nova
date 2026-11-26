@@ -1,1 +1,1 @@
-Runtime error at line 4: min() of an empty vector
+:4:11: runtime error[R0005]: min() of an empty vector

@@ -69,9 +69,16 @@ namespace {
 
             Symbol name(uint32_t n) const { return tree.token(n).symbol; }
             string text(uint32_t n) const { return string(tree.spelling(n)); }
-            void error(uint32_t n, const string& message)
+            Diagnostic& error(uint32_t n, DiagCode code, const string& message)
             {
-                out.errors.push_back("Error at line " + to_string(tree.token(n).line) + ": " + message);
+                return report_node(tree, n, code, message);
+            }
+            void note_declared(Diagnostic& d, uint32_t decl, const char* what)  // "first declared here"
+            {
+                if (decl == NoNode) return;
+                if (tree.kind(decl) == NodeKind::Assign) decl = tree.children(decl)[0];  // x = 5: the name
+                const LexToken& t = tree.token(decl);
+                DiagnosticEngine::add_note(d, t.loc, t.length, string(what) + " here");
             }
             uint32_t add_entity(EntityKind kind, Symbol name, uint32_t decl)
             {
@@ -131,16 +138,18 @@ namespace {
             {
                 const char* keyword = tree.kind(n) == NodeKind::FunctionDecl ? "def" : 
                                       tree.kind(n) == NodeKind::StructDecl   ? "struct" : "class";
-                error(n, string("the 'ignite' block must come last: move '") + keyword + "' above it");
+                error(n, DiagCode::IgniteNotLast, string("the 'ignite' block must come last: move '") + keyword + "' above it");
                 lateDefinition = true;
             }
+            // A second definition of a name (reported: E0404) has no entity, and its body is not checked
+            bool duplicate = out.refs[n] == NoEntity;
             switch (tree.kind(n))
             {
-                case NodeKind::FunctionDecl: check_function(n); break;
-                case NodeKind::StructDecl:   check_struct(n); break;
-                case NodeKind::ClassDecl:    check_class(n); break;
+                case NodeKind::FunctionDecl: if (!duplicate) check_function(n); break;
+                case NodeKind::StructDecl:   if (!duplicate) check_struct(n); break;
+                case NodeKind::ClassDecl:    if (!duplicate) check_class(n); break;
                 case NodeKind::Ignite:
-                    if (ignite != NoNode) error(n, "a file can have only one 'ignite' block");
+                    if (ignite != NoNode) error(n, DiagCode::DuplicateIgnite, "a file can have only one 'ignite' block");
                     ignite = n;
                     check_block(tree.children(n)[0]);
                     break;
@@ -152,18 +161,20 @@ namespace {
         {
             // at the last line with code on it, however the file ends
             const vector<LexToken>& toks = *tree.tokens;
-            int line = 1;
+            SourceLoc loc = toks.back().loc;
+            uint32_t length = 1;
             for (size_t i = toks.size(); i-- > 0;)
             {
                 TokenType k = toks[i].kind;
                 if (k != NEWLINE && k != INDENT && k != DEDENT && k != END_OF_FILE)
                 {
-                    line = toks[i].line;
+                    loc = toks[i].loc;
+                    length = toks[i].length;
                     break;
                 }
             }
-            out.errors.push_back("Error at line " + to_string(line) + 
-                                 ": no entry point: add an 'ignite:' block at the end of the file (or define 'def main()')");
+            diagnostics.report(DiagCode::NoEntryPoint, loc, length,
+                               "no entry point: add an 'ignite:' block at the end of the file (or define 'def main()')");
         }
         scopes.pop();
     }
@@ -192,7 +203,9 @@ namespace {
         if (b && b->depth == scopes.depth())
         {
             const char* what = kind == EntityKind::Function ? "function" : kind == EntityKind::Struct ? "struct" : "class";
-            error(n, string("duplicate ") + what + " definition '" + text(n) + "'");
+            Diagnostic& d = error(n, DiagCode::DuplicateDefinition, string("duplicate ") + what + " definition '" +
+                                  text(n) + "'");
+            if (b->entity != NoEntity) note_declared(d, out.entities[b->entity].decl, "first defined");
             return;
         }
         uint32_t e = add_entity(kind, name(n), n);
@@ -206,7 +219,8 @@ namespace {
     {
         if (is_variable(name(n)))
         {
-            error(n, "redeclaration of '" + text(n) + "'");
+            Diagnostic& d = error(n, DiagCode::Redeclaration, "redeclaration of '" + text(n) + "'");
+            note_declared(d, out.entities[lookup(name(n))].decl, "first declared");
             return;
         }
         uint32_t e = add_entity(EntityKind::Variable, name(n), n);
@@ -281,11 +295,11 @@ namespace {
                     uint32_t e = tree.kind(t) == NodeKind::TypeName ? lookup(name(t)) : NoEntity;
                     if (e == NoEntity || out.entities[e].kind != EntityKind::Class)
                     {
-                        error(t, "unknown parent class '" + text(t) + "'");
+                        error(t, DiagCode::UnknownName, "unknown parent class '" + text(t) + "'");
                     }
                     else if (tree.kind(tree.children(out.entities[e].decl)[0]) == NodeKind::TypeParams)
                     {
-                        error(t, "a class cannot extend the generic class '" + text(t) + "'");
+                        error(t, DiagCode::InvalidParentClass, "a class cannot extend the generic class '" + text(t) + "'");
                     }
                     else
                     {
@@ -321,20 +335,20 @@ namespace {
             EntityKind k = e == NoEntity ? EntityKind::Variable : out.entities[e].kind;
             if (k != EntityKind::Struct && k != EntityKind::Class && k != EntityKind::TypeParam && k != EntityKind::BuiltinType)
             {
-                error(n, string(unknown) + " '" + text(n) + "'");
+                error(n, DiagCode::UnknownName, string(unknown) + " '" + text(n) + "'");
                 return;
             }
             out.refs[n] = e;
             bool generic = k == EntityKind::BuiltinType || is_generic_class(out.entities[e]);
             if (generic && !hasArguments)
             {
-                error(n, (k == EntityKind::Class ? "class '" : "'") + text(n) + "' is generic: write its type arguments, e.g. " + 
+                error(n, DiagCode::MissingTypeArguments, (k == EntityKind::Class ? "class '" : "'") + text(n) + "' is generic: write its type arguments, e.g. " + 
                           text(n) + "<int>");
                 return;
             }
             if (!generic && hasArguments)
             {
-                error(n, "'" + text(n) + "' takes no type arguments");
+                error(n, DiagCode::UnexpectedTypeArguments, "'" + text(n) + "' takes no type arguments");
                 return;
             }
         }
@@ -349,7 +363,7 @@ namespace {
             EntityKind k = e == NoEntity ? EntityKind::Variable : out.entities[e].kind;
             if (k != EntityKind::Struct && k != EntityKind::Class && k != EntityKind::TypeParam)
             {
-                error(n, "'" + text(n) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, "
+                error(n, DiagCode::InvalidTypeArgument, "'" + text(n) + "' cannot be a type argument: use int, float, double, bool, string, Tensor, a class, "
                          "vector<T> or map<K, V>");
                 return;
             }
@@ -364,7 +378,23 @@ namespace {
     void Checker::check_block(uint32_t n)
     {
         scopes.push();
-        for (uint32_t s : tree.children(n)) check_statement(s);
+        uint32_t after = NoNode;  // the return / break / continue that ended the block's flow, if any
+        bool reported = false;    // the statements after it are reported once, at the first
+        for (uint32_t s : tree.children(n))
+        {
+            NodeKind k = tree.kind(s);
+            if (after != NoNode && !reported && k != NodeKind::Pass)
+            {
+                SourceRange r = tree.range(s);  // the whole statement, from its start
+                Diagnostic& d = diagnostics.report(DiagCode::UnreachableCode, r.begin, r,
+                                                   "this statement never runs: it comes after '" + text(after) + "'");
+                const LexToken& t = tree.token(after);
+                DiagnosticEngine::add_note(d, t.loc, t.length, "the block ends here");
+                reported = true;
+            }
+            check_statement(s);
+            if (after == NoNode && (k == NodeKind::Return || k == NodeKind::Break || k == NodeKind::Continue)) after = s;
+        }
         scopes.pop();
     }
 
@@ -454,14 +484,14 @@ namespace {
             }
             case NodeKind::Return:
             {
-                if (!inFunction) error(n, "return statement outside of a function");
+                if (!inFunction) error(n, DiagCode::ReturnOutsideFunction, "return statement outside of a function");
                 for (uint32_t c : kids) check_expression(c);
                 return;
             }
             case NodeKind::Break:
             case NodeKind::Continue:
             {
-                if (loops == 0) error(n, "'" + text(n) + "' is only allowed inside a loop");
+                if (loops == 0) error(n, DiagCode::BreakOutsideLoop, "'" + text(n) + "' is only allowed inside a loop");
                 return;
             }
             default: //Pass
@@ -480,7 +510,7 @@ namespace {
             }
             case NodeKind::Self:
             {
-                if (selfClass == NoEntity) error(n, "'self' used outside of a class method");
+                if (selfClass == NoEntity) error(n, DiagCode::SelfOutsideMethod, "'self' used outside of a class method");
                 else out.refs[n] = selfClass;
                 return;
             }
@@ -514,15 +544,54 @@ namespace {
     void Checker::refer(uint32_t n, const char* unknown)
     {
         uint32_t e = lookup(name(n));
-        if (e == NoEntity) error(n, string(unknown) + " '" + text(n) + "'");
+        if (e == NoEntity) error(n, DiagCode::UnknownName, string(unknown) + " '" + text(n) + "'");
         else out.refs[n] = e;
     }
 }  // namespace
+
+Diagnostic& report_node(const ParseTree& tree, uint32_t n, DiagCode code, const string& message)
+{
+    const LexToken& t = tree.token(n);
+    NodeKind k = tree.kind(n);
+    bool expression = (k >= NodeKind::IntLiteral && k <= NodeKind::Member) || k == NodeKind::TypeName ||
+                      k == NodeKind::GenericType || k == NodeKind::KeywordArg;
+    SourceRange range = expression ? tree.range(n) : SourceRange{t.loc, t.loc + (t.length ? t.length : 1)};
+    // a call's or an index's token is its '(' or '[': the caret goes at the start of what is called or indexed
+    SourceLoc caret = (k == NodeKind::Call || k == NodeKind::Index || k == NodeKind::Paren) ? range.begin : t.loc;
+    return diagnostics.report(code, caret, range, message);
+}
+
+// W0001: a local variable that nothing refers to after its declaration. Parameters are not reported (a function's
+// signature can need one it does not use), nor names that start with '_' (unused on purpose), nor the code of an
+// imported module (the person compiling cannot change it).
+static void warn_unused_variables(const ParseTree& tree, const CheckResult& out)
+{
+    vector<uint32_t> uses(out.entities.size(), 0);
+    for (uint32_t n = 0; n < out.refs.size(); n++)
+    {
+        uint32_t e = out.refs[n];
+        if (e != NoEntity && out.entities[e].kind == EntityKind::Variable && out.entities[e].decl != n) uses[e]++;
+    }
+    for (uint32_t e = 0; e < out.entities.size(); e++)
+    {
+        const Entity& v = out.entities[e];
+        if (v.kind != EntityKind::Variable || uses[e] > 0 || v.decl == NoNode) continue;
+        NodeKind k = tree.kind(v.decl);
+        if (k != NodeKind::VarDecl && k != NodeKind::Name) continue;  // a Name: declared by its first assignment
+        string_view name = names.text(v.name);
+        if (name.empty() || name[0] == '_') continue;
+        const LexToken& t = tree.token(v.decl);
+        if (sourceManager.presumed(t.loc).file != sourceManager.buffer_name(t.loc)) continue;
+        diagnostics.report(DiagCode::UnusedVariable, t.loc, t.length, "variable '" + string(name) +
+                           "' is never used (name it _" + string(name) + " if that is on purpose)");
+    }
+}
 
 CheckResult check_tree(const ParseTree& tree)
 {
     CheckResult out;
     Checker(tree, out).check_file();
     check_types(tree, out);
+    warn_unused_variables(tree, out);
     return out;
 }

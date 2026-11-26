@@ -1,0 +1,3 @@
+:4:16: error[E0106]: '(' was never closed
+:7:14: error[E0108]: Nova does not use ';' to end statements: start a new line instead
+2 errors.

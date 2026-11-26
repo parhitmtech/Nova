@@ -1,1 +1,1 @@
-Error at line 5: arithmetic requires float/double operands, got int
+:5:21: error[E0507]: arithmetic requires float/double operands, got int

@@ -1,1 +1,1 @@
-Error at line 5: argument 1 of '@' must be a Tensor, got int
+:5:15: error[E0502]: argument 1 of '@' must be a Tensor, got int

@@ -1,0 +1,25 @@
+# Brackets continue a statement over several lines, however the lines after the first are indented: a line at the
+# statement's own indentation continues it too (only a line that can only start a statement ends it).
+def add3(int a, int b, int c) -> int:
+    return a + b + c
+
+ignite:
+    int total = add3(1,
+        2,
+        3)
+    print(total)
+    int other = add3(
+    4,
+    5,
+    6
+    )
+    print(other)
+    bool both = (total > 1 and
+    other > 1)
+    print(both)
+    print(add3(total,
+    other, 0
+    ))
+    bool flag = (not both and
+    true or false)
+    print(flag)

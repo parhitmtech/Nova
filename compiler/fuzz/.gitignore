@@ -1,0 +1,6 @@
+fuzz_frontend
+corpus/
+crash-*
+leak-*
+timeout-*
+oom-*

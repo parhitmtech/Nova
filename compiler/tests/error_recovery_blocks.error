@@ -1,0 +1,5 @@
+:4:8: error[E0205]: 'if' needs its condition in parentheses: if (...)
+:11:18: error[E0201]: expected ':' to start the block, got the end of the line
+:14:9: error[E0102]: unexpected indentation
+:18:5: error[E0104]: expected an indented block after the ':' on line 17
+4 errors.

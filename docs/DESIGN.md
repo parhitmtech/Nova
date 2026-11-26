@@ -162,6 +162,68 @@ asynchronous copies finish at once there, so a missing `cp.async` wait shows onl
 cores) and that it does it well: 95% of cuBLAS in FP32, against the hand-written 82%. Triton's design (tile-level
 ops, layouts in the IR, lowering a level at a time) is the model for Nova's own tensor path.
 
+## Diagnostics
+
+What the compiler says when a program is wrong. The full list of errors is [ERRORS.md](ERRORS.md).
+
+### D1. One engine, stable codes, and two outputs
+
+**Decision.** Every error and warning goes through one engine (`diagnostics.h`), as a code (`E0502`), a severity, a
+source range, a message, notes and fixes. The codes are listed once (`diagnostic_codes.def`, an X-macro) and each
+has an entry in ERRORS.md, which the test runner checks. The engine prints clang's form,
+`file:line:col: error[E0502]: message`, with the source line and its range underlined, or one JSON document
+(`--diagnostics=json`).
+
+**Alternatives.** Messages formatted where they are found (as before: `Error at line N: ...` strings, some on stdout,
+some ending the process); or numbered errors without documentation.
+
+**Why.** An editor needs a range, not a line, and a language server needs the errors as data, not text to parse
+back. Stable codes make an error searchable and let its explanation change without breaking anything. The
+`file:line:col:` form is what editors and VS Code's problem matchers already read.
+
+**Cost.** Every error site names its code, and a new kind of error needs a code and an entry in ERRORS.md.
+
+### D2. Recovery at statements, built on the parser's failure mode
+
+**Decision.** After a syntax error, the parser replaces the statement (or definition, member, case) with an Error
+node and goes on at the next one. The scanner reports its errors and goes on too: a stray `{` or `;` is skipped, `!`
+reads as `not`, an unclosed string ends at the end of its line, and an unclosed bracket ends at the next line that
+can only start a statement. Only the first syntax error of a line is reported, and the names and types are checked
+only once the file parses.
+
+**Alternatives.** Exceptions thrown to a statement boundary; error productions in the grammar; checking types on a
+tree with holes, as Clang and Swift do.
+
+**Why.** The parser already ended every loop after an error, by reading every token as the end of the file; the
+loops over statements now catch that, cut the failed statement's nodes off, and resync. That needs no exceptions
+(the MLIR build has none) and no checks inside the recursive descent. Checking a tree with holes means suppressing
+the errors the holes cause ("unknown name" for a variable whose declaration did not parse); Go makes the same
+choice not to, and the syntax errors are fixed first anyway.
+
+**Cost.** A file with a syntax error shows no type errors until it parses. In an editor, the language server can
+keep showing the last type errors it found while a line is being typed.
+
+### D3. Runtime errors at the expression, with the calls
+
+**Decision.** Each instruction keeps the source location of the expression it runs; the interpreter keeps the
+instruction it is running, and a call frame keeps its call. A runtime error is a diagnostic (an `R` code) at that
+expression, with a "called from here" note for each running call; a recursion is one note with its count.
+
+**Alternatives.** The line only, as before; or a source map built only when an error happens.
+
+**Why.** The line does not say which division divided by zero. The cost is one store per instruction and one per
+call, which measures as nothing on the interpreter benchmarks (within the noise of `calls`, `int_loop` and
+`vector_sum`).
+
+### D4. Fuzzing the front end
+
+**Decision.** A libFuzzer target runs any bytes through the scanner, the parser, the check pass and both printers,
+under ASan and UBSan; CI fuzzes for two minutes per pull request, starting from the golden tests and the standard
+library.
+
+**Why.** A language server runs the front end on every keystroke, on text that is mostly wrong. Error recovery is
+exactly the code that only odd input reaches.
+
 ## Proposed: step C, the `nova` dialect
 
 The plan for Nova IR as an MLIR dialect in SSA form (roadmap step C), for review before it is built.

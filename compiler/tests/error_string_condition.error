@@ -1,1 +1,1 @@
-Error at line 4: a string is not a condition
+:4:9: error[E0509]: a string is not a condition

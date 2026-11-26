@@ -7,13 +7,6 @@
 
 using namespace std;
 
-// Layout and lexical errors stop compilation with the line, like the parser's errors.
-[[noreturn]] static void layout_error(int line, const string& msg)
-{
-    fprintf(stderr, "Error at line %d: %s\n", line, msg.c_str());
-    exit(1);
-}
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Keywords and character classes
 // ─────────────────────────────────────────────────────────────────────────────
@@ -62,57 +55,141 @@ static inline bool is_digit(char c) { return chars.of[(unsigned char)c] & C_DIGI
 // Scanner
 // ─────────────────────────────────────────────────────────────────────────────
 
+void Scanner::error(DiagCode code, const char* at, uint32_t length, const string& message)
+{
+    diagnostics.report(code, loc_of(at), length, message);
+}
+
 void Scanner::push(vector<LexToken>& out, TokenType kind, const char* start, Symbol symbol)
 {
     out.push_back({kind, loc_of(start), (uint32_t)(p - start), symbol, line});
 }
 
+// p at '#': skips the comment. "#@line N" or "#@line N "file"" (written by the import preprocessor) says the next
+// line is line N (of that file).
+void Scanner::comment()
+{
+    const char* start = p;
+    while (p < end && *p != '\n') p++;
+    if (p - start > 7 && strncmp(start, "#@line ", 7) == 0)
+    {
+        int n = atoi(start + 7);
+        string file;
+        const char* q = (const char*)memchr(start + 7, '"', p - start - 7);
+        if (q)
+        {
+            const char* close = (const char*)memchr(q + 1, '"', p - q - 1);
+            if (close) file.assign(q + 1, close);
+        }
+        sourceManager.add_line_directive(loc_of(start), n, file);
+        line = n - 1;
+    }
+}
+
+// Whether the line at q can only be the start of a statement, never the rest of an expression: a line like that,
+// at or left of an open bracket's line, is not that bracket's continuation, so the bracket was left open by
+// mistake. It is: a keyword that only starts a statement or a definition; print(...), which gives no value; or a
+// declaration, a type and then a name (int b, Point p), since two names in a row are not an expression. A line
+// that only might be a statement (x = 1 could be a keyword argument's name=value) is read as a continuation.
+bool Scanner::starts_statement(const char* q) const
+{
+    auto word_at = [&](const char* w) -> size_t {  // the length of the name at w, or 0
+        if (w >= end || !is_id_start(*w)) return 0;
+        const char* e = w;
+        while (e < end && is_id(*e)) e++;
+        return (size_t)(e - w);
+    };
+    auto is = [](const char* w, size_t n, const char* const* list, size_t count) {
+        for (size_t i = 0; i < count; i++) if (strlen(list[i]) == n && strncmp(w, list[i], n) == 0) return true;
+        return false;
+    };
+    static const char* const statements[] = {"def", "class", "struct", "ignite", "if", "elif", "else", "while", "for",
+                                             "do", "switch", "case", "default", "return", "break", "continue", "print"};
+    static const char* const operators[] = {"and", "or", "not"};  // between two names in an expression
+    static const char* const values[] = {"and", "or", "not", "true", "false", "self", "input", "array"};
+    size_t n = word_at(q);
+    if (n == 0) return false;
+    if (is(q, n, statements, sizeof statements / sizeof *statements)) return true;
+    if (is(q, n, values, sizeof values / sizeof *values)) return false;
+    const char* r = q + n;
+    if (r >= end || (*r != ' ' && *r != '\t')) return false;
+    while (r < end && (*r == ' ' || *r == '\t')) r++;
+    size_t m = word_at(r);
+    return m > 0 && !is(r, m, operators, sizeof operators / sizeof *operators);
+}
+
+// The end of a logical line: a NEWLINE, and a ':' at its end (the only ':' outside brackets) opens a block.
+void Scanner::end_line(vector<LexToken>& out)
+{
+    if (out.size() == lineStart) return;
+    const LexToken& last = out.back();
+    if (last.kind == COLON && colons == 1) needBody = true;
+    out.push_back({NEWLINE, loc_of(p), 0, 0, last.line});
+    lineStart = out.size();
+    colons = 0;
+}
+
 // p is at the start of a physical line. Blank and comment-only lines are skipped. Outside brackets, the first line
-// with a token sets the layout: INDENT after a ':' line, DEDENT for each block it closes.
+// with a token sets the layout: INDENT after a ':' line (or wherever the line is indented further: the parser says
+// whether that was expected), DEDENT for each block it closes.
 void Scanner::begin_line(vector<LexToken>& out)
 {
     while (true)
     {
         int column = 0;
-        bool tab = false;
+        const char* lineBegin = p;
+        const char* tab = nullptr;
         while (*p == ' ' || *p == '\t' || *p == '\r')
         {
-            if (*p == '\t') tab = true;
+            if (*p == '\t' && !tab) tab = p;
             if (*p != '\r') column++;
             p++;
         }
-        if (*p == '\0') return;
+        if (p >= end) return;
         if (*p == '\n') { p++; line++; continue; }  // a blank line
-        if (tab) layout_error(line, "indent with spaces, not tabs");
         if (*p == '#')
         {
-            // a comment line: "#@line N" (written by the import preprocessor) says the next line is line N
-            const char* start = p;
-            while (*p && *p != '\n') p++;
-            if (p - start > 7 && strncmp(start, "#@line ", 7) == 0)
-            {
-                int n = atoi(start + 7);
-                sourceManager.add_line_directive(loc_of(start), n);
-                line = n - 1;
-            }
-            if (*p == '\n') { p++; line++; }
+            comment();
+            if (p < end && *p == '\n') { p++; line++; }
             continue;
         }
-        if (!openBrackets.empty()) return;  // a continuation line inside ( ) or [ ]: no layout
+        if (tab && !tabReported && openBrackets.empty())
+        {
+            error(DiagCode::TabIndentation, tab, 1, "indent with spaces, not tabs");
+            tabReported = true;
+        }
+        if (!openBrackets.empty())
+        {
+            // A continuation line inside ( ) or [ ], unless it plainly starts a new statement: then the bracket was
+            // never closed, and the logical line ends before this line.
+            if (column > openBrackets.front().indent || !starts_statement(p)) return;
+            const Bracket& b = openBrackets.front();
+            error(DiagCode::UnclosedBracket, b.at, 1, string("'") + b.c + "' was never closed");
+            diagnostics.add_quiet_range({loc_of(b.at), loc_of(lineBegin) + 1});
+            openBrackets.clear();
+            const char* here = p;
+            p = lineBegin;  // the NEWLINE that ends the bracket's line, before this line
+            end_line(out);
+            p = here;
+        }
 
         if (needBody)
         {
-            if (column <= indents.back())
-            {
-                layout_error(line, "expected an indented block after the ':' on line " + to_string(headerLine));
-            }
-            indents.push_back(column);
-            out.push_back({INDENT, loc_of(p), 0, 0, line});
             needBody = false;
+            if (column > indents.back())
+            {
+                indents.push_back(column);
+                out.push_back({INDENT, loc_of(p), 0, 0, line});
+                return;
+            }
+            // no indented block: the parser reports it, after the NEWLINE that ended the ':' line
         }
         else if (column > indents.back())
         {
-            layout_error(line, "unexpected indentation");
+            // indented further with no ':' before it: the parser reports the unexpected block and skips it
+            indents.push_back(column);
+            out.push_back({INDENT, loc_of(p), 0, 0, line});
+            return;
         }
         while (column < indents.back())
         {
@@ -121,7 +198,9 @@ void Scanner::begin_line(vector<LexToken>& out)
         }
         if (column != indents.back())
         {
-            layout_error(line, "this line's indentation does not match any enclosing block");
+            // between two blocks' indentation: read it as the enclosing block's
+            error(DiagCode::InconsistentIndentation, lineBegin, (uint32_t)(p - lineBegin),
+                  "this line's indentation does not match any enclosing block");
         }
         return;
     }
@@ -130,50 +209,26 @@ void Scanner::begin_line(vector<LexToken>& out)
 void Scanner::scan(vector<LexToken>& out)
 {
     register_keywords();
-    size_t lineStart = out.size();  // the first token of the current logical line
-    int colons = 0;                 // ':' outside brackets on the current logical line
-    
-    // The end of a logical line: a NEWLINE, and a ':' at its end (the only ':' outside brackets) opens a block.
-    auto end_line = [&]() {
-        if (out.size() == lineStart) return;
-        const LexToken& last = out.back();
-        if (last.kind == COLON && colons == 1)
-        {
-            needBody = true;
-            headerLine = out[lineStart].line;
-        }
-        out.push_back({NEWLINE, loc_of(p), 0, 0, last.line});
-        lineStart = out.size();
-        colons = 0;
-    };
-
     begin_line(out);
     lineStart = out.size();
     while (true)
     {
         while (*p == ' ' || *p == '\t' || *p == '\r') p++;
+        if (p >= end) break;
         char c = *p;
-        if (c == '\0') break;
         if (c == '\n')
         {
-            if (openBrackets.empty()) end_line();
+            if (openBrackets.empty()) end_line(out);
             p++;
             line++;
             size_t before = out.size();
             begin_line(out);
-            if (out.size() != before) lineStart = out.size();  // after the INDENT / DEDENTs
+            if (out.size() != before && out.back().kind != NEWLINE) lineStart = out.size();  // after INDENT / DEDENTs
             continue;
         }
         if (c == '#')
         {
-            const char* start = p;
-            while (*p && *p != '\n') p++;
-            if (p - start > 7 && strncmp(start, "#@line", 7) == 0)
-            {
-                int n = atoi(start + 7);
-                sourceManager.add_line_directive(loc_of(start), n);
-                line = n - 1;
-            }
+            comment();
             continue;
         }
         if (c == ':' && openBrackets.empty()) colons++;
@@ -182,14 +237,13 @@ void Scanner::scan(vector<LexToken>& out)
 
     if (!openBrackets.empty())  // the file ended inside ( ) or [ ]
     {
-        layout_error(openBrackets.back() >> 1, string("unclosed '") + ((openBrackets.back() & 1) ? "[" : "(") + 
-                                               "' - missing closing bracket");
+        const Bracket& b = openBrackets.front();
+        error(DiagCode::UnclosedBracket, b.at, 1, string("'") + b.c + "' was never closed");
+        diagnostics.add_quiet_range({loc_of(b.at), loc_of(end) + 1});
+        openBrackets.clear();
     }
-    end_line();
-    if (needBody)
-    {
-        layout_error(headerLine, "expected an indented block after the ':' on line " + to_string(headerLine));
-    }
+    end_line(out);
+    needBody = false;  // a ':' on the last line: the parser reports the missing block
     int lastLine = out.empty() ? line : out.back().line;
     while (indents.size() > 1)
     {
@@ -244,12 +298,16 @@ void Scanner::scan_token(vector<LexToken>& out)
         case '"':
         {
             const char* q = p;
-            while (*q && *q != '"' && *q != '\n') q++;
-            if (*q != '"')
+            while (q < end && *q != '"' && *q != '\n') q++;
+            if (q >= end || *q != '"')
             {
-                // Without this the rest of the line(or file) silently became part of the string.
-                fprintf(stderr, "Error at line %d: unterminated string literal\n", line);
-                exit(1);
+                // the string ends at the end of the line, so the lines after it are read as they are written
+                while (q > p && q[-1] == '\r') q--;
+                error(DiagCode::UnterminatedString, start, (uint32_t)(q - start), "unterminated string literal");
+                Symbol s = names.intern(p, (size_t)(q - p));
+                p = q;
+                push(out, STRING, start, s);
+                return;
             }
             Symbol s = names.intern(p, (size_t)(q - p));
             p = q + 1;
@@ -263,7 +321,15 @@ void Scanner::scan_token(vector<LexToken>& out)
             return;
         case '*': push(out, next_is('=') ? MULTEQ : MULT, start); return;
         case '/':
-            if (*p == '/') layout_error(line, "comments start with '#', not '//'");
+            if (*p == '/')
+            {
+                Diagnostic& d = diagnostics.report(DiagCode::SlashComment, loc_of(start), 2,
+                                                   "comments start with '#', not '//'");
+                d.fixes.push_back({{loc_of(start), loc_of(start + 2)}, "#"});
+                p = start;
+                comment();  // the rest of the line is the comment it was meant to be
+                return;
+            }
             push(out, next_is('=') ? DIVEQ : DIV, start);
             return;
         case '%': push(out, MOD, start); return;
@@ -272,31 +338,40 @@ void Scanner::scan_token(vector<LexToken>& out)
         case ':': push(out, COLON, start); return;
         case ',': push(out, COMMA, start); return;
         case '.': push(out, DOT, start); return;
-        case ';': 
+        case ';':
             if (openBrackets.empty())
             {
-                layout_error(line, "Nova does not use ';' to end statements: start a new line instead");
+                Diagnostic& d = diagnostics.report(DiagCode::Semicolon, loc_of(start), 1,
+                                                   "Nova does not use ';' to end statements: start a new line instead");
+                d.fixes.push_back({{loc_of(start), loc_of(start + 1)}, ""});
+                return;
             }
             push(out, SEMICOLON, start);
             return;
         case '(': case '[':
-            openBrackets.push_back(line << 1 | (c == '[' ? 1 : 0));
+            openBrackets.push_back({start, c, indents.back()});
             push(out, c == '(' ? LPAREN : LBRAC, start);
             return;
         case ')': case ']':
-            if (!openBrackets.empty()) openBrackets.pop_back();
+            if (openBrackets.empty())
+            {
+                error(DiagCode::UnmatchedBracket, start, 1, string("'") + c + "' has no matching '" +
+                                                            (c == ')' ? "(" : "[") + "'");
+                return;
+            }
+            openBrackets.pop_back();
             push(out, c == ')' ? RPAREN : RBRAC, start);
             return;
         case '{': case '}':
-        {
-            layout_error(line, "blocks are written with ':' and an indented body, not braces");
-        }
+            error(DiagCode::BraceBlock, start, 1, "blocks are written with ':' and an indented body, not braces");
+            return;
         case '>': push(out, next_is('=') ? GREATEREQ : GREATER, start); return;
         case '<':
         {
             if (!out.empty() && out.back().kind == TENSOR_TYPE)
             {
-                layout_error(line, "Tensor<dtype> comes with fp32 storage (M1 stage 4); write Tensor for now");
+                error(DiagCode::TensorDtype, start, 1,
+                      "Tensor<dtype> comes with fp32 storage (M1 stage 4); write Tensor for now");
             }
             if (next_is('>')) push(out, NOTEQUAL, start);  // "<>": an older spelling of "!="
             else push(out, next_is('=') ? LESSEQ : LESS, start);
@@ -304,12 +379,36 @@ void Scanner::scan_token(vector<LexToken>& out)
         }
         case '!':
         {
-            push(out, next_is('=') ? NOTEQUAL : ERROR, start);  // a lone '!' is not an operator (use "not")
+            if (next_is('='))
+            {
+                push(out, NOTEQUAL, start);
+                return;
+            }
+            Diagnostic& d = diagnostics.report(DiagCode::BangOperator, loc_of(start), 1, "Nova writes 'not', not '!'");
+            d.fixes.push_back({{loc_of(start), loc_of(start + 1)}, "not "});
+            push(out, NOT, start);  // read as the 'not' it means
             return;
         }
         default:
         {
-            push(out, ERROR, start);
+            // a character Nova does not use: show it as written (a whole UTF-8 character), and skip it
+            unsigned char u = (unsigned char)c;
+            int len = (u >> 5) == 0x6 ? 2 : (u >> 4) == 0xE ? 3 : (u >> 3) == 0x1E ? 4 : 1;
+            bool valid = u >= 0x80 ? len > 1 : (u >= 0x20 && u < 0x7F);
+            for (int k = 1; valid && k < len; k++) valid = start + k < end && ((unsigned char)start[k] & 0xC0) == 0x80;
+            string shown;
+            if (valid)
+            {
+                shown = string(start, len);
+                p = start + len;
+            }
+            else
+            {
+                char buf[8];
+                snprintf(buf, sizeof buf, "\\x%02X", u);
+                shown = buf;
+            }
+            error(DiagCode::UnexpectedCharacter, start, (uint32_t)(p - start), "unexpected character '" + shown + "'");
             return;
         }
     }
@@ -319,11 +418,11 @@ void Scanner::scan_token(vector<LexToken>& out)
 // A whole program
 // ─────────────────────────────────────────────────────────────────────────────
 
-vector<LexToken> scan_program(const string& source)
+vector<LexToken> scan_program(const string& source, const string& name)
 {
-    SourceLoc start = sourceManager.add_buffer("<input>", source);
+    SourceLoc start = sourceManager.add_buffer(name, source);
     vector<LexToken> tokens;
     tokens.reserve(source.size() / 3 + 16);
-    Scanner(start, sourceManager.text_at(start)).scan(tokens);
+    Scanner(start, sourceManager.text_at(start), source.size()).scan(tokens);
     return tokens;
 }

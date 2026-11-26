@@ -1,1 +1,1 @@
-Error at line 3: indent with spaces, not tabs
+:3:1: error[E0101]: indent with spaces, not tabs

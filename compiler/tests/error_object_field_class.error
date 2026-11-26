@@ -1,1 +1,1 @@
-Error at line 22: 'h.p' is a P, not a Q
+:22:7: error[E0501]: 'h.p' is a P, not a Q

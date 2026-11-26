@@ -1,1 +1,1 @@
-Error at line 7: Point has 2 field(s); give one value for each
+:7:15: error[E0503]: Point has 2 field(s); give one value for each

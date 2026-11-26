@@ -1,1 +1,1 @@
-Error at line 5: cannot concatenate string with int
+:5:13: error[E0507]: cannot concatenate string with int

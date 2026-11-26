@@ -65,9 +65,8 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     char want = (i < fixed) ? sig[i] : (repeat ? sig[fixed - 1] : 0);
                     if (want == 'T' && !tensor_is_live(mem[a[i]]))
                     {
-                        fprintf(stderr, "Runtime error at line %d: tensor argument %d is not set or was already "
-                                        "freed (handle %d)\n", pc->line_no, i + 1, mem[a[i]]);
-                        exit(1);
+                        runtime_failure(DiagCode::UseAfterFree, pc->line_no, "tensor argument " + std::to_string(i + 1) +
+                                      " is not set or was already freed");
                     }
                 }
             }
@@ -89,7 +88,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     {
                         if (mem[a[i]] < 0)
                         {
-                            tensor_shape_error(pc->line_no, "negative dimension " + std::to_string(mem[a[i]]));
+                            runtime_failure(DiagCode::InvalidDimension, pc->line_no, "negative dimension " + std::to_string(mem[a[i]]));
                         }
                         shape.push_back(mem[a[i]]);
                     }
@@ -110,10 +109,8 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     // silently dropping the fraction.
                     if (!tensor_is_live(mem[a[0]]))
                     {
-                        fprintf(stderr, "Runtime error at line%d: tensor_get on a freed tensor handle (%d) - "
-                                        "this means the compiler's tensor-free pass release it too early; "
-                                        "pleae report this as bug.\n", pc->line_no, mem[a[0]]);
-                        exit(1);
+                        runtime_failure(DiagCode::UseAfterFree, pc->line_no, "tensor_get on a freed tensor: the "
+                                      "compiler freed it too early; please report this as a bug");
                     }
                     // double v = tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]);
                     // one index per dimension, checked against the shape
@@ -132,10 +129,8 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 {
                     if (!tensor_is_live(mem[a[0]]))
                     {
-                        fprintf(stderr, "Runtime error at line %d: tensor_set on a freed handle (%d) - "
-                                        "this means the compiler's tensor-free pass released it too early; "
-                                        "please report this as a bug.\n", pc->line_no, mem[a[0]]);
-                        exit(1);
+                        runtime_failure(DiagCode::UseAfterFree, pc->line_no, "tensor_set on a freed tensor: the "
+                                      "compiler freed it too early; please report this as a bug");
                     }
                     // tensor_heap[mem[a[0]]].at(mem[a[1]], mem[a[2]]) = getScalar(3);
                     // indices first, value last: tensor_set(t, i, j, k, v)
@@ -433,7 +428,7 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 {
                     if (!tensor_is_live(mem[a[0]]))
                     {
-                        tensor_shape_error(pc->line_no, "tensor_reshape on a freed or invalid tensor handle");
+                        runtime_failure(DiagCode::UseAfterFree, pc->line_no, "tensor_reshape on a freed or invalid tensor handle");
                     }
                     std::vector<int> shape;
                     for (int i = 1; i < tc.num_args; i++) shape.push_back(mem[a[i]]);
@@ -446,7 +441,11 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                 {
                     int strIdx = mem[a[0]];
                     res = ten_load_csv(strMem[strIdx], mem[a[1]], mem[a[2]]);
-                    if (res < 0) { fprintf(stderr, "tensor_load_csv failed\n"); exit(1); }
+                    if (res < 0)
+                    {
+                        runtime_failure(DiagCode::FileReadFailed, pc->line_no, "tensor_load_csv could not read '" +
+                                      strMem[strIdx] + "' as a CSV file of numbers");
+                    }
                     break;
                 }
                 // progress_bar(total, width) -> handle; progress_update(bar, step, loss); progress_done(bar)
@@ -493,18 +492,17 @@ InstructionNode* exec_tensor_call(InstructionNode* pc)
                     int th = mem[a[0]];
                     if (!tensor_is_live(th))
                     {
-                        fprintf(stderr, "Runtime error at line %d: %s on a freed or invalid tendor handle (%d)\n",
-                                pc->line_no, tc.op == TEN_RANK ? "tensor_rank" : "tensor_dim", th);
-                        exit(1);
+                        runtime_failure(DiagCode::UseAfterFree, pc->line_no, std::string(tc.op == TEN_RANK ?
+                                      "tensor_rank" : "tensor_dim") + " on a tensor that is not set or was freed");
                     }
                     Tensor& T = tensor_heap[th];
                     if (tc.op == TEN_RANK) { res = T.ndim(); break; }
                     int d = mem[a[1]];
                     if (d < 0 || d >= T.ndim())
                     {
-                        fprintf(stderr, "Runtime error at line %d: tensor_dim: dimension %d out of range for a rank-%d tensor\n",
-                                pc->line_no, d, T.ndim());
-                        exit(1);
+                        runtime_failure(DiagCode::IndexOutOfRange, pc->line_no, "tensor_dim: dimension " +
+                                      std::to_string(d) + " out of range for a rank-" + std::to_string(T.ndim()) +
+                                      " tensor");
                     }
                     res = T.shape[d];
                     break;

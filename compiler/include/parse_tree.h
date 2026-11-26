@@ -72,6 +72,9 @@ enum class NodeKind : uint8_t
     Call,               // token: '('. children: what is called (a Name, Member, TypeName, or GenericType), the arguments
     Index,              // token: '['. children: the value, the indexes
     Member,             // token: the member's name. children: the value
+
+    // error recovery
+    Error,              // a statement or definition that did not parse (its error is reported). token: its first
 };
 
 struct ParseNode
@@ -88,17 +91,19 @@ class ParseTree
 
         const std::vector<LexToken>* tokens;
         std::vector<ParseNode> nodes;       // postorder: a node's children come right before it, and the root (File) is last
-        std::vector<std::string> errors;    // "Error at line N: ..."; when there are any, the tree is incomplete
         
         uint32_t root() const { return (uint32_t)nodes.size() - 1; }
         NodeKind kind(uint32_t n) const { return nodes[n].kind; }
         const LexToken& token(uint32_t n) const { return (*tokens)[nodes[n].token]; }
         std::string_view spelling(uint32_t n) const;        // its token's text as written
         std::vector<uint32_t> children(uint32_t n) const;   // in source order
+        // The source n covers: from its subtree's first token to the end of its last (a diagnostic underlines it)
+        SourceRange range(uint32_t n) const;
         void print(std::ostream& out) const;                // as nested lists, one statement per line (--dump-tree)
 };
 
-// Parses a whole file's tokens. The parser stops at the first error (error recovery is roadmap phase 3).
+// Parses a whole file's tokens. Errors go to the diagnostics engine; after one, the parser goes on at the next
+// statement, and the statement that failed is an Error node.
 ParseTree build_parse_tree(const std::vector<LexToken>& tokens);
 
 #endif  // NOVA_PARSE_TREE_H

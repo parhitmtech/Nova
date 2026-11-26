@@ -1,1 +1,1 @@
-Error at line 3: 'make' returns Tensor but is declared '-> int'
+:3:5: error[E0504]: 'make' returns Tensor but is declared '-> int'

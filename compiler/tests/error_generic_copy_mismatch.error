@@ -1,1 +1,1 @@
-Error at line 9: 'b' is a Box<int>, not a Box<double>
+:9:14: error[E0501]: 'b' is a Box<int>, not a Box<double>
