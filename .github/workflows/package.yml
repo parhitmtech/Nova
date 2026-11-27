@@ -6,6 +6,11 @@ name: VS Code packages
 
 on:
   workflow_call:
+    inputs:
+      prerelease:
+        description: package as a pre-release (vsce publishes a pre-release only from a package built as one)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -70,7 +75,7 @@ jobs:
         run: |
           npm ci
           node scripts/bundle.js ${{ matrix.target }}
-          npx vsce package --target ${{ matrix.target }} --no-dependencies -o nova-${{ matrix.target }}.vsix
+          npx vsce package --target ${{ matrix.target }} --no-dependencies ${{ inputs.prerelease && '--pre-release' || '' }} -o nova-${{ matrix.target }}.vsix
       - name: The package's tools are executable (Linux)
         if: runner.os == 'Linux'
         working-directory: editors/vscode/nova
