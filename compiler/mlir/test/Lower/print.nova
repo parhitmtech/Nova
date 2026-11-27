@@ -1,0 +1,16 @@
+# RUN: nova-lower %s | nova-opt | FileCheck %s
+#
+# print(a, b): a nova.print per value, the ones before the last marked continues (a space follows, not a newline);
+# print(): nova.newline. Written as text and parsed back (nova-opt), so the forms round-trip: nova.newline is an op
+# of its own, since an optional value at the end of nova.print would take the next line's %x as its value.
+
+ignite:
+    int total = 30
+    double d = 2.5
+    # CHECK: nova.print %{{.*}} {continues} : i32
+    # CHECK-NEXT: nova.print %{{.*}} : f64
+    print(total, d)
+    # CHECK-NEXT: nova.newline
+    print()
+    # CHECK: nova.print %{{.*}} : i32
+    print(7)

@@ -1,0 +1,16 @@
+# RUN: nova-lower %s | nova-opt --nova-to-llvm | mlir-translate --mlir-to-llvmir -o %t.ll
+# RUN: clang -Wno-override-module %t.ll %nova_runtime -o %t.exe
+# RUN: %t.exe | FileCheck %s
+#
+# print, as Python's, compiled to a native binary: several values with a space between them, and print() for an empty
+# line. The CHECK lines are what the interpreter prints (compiler/tests/print_values.nova has the same rules).
+
+ignite:
+    int total = 30
+    double d = 2.5
+    # CHECK: 30 2.500000 1
+    print(total, d, true)
+    # CHECK-EMPTY:
+    print()
+    # CHECK-NEXT: 7
+    print(7)

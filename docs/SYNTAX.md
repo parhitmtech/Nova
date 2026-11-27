@@ -239,6 +239,10 @@ too: `self.W.T`, `layer.W[0, 1] = v`. A tensor and a number combine with `+ - *`
 
 ## 9. Built-ins
 
+`print` works as Python's: `print("total:", total)` prints its values with a space between them, then a newline,
+and `print()` prints an empty line. A tensor prints as its rows and ends its own line, so a value after it starts the
+next one: `print("W =", W)`.
+
 Tensor built-ins lose the `tensor_` prefix: `zeros`, `ones`, `randn`, `xavier`, `reshape`, `relu`,
 `sigmoid`, `tanh`, `softmax`, `matmul`, `mse_loss`, `cross_entropy_loss`, `requires_grad`,
 `backward`, ... Method forms are also available: `t.sum(0)`, `t.reshape(6, -1)`, `t.grad`.
