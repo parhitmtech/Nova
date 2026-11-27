@@ -4,6 +4,20 @@ All notable changes to the Nova Compiler extension. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Odd minor versions (0.1, 0.3) are pre-releases.
 
+## [0.3.1] (pre-release)
+
+### Fixed
+
+- `print` works as Python's: `print("total:", total)` prints every value, with a space between them (only the first
+  was printed), and `print()` prints an empty line (it stopped the compiler).
+- `print(t)` of a tensor prints its rows again, not a number.
+- The messages for a tool that is not found say to check or clear its setting: the extension ships its tools.
+
+### Added
+
+- A link to [Getting started](https://github.com/parhitmtech/Nova/blob/main/docs/GETTING_STARTED.md), and a
+  Troubleshooting section, on the extension's page.
+
 ## [0.3.0] (pre-release)
 
 ### Added
