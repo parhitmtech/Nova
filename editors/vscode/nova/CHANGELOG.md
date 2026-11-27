@@ -1,6 +1,6 @@
 # Changelog
 
-All notable changes to the Nova Programming Language extension. The format follows
+All notable changes to the Nova Compiler extension. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Odd minor versions (0.1, 0.3) are pre-releases.
 

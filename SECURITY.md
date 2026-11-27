@@ -4,7 +4,7 @@
 
 | Component | Supported |
 |---|---|
-| Nova Programming Language extension for VS Code | the latest release |
+| Nova Compiler extension for VS Code | the latest release |
 | The Nova compiler and interpreter (`main`) | yes |
 | The NovaComp cloud IDE (`main`) | yes |
 
