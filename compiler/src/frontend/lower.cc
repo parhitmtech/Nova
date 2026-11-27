@@ -454,7 +454,8 @@ namespace
             int call_function(uint32_t n, uint32_t fn, const vector<uint32_t>& args, int object = -1,
                               uint32_t fnCopy = NoInstance);
             void release_temporaries(const vector<uint32_t>& args, const vector<int>& slots, int line);
-            void print(uint32_t n, uint32_t arg);
+            void print(uint32_t n, const vector<uint32_t>& args);
+            void print_value(uint32_t n, uint32_t arg, bool last);
             void array_access(InstructionType type, uint32_t array, int index, int value, int line);
 
             // Tensors
@@ -1488,7 +1489,7 @@ namespace
             }
             return tensor_op(op->second, slots, types, line(n));
         }
-        if (f == "print") print(n, args[0]);
+        if (f == "print") print(n, args);
         if (f != "input") return 0;
         int slot = alloc_slot();
         add(IN, line(n))->input_inst.var_index = slot;
@@ -1562,8 +1563,26 @@ namespace
         }
     }
 
-    // print(x): a string literal is printed from strMem directly
-    void Lowerer::print(uint32_t n, uint32_t arg)
+    // print(a, b, ...), as Python's: the values with a space between them, then a newline (an OUT without its
+    // newline prints a space after its value); print() prints an empty line. A tensor prints as its rows and ends
+    // its own line, so a value after it starts the next one (as the native code's nova_print_tensor does).
+    void Lowerer::print(uint32_t n, const vector<uint32_t>& args)
+    {
+        if (args.empty())
+        {
+            InstructionNode* node = add(OUT, line(n));
+            node->output_inst.var_index = next_str_available++;
+            strMem.push_back("");
+            node->output_inst.is_string = true;
+            node->output_inst.value_type = TYPE_STRING;
+            node->output_inst.newline = true;
+            return;
+        }
+        for (size_t i = 0; i < args.size(); i++) print_value(n, args[i], i + 1 == args.size());
+    }
+
+    // One of print's values: a string literal is printed from strMem directly, a tensor by TEN_PRINT
+    void Lowerer::print_value(uint32_t n, uint32_t arg, bool last)
     {
         InstructionNode* node;
         if (tree.kind(arg) == NodeKind::StringLiteral)
@@ -1578,12 +1597,17 @@ namespace
         {
             int v = expr(arg);
             VarType t = type_of(arg);
+            if (t == TYPE_TENSOR)
+            {
+                tensor_op(TEN_PRINT, {v}, {TYPE_TENSOR}, line(n));
+                return;
+            }
             node = add(OUT, line(n));
             node->output_inst.var_index = v;
             node->output_inst.is_string = node->output_inst.is_string_var = t == TYPE_STRING;
             node->output_inst.value_type = t;
         }
-        node->output_inst.newline = true;
+        node->output_inst.newline = last;
     }
 
     // a[i]: ARRAY_READ copies the element into value, ARRAY_WRITE copies value into it, checking i against the size

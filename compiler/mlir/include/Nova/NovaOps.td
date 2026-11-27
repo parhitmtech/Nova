@@ -116,8 +116,12 @@ def Nova_AddScalarOp : Nova_ScalarOp<"add_scalar", "every element plus a number"
 // nova.print %t : !nova.tensor<f64>   (Nova's print and tensor_print: writes, so not Pure)
 def Nova_PrintOp : Nova_Op<"print"> {
     let summary = "print a value";
-    let arguments = (ins AnyType:$value);
-    let assemblyFormat = "$value attr-dict `:` type($value)";
+    let description = [{
+        Prints a value, then a newline: `nova.print %x : i32`. With `continues`, a space instead of the newline: the
+        values of `print(a, b, ...)` before the last. With no value, an empty line: `nova.print`, for `print()`.
+    }];
+    let arguments = (ins Optional<AnyType>:$value, UnitAttr:$continues);
+    let assemblyFormat = "($value^ `:` type($value))? attr-dict";
 }
 
 #endif  // NOVA_OPS

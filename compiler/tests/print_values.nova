@@ -1,0 +1,15 @@
+# print, as Python's: several values with a space between them, an empty line for print(), and a tensor printed as
+# its rows (it ends its own line, so a value after it starts the next one)
+ignite:
+    int total = 30
+    print("total:", total)
+    print(1, 2.5, true, "x")
+    print()
+    print("after an empty line")
+    Tensor t = ones(2, 2)
+    print(t)
+    print("t =", t, "rows:", t.rows)
+    double d = 1.5
+    print(d)
+    string s = "text"
+    print(s, s)
