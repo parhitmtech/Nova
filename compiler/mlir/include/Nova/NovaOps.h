@@ -2,6 +2,7 @@
 #ifndef NOVA_NOVAOPS_H
 #define NOVA_NOVAOPS_H
 
+#include "mlir/Bytecode/BytecodeOpInterface.h"  // an op with attributes (print's continues) stores them as properties
 #include "mlir/IR/BuiltinTypes.h"
 #include "mlir/IR/OpDefinition.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
