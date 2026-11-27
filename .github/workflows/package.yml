@@ -1,0 +1,93 @@
+# The Nova extension's packages, one per platform, with nova, nova-lsp and the standard library inside: built,
+# their tools tested, packaged, unpacked, and tested in VS Code as installed. Called by CI (every pull request) and by
+# the release workflow, so a release ships exactly what CI tests. Each package is kept as an artifact named
+# nova-<target>.vsix.
+name: VS Code packages
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # The packages people install: one per platform, with nova, nova-lsp and the standard library inside, linked so
+  # that they run with nothing else installed. Each is built, its tools tested, packaged, unpacked, and tested in VS
+  # Code as it is (no settings, nothing on PATH from the build).
+  package:
+    name: VS Code package (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04         # an older glibc, so the package runs on older Linux distributions too
+            target: linux-x64
+            flags: -O2 -static-libstdc++ -static-libgcc
+          - os: windows-2022
+            target: win32-x64
+            flags: -O2 -static
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - name: Build nova and nova-lsp (Linux)
+        if: runner.os == 'Linux'
+        run: make -C compiler -j4 CXXFLAGS="${{ matrix.flags }}" && make -C compiler lsp CXXFLAGS="${{ matrix.flags }}"
+      - uses: msys2/setup-msys2@v2
+        if: runner.os == 'Windows'
+        with:
+          msystem: UCRT64
+          install: mingw-w64-ucrt-x86_64-gcc make
+      - name: Build nova and nova-lsp (Windows, MinGW-w64 UCRT, static)
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          make -C compiler -j4 CXXFLAGS="${{ matrix.flags }}" && make -C compiler lsp CXXFLAGS="${{ matrix.flags }}"
+          # nothing but Windows' own DLLs: no libstdc++, libgcc or winpthread to ship or to find on PATH
+          for f in compiler/build/nova.exe compiler/build/nova-lsp.exe; do
+            objdump -p "$f" | grep "DLL Name"
+            if objdump -p "$f" | grep -iE "DLL Name: (libstdc|libgcc|libwinpthread)"; then echo "::error::$f needs MinGW DLLs"; exit 1; fi
+          done
+      - name: No C++ runtime to find at run time (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          for f in compiler/build/nova compiler/build/nova-lsp; do
+            ldd "$f"
+            if ldd "$f" | grep -E "libstdc\+\+|libgcc_s"; then echo "::error::$f links the C++ runtime dynamically"; exit 1; fi
+          done
+      - name: The language's golden tests, with these builds
+        run: node compiler/tests/run.js
+      - name: The language server's protocol tests, with these builds
+        run: node compiler/lsp/test/run.js
+      - name: Package
+        working-directory: editors/vscode/nova
+        run: |
+          npm ci
+          node scripts/bundle.js ${{ matrix.target }}
+          npx vsce package --target ${{ matrix.target }} --no-dependencies -o nova-${{ matrix.target }}.vsix
+      - name: The package's tools are executable (Linux)
+        if: runner.os == 'Linux'
+        working-directory: editors/vscode/nova
+        run: zipinfo nova-linux-x64.vsix | grep -E "extension/bin/nova(-lsp)?$" | tee /dev/stderr | awk '{ if ($1 !~ /^-rwx/) exit 1 }'
+      - name: Unpack the package
+        working-directory: editors/vscode/nova
+        run: python -c "import zipfile, sys; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" nova-${{ matrix.target }}.vsix unpacked
+      - name: The package in VS Code (Linux)
+        if: runner.os == 'Linux'
+        working-directory: editors/vscode/nova
+        run: NOVA_TEST_BUNDLED=1 NOVA_TEST_EXTENSION_PATH="$PWD/unpacked/extension" xvfb-run -a npm run test:extension
+      - name: The package in VS Code (Windows)
+        if: runner.os == 'Windows'
+        working-directory: editors/vscode/nova
+        run: NOVA_TEST_BUNDLED=1 NOVA_TEST_EXTENSION_PATH="$(cygpath -w "$PWD/unpacked/extension")" npm run test:extension
+      - uses: actions/upload-artifact@v7
+        with:
+          name: nova-${{ matrix.target }}.vsix
+          path: editors/vscode/nova/nova-${{ matrix.target }}.vsix
+          retention-days: 14
