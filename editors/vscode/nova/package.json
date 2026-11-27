@@ -1,5 +1,5 @@
 {
-  "name": "nova",
+  "name": "nova-programming-language",
   "displayName": "Nova Programming Language",
   "description": "Nova: a compiled, statically typed language with Python's syntax, built for machine learning.",
   "version": "0.3.0",
