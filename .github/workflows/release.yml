@@ -1,0 +1,108 @@
+# Releases the Nova extension. Pushing a tag nova-v<version> (the version in editors/vscode/nova/package.json):
+#   1. checks the version: the tag matches package.json, and CHANGELOG.md has its entry;
+#   2. builds and tests the packages for each platform, exactly as CI does (package.yml);
+#   3. makes a GitHub release with the packages attached (they install from there too: code --install-extension);
+#   4. publishes them to the VS Code Marketplace and to Open VSX, as a pre-release when the minor version is odd.
+# Run by hand (Actions > Release the Nova extension > Run workflow), it does steps 1 and 2 only, unless "publish" is
+# ticked: a dry run of a release. Publishing needs the secrets VSCE_PAT and OVSX_PAT (docs/RELEASING.md).
+name: Release the Nova extension
+
+on:
+  push:
+    tags: ['nova-v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish to the Marketplace and Open VSX (otherwise build, test, and stop)
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-nova
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: The version to release
+    # the Nova extension is released from its own repository (NovaQuantum carries this file, and does not run it)
+    if: github.repository == 'parhitmtech/Nova'
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        working-directory: editors/vscode/nova
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version $version"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "nova-v$version" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME does not match package.json's version $version (tag nova-v$version)"; exit 1
+          fi
+          if ! grep -q "^## \[$version\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no entry for $version (a heading '## [$version]')"; exit 1
+          fi
+          minor=$(echo "$version" | cut -d. -f2)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([ $((minor % 2)) -eq 1 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: version
+    uses: ./.github/workflows/package.yml
+
+  release:
+    name: Release ${{ needs.version.outputs.version }}
+    needs: [version, package]
+    if: github.ref_type == 'tag' || inputs.publish
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      PRERELEASE: ${{ needs.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: nova-*.vsix
+          merge-multiple: true
+          path: packages
+      - name: The packages
+        run: ls -l packages && test "$(ls packages/*.vsix | wc -l)" -ge 2
+      - name: GitHub release, with the packages attached
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # the release notes: this version's section of CHANGELOG.md
+          awk -v h="## [$VERSION]" 'index($0, h) == 1 {on=1; next} on && /^## \[/ {exit} on' \
+            editors/vscode/nova/CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" packages/*.vsix --title "Nova extension $VERSION" --notes-file notes.md \
+            $([ "$PRERELEASE" = true ] && echo --prerelease)
+      - name: Publish to the VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: |
+          if [ -z "$VSCE_PAT" ]; then
+            echo "::error::the secret VSCE_PAT is not set: add the Azure DevOps token (Settings > Secrets and variables > Actions; docs/RELEASING.md)"
+            exit 1
+          fi
+          npx --yes @vscode/vsce@4.1.0 publish --packagePath packages/*.vsix $([ "$PRERELEASE" = true ] && echo --pre-release)
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: |
+          if [ -z "$OVSX_PAT" ]; then
+            echo "::error::the secret OVSX_PAT is not set: add the Open VSX token (Settings > Secrets and variables > Actions; docs/RELEASING.md)"
+            exit 1
+          fi
+          for p in packages/*.vsix; do
+            npx --yes ovsx@1.4.0 publish "$p" $([ "$PRERELEASE" = true ] && echo --pre-release)
+          done
