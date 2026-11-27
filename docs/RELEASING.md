@@ -42,12 +42,22 @@ Tokens expire (Azure DevOps allows at most a year): put the renewal date in a ca
 
 ## Building a package locally
 
+Each platform has its own package, with Nova's tools inside it (`bin/nova`, `bin/nova-lsp`, `stdlib/`):
+
 ```bash
+make -C compiler CXXFLAGS="-O2 -static-libstdc++ -static-libgcc"        # Windows (MSYS2 UCRT64): CXXFLAGS="-O2 -static"
+make -C compiler lsp CXXFLAGS="-O2 -static-libstdc++ -static-libgcc"
 cd editors/vscode/nova
 npm ci
-npm run package                                   # writes nova-<version>.vsix
-code --install-extension nova-<version>.vsix      # try it in your own VS Code
+node scripts/bundle.js linux-x64                                       # or win32-x64
+npx vsce package --target linux-x64 --no-dependencies -o nova-linux-x64.vsix
+code --install-extension nova-linux-x64.vsix                           # try it in your own VS Code
 ```
+
+CI does the same on every pull request (the "VS Code package" jobs): it builds the tools on Ubuntu 22.04 (an
+older glibc) and on Windows with MinGW-w64 linked statically, checks that they need no C++ runtime at run time,
+runs the golden and language server tests with them, packages, unpacks the package, and runs the extension's tests
+in VS Code against it. The packages are kept as the run's artifacts.
 
 ## Versions
 

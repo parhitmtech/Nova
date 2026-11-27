@@ -8,6 +8,8 @@ Odd minor versions (0.1, 0.3) are pre-releases.
 
 ### Added
 
+- Packages for Linux (x64) and Windows (x64) that ship `nova`, `nova-lsp` and the standard library, linked to run
+  with nothing else installed.
 - The language server, `nova-lsp`, built on Nova's own compiler: errors and warnings as you type with their codes
   and links to their explanations, quick fixes, hover, go to definition, the outline, completion (also of members
   after `.`) and signature help.
@@ -22,6 +24,11 @@ Odd minor versions (0.1, 0.3) are pre-releases.
 ### Changed
 
 - Needs VS Code 1.91 or later.
+
+### Fixed
+
+- Activation no longer waits for the "nova-lsp was not found" message to be dismissed (an extension that depends on
+  this one, such as Nova Quantum, waited until it was).
 
 ## [0.1.0] (pre-release)
 

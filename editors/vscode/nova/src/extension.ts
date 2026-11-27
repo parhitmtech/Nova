@@ -17,7 +17,13 @@ export function findTool(context: vscode.ExtensionContext, setting: string, name
   const configured = vscode.workspace.getConfiguration('nova').get<string>(setting, '').trim();
   if (configured) return fs.existsSync(configured) ? configured : undefined;
   const bundled = context.asAbsolutePath(path.join('bin', exe(name)));
-  if (fs.existsSync(bundled)) return bundled;
+  if (fs.existsSync(bundled)) {
+    // A package unzipped without its file modes leaves the program not executable: mark it again
+    if (process.platform !== 'win32') {
+      try { fs.accessSync(bundled, fs.constants.X_OK); } catch { try { fs.chmodSync(bundled, 0o755); } catch { /* reported when it fails to start */ } }
+    }
+    return bundled;
+  }
   for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
     if (!dir) continue;
     const candidate = path.join(dir, exe(name));
@@ -46,11 +52,14 @@ async function startServer(context: vscode.ExtensionContext): Promise<void> {
   const server = findTool(context, 'server.path', 'nova-lsp');
   if (!server) {
     setStatus('$(error) Nova', 'nova-lsp was not found: set nova.server.path', true);
-    const choice = await vscode.window.showWarningMessage(
+    // Not awaited: the message stays until it is dismissed, and activation (which extensions that depend on this one,
+    // such as Nova Quantum, wait for) must not wait with it
+    void vscode.window.showWarningMessage(
       "Nova's language server (nova-lsp) was not found, so errors are not shown as you type. Build it with " +
         "'make -C compiler lsp' and set its path in the setting nova.server.path.",
-      'Open Settings');
-    if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'nova.server.path');
+      'Open Settings').then(choice => {
+      if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'nova.server.path');
+    });
     return;
   }
   const home = novaHome(context);

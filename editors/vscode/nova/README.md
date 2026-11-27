@@ -19,8 +19,7 @@ ignite:                           # the entry point
     print(h.rows + square(3))     # 13
 ```
 
-> **Preview.** The extension is a pre-release. It needs Nova's tools on your machine for now (see
-> [Requirements](#requirements)); a release that ships them is coming.
+> **Preview.** The extension is a pre-release, for Linux (x64) and Windows (x64).
 
 ## Features
 
@@ -42,15 +41,18 @@ ignite:                           # the entry point
 
 ## Requirements
 
-The extension runs two of Nova's programs: `nova-lsp`, the language server, and `nova`, the compiler (for Run
-File and the REPL). Build them from [the repository](https://github.com/parhitmtech/Nova):
+None on Linux (x64) and Windows (x64): the extension ships Nova's compiler (`nova`), its language server
+(`nova-lsp`) and the standard library, built to run with nothing else installed.
+
+To use tools you built yourself instead (a newer compiler, say), build them from
+[the repository](https://github.com/parhitmtech/Nova):
 
 ```bash
 make -C compiler          # compiler/build/nova
 make -C compiler lsp      # compiler/build/nova-lsp
 ```
 
-Then put them on your `PATH`, or set their paths in the settings below. Nova's standard library (`orbit
+and set their paths in the settings below. Nova's standard library (`orbit
 novatorch.nn`) is found through `nova.home`, or the `NOVA_HOME` environment variable: the `compiler` folder of
 the repository, which holds `stdlib/`.
 
@@ -58,9 +60,9 @@ the repository, which holds `stdlib/`.
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `nova.server.path` | the one on `PATH` | The language server, `nova-lsp` |
-| `nova.compiler.path` | the one on `PATH` | The compiler, `nova`, for Run File and the REPL |
-| `nova.home` | `NOVA_HOME` | The folder that holds `stdlib/`, the standard library |
+| `nova.server.path` | the one shipped | The language server, `nova-lsp` |
+| `nova.compiler.path` | the one shipped | The compiler, `nova`, for Run File and the REPL |
+| `nova.home` | the one shipped | The folder that holds `stdlib/`, the standard library |
 | `nova.warnings.enabled` | `true` | Show warnings as well as errors |
 | `nova.trace.server` | `off` | Log the language server's messages in the Nova output |
 
