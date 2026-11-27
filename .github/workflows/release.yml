@@ -96,7 +96,10 @@ jobs:
             echo "::error::the secret VSCE_PAT is not set: add the Azure DevOps token (Settings > Secrets and variables > Actions; docs/RELEASING.md)"
             exit 1
           fi
-          npx --yes @vscode/vsce@4.1.0 publish --packagePath packages/*.vsix $([ "$PRERELEASE" = true ] && echo --pre-release)
+          # one package per call: given several at once, the Marketplace has kept only the first
+          for p in packages/*.vsix; do
+            npx --yes @vscode/vsce@4.1.0 publish --packagePath "$p" $([ "$PRERELEASE" = true ] && echo --pre-release)
+          done
       - name: Publish to Open VSX
         env:
           OVSX_PAT: ${{ secrets.OVSX_PAT }}
@@ -107,4 +110,23 @@ jobs:
           fi
           for p in packages/*.vsix; do
             npx --yes ovsx@1.4.0 publish "$p" $([ "$PRERELEASE" = true ] && echo --pre-release)
+          done
+      # vsce has reported a package published that the Marketplace then did not serve: each platform's package is
+      # downloaded back (the Marketplace takes a few minutes to verify a new one)
+      - name: Each platform's package is on the Marketplace
+        run: |
+          name=$(node -p "require('./editors/vscode/nova/package.json').name")
+          for p in packages/*.vsix; do
+            target=$(basename "$p" .vsix | grep -oE '(linux|win32|darwin|alpine)-(x64|arm64|armhf)$')
+            url="https://marketplace.visualstudio.com/_apis/public/gallery/publishers/parhitmathur/vsextensions/$name/$VERSION/vspackage?targetPlatform=$target"
+            for i in $(seq 1 30); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -L "$url")
+              [ "$code" = 200 ] && break
+              sleep 30
+            done
+            if [ "$code" != 200 ]; then
+              echo "::error::the Marketplace does not serve $name $VERSION for $target (HTTP $code); publish packages/$(basename "$p") again"
+              exit 1
+            fi
+            echo "$name $VERSION for $target: on the Marketplace"
           done
