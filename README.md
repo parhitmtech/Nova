@@ -8,8 +8,10 @@
 ![React](https://img.shields.io/badge/IDE-React%20%2B%20Monaco-7cb8f2?style=flat-square)
 ![CUDA and Triton](https://img.shields.io/badge/GPU-CUDA%20%C2%B7%20Triton-f5a6b1?style=flat-square)
 ![MLIR](https://img.shields.io/badge/next-MLIR%20dialect-f2c879?style=flat-square)
+[![VS Code Marketplace](https://img.shields.io/badge/VS%20Code%20Marketplace-Nova%20Compiler-007acc?style=flat-square&logo=visualstudiocode)](https://marketplace.visualstudio.com/items?itemName=parhitmathur.nova-programming-language)
+[![Open VSX](https://img.shields.io/open-vsx/v/parhitmathur/nova-programming-language?label=Open%20VSX&style=flat-square&include_prereleases)](https://open-vsx.org/extension/parhitmathur/nova-programming-language)
 
-**[Showcase](docs/showcase/index.html)** · [Quick start](#-quick-start) · [Architecture](#-architecture) ·
+**[Install](#-install)** · **[Showcase](docs/showcase/index.html)** · [Quick start](#-quick-start) · [Architecture](#-architecture) ·
 [Performance](#-performance) · [Roadmap](#-roadmap) · [Docs](#-documentation)
 
 </div>
@@ -42,6 +44,21 @@ ignite:                           # the entry point
 
     print(scale(1.5, 2.0))        # 3.000000
 ```
+
+## 📦 Install
+
+Nova comes as a VS Code extension, **Nova Compiler**, with the compiler, its language server and the standard
+library inside: nothing else to install, on Linux (x64) and Windows (x64).
+
+- In VS Code: Extensions (**Ctrl+Shift+X**) → search **Nova Compiler** → **Install**
+- From a terminal: `code --install-extension parhitmathur.nova-programming-language --pre-release`
+- [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=parhitmathur.nova-programming-language) ·
+  [Open VSX](https://open-vsx.org/extension/parhitmathur/nova-programming-language) (VSCodium, Cursor and others)
+
+You get errors as you type (each with a code that links to its explanation), quick fixes, hover, go to definition,
+completion, Run File (**Ctrl+F5**) and a REPL. **[Getting started](docs/GETTING_STARTED.md)** goes from installing to
+a first program, its errors and the REPL in five minutes. To build everything from source instead, see the
+[Quick start](#-quick-start).
 
 ## 💡 Why Nova
 
@@ -348,6 +365,7 @@ The full plan is in [docs/ROADMAP.md](docs/ROADMAP.md).
 
 | Doc | For |
 |---|---|
+| [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) | Installing the VS Code extension, a first program, its errors, the REPL |
 | [docs/SYNTAX.md](docs/SYNTAX.md) | The Nova language |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the IDE, backend, sandbox, NovaBot, SOL and compiler fit together |
 | [docs/SETUP.md](docs/SETUP.md) | Running and testing everything locally |
