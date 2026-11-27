@@ -1,4 +1,4 @@
-# Nova Programming Language
+# Nova Compiler
 
 **Nova** is a compiled, statically typed programming language with Python's syntax, built for machine learning:
 tensors, reverse-mode autograd and GPU training are part of the language. Every program is type-checked before it
