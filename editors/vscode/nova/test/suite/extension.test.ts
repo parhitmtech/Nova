@@ -41,7 +41,7 @@ suite('Nova extension', () => {
   test('a .nova file is Nova, and opening one starts the extension and its language server', async () => {
     const doc = await open('hello.nova');
     assert.strictEqual(doc.languageId, 'nova');
-    const ext = vscode.extensions.getExtension('parhitmathur.nova');
+    const ext = vscode.extensions.getExtension('parhitmathur.nova-programming-language');
     assert.ok(ext, 'the extension is installed');
     const api = await until('the extension to activate', () => (ext.isActive ? ext.exports : undefined));
     await until('the language server to run', () => api.client()?.isRunning());

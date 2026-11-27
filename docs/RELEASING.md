@@ -4,7 +4,7 @@ Nova ships in VS Code as two extensions from one publisher:
 
 | Extension | ID | Repository | Folder |
 |---|---|---|---|
-| **Nova Programming Language** | `parhitmathur.nova` | [Nova](https://github.com/parhitmtech/Nova) | `editors/vscode/nova` |
+| **Nova Programming Language** | `parhitmathur.nova-programming-language` | [Nova](https://github.com/parhitmtech/Nova) | `editors/vscode/nova` |
 | **Nova Quantum** | `parhitmathur.nova-quantum` | [NovaQuantum](https://github.com/parhitmtech/NovaQuantum) | `editors/vscode/nova-quantum` |
 
 Nova Quantum declares Nova as a dependency, so installing it installs both. Each is published to the
