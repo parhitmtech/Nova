@@ -108,10 +108,15 @@ suite('Nova extension', () => {
     const doc = await open('semicolon.nova');
     const diag = await until('the E0108 diagnostic', () =>
       vscode.languages.getDiagnostics(doc.uri).find(d => (d.code as { value: string }).value === 'E0108'));
-    const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
-      'vscode.executeCodeActionProvider', doc.uri, diag.range, vscode.CodeActionKind.QuickFix.value);
-    const fix = actions.find(a => a.title === "Remove the ';'");
-    assert.ok(fix && fix.edit, JSON.stringify(actions.map(a => a.title)));
+    // asked until it answers: the first request can come before the language server has the document's fixes
+    let titles: string[] = [];
+    const fix = await until(`the quick fix "Remove the ';'"`, async () => {
+      const actions = await vscode.commands.executeCommand<vscode.CodeAction[]>(
+        'vscode.executeCodeActionProvider', doc.uri, diag.range, vscode.CodeActionKind.QuickFix.value);
+      titles = actions.map(a => a.title);
+      return actions.find(a => a.title === "Remove the ';'" && a.edit);
+    }).catch(e => { throw new Error(`${e.message}; offered: ${JSON.stringify(titles)}`); });
+    assert.ok(fix.edit);
     assert.ok(await vscode.workspace.applyEdit(fix.edit));
     assert.ok(!doc.getText().includes(';'));
     await vscode.commands.executeCommand('workbench.action.files.revert');
