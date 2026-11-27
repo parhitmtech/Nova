@@ -55,8 +55,8 @@ async function startServer(context: vscode.ExtensionContext): Promise<void> {
     // Not awaited: the message stays until it is dismissed, and activation (which extensions that depend on this one,
     // such as Nova Quantum, wait for) must not wait with it
     void vscode.window.showWarningMessage(
-      "Nova's language server (nova-lsp) was not found, so errors are not shown as you type. Build it with " +
-        "'make -C compiler lsp' and set its path in the setting nova.server.path.",
+      "Nova's language server (nova-lsp) was not found, so errors are not shown as you type. If nova.server.path " +
+        'is set, check it, or clear it to use the one the extension ships.',
       'Open Settings').then(choice => {
       if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'nova.server.path');
     });
@@ -132,7 +132,8 @@ async function runNova(context: vscode.ExtensionContext, args: string[]) {
   const nova = findTool(context, 'compiler.path', 'nova');
   if (!nova) {
     const choice = await vscode.window.showErrorMessage(
-      "Nova's compiler (nova) was not found. Build it with 'make -C compiler' and set its path in nova.compiler.path.",
+      "Nova's compiler (nova) was not found. If nova.compiler.path is set, check it, or clear it to use the one " +
+        'the extension ships.',
       'Open Settings');
     if (choice === 'Open Settings') vscode.commands.executeCommand('workbench.action.openSettings', 'nova.compiler.path');
     return;
@@ -151,7 +152,8 @@ async function openRepl(context: vscode.ExtensionContext) {
   }
   const nova = findTool(context, 'compiler.path', 'nova');
   if (!nova) {
-    vscode.window.showErrorMessage("Nova's compiler (nova) was not found: set its path in nova.compiler.path.");
+    vscode.window.showErrorMessage("Nova's compiler (nova) was not found. If nova.compiler.path is set, check it, " +
+      'or clear it to use the one the extension ships.');
     return;
   }
   const home = novaHome(context);

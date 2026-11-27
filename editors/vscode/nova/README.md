@@ -21,6 +21,9 @@ ignite:                           # the entry point
 
 > **Preview.** The extension is a pre-release, for Linux (x64) and Windows (x64).
 
+**New to Nova?** [Getting started](https://github.com/parhitmtech/Nova/blob/main/docs/GETTING_STARTED.md) takes
+five minutes: a first program, running it, reading its errors, and the REPL.
+
 ## Features
 
 - **Errors as you type**, from Nova's compiler: every error in the file at once, underlined exactly, each with a
@@ -84,14 +87,27 @@ the repository, which holds `stdlib/`.
 In a folder you have not trusted, the extension shows errors and completions but runs no program, and the folder's
 settings cannot change which Nova tools are used.
 
+## Troubleshooting
+
+| What you see | What to do |
+|---|---|
+| No colors or errors in a `.nova` file | Check the language mode in the status bar (bottom right) says **Nova**. |
+| "Nova's compiler (nova) was not found", or "Nova's language server (nova-lsp) was not found" | `nova.compiler.path` or `nova.server.path` names a file that does not exist: clear the setting, and the extension uses the tools it ships. |
+| "Nova runs programs in trusted workspaces only" | Trust the folder to run programs (see Workspace Trust above). |
+| Two Nova extensions installed | An early build from a `.vsix` had the ID `parhitmathur.nova`: uninstall it. |
+
+For anything else, **Nova: Show Output** shows the extension's log; please include it when you
+[report a problem](https://github.com/parhitmtech/Nova/issues).
+
 ## Quantum programming
 
 Qubits, quantum gates, OpenQASM and compiling for neutral-atom hardware come in the companion extension,
-**Nova Quantum**.
+**[Nova Quantum Compiler](https://marketplace.visualstudio.com/items?itemName=parhitmathur.nova-quantum)**.
 
 ## Links
 
-- The language: [the grammar](https://github.com/parhitmtech/Nova/blob/main/docs/GRAMMAR.md), [every error and
+- [Getting started](https://github.com/parhitmtech/Nova/blob/main/docs/GETTING_STARTED.md)
+- The language: [the tour](https://github.com/parhitmtech/Nova/blob/main/docs/SYNTAX.md), [the grammar](https://github.com/parhitmtech/Nova/blob/main/docs/GRAMMAR.md), [every error and
   warning](https://github.com/parhitmtech/Nova/blob/main/docs/ERRORS.md)
 - Source: [github.com/parhitmtech/Nova](https://github.com/parhitmtech/Nova)
 - Report a bug: [issues](https://github.com/parhitmtech/Nova/issues)
