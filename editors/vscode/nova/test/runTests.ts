@@ -13,10 +13,12 @@ async function main() {
   try {
     const code = await runTests({
       version,
-      extensionDevelopmentPath: root,
+      // NOVA_TEST_EXTENSION_PATH: an unpacked package to test instead of this folder
+      extensionDevelopmentPath: process.env.NOVA_TEST_EXTENSION_PATH || root,
       extensionTestsPath: path.join(__dirname, 'suite', 'index'),
       launchArgs: [path.join(root, 'test', 'fixtures'), '--disable-extensions', '--disable-workspace-trust'],
       extensionTestsEnv: {
+        NOVA_TEST_BUNDLED: process.env.NOVA_TEST_BUNDLED,
         NOVA_TEST_SERVER: exe('nova-lsp'),
         NOVA_TEST_COMPILER: exe('nova'),
         NOVA_TEST_HOME: path.resolve(build, '..'),

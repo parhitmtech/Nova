@@ -25,8 +25,14 @@ async function open(name: string): Promise<vscode.TextDocument> {
 
 suite('Nova extension', () => {
   suiteSetup(async () => {
-    // Point the extension at the compiler's build before it starts (it starts when a .nova file opens)
     const config = vscode.workspace.getConfiguration('nova');
+    // A package under test (NOVA_TEST_BUNDLED) must find its own tools: the settings are cleared (an earlier run's
+    // may be in the test profile)
+    if (process.env.NOVA_TEST_BUNDLED) {
+      for (const key of ['server.path', 'compiler.path', 'home']) await config.update(key, undefined, vscode.ConfigurationTarget.Global);
+      return;
+    }
+    // Point the extension at the compiler's build before it starts (it starts when a .nova file opens)
     await config.update('server.path', process.env.NOVA_TEST_SERVER, vscode.ConfigurationTarget.Global);
     await config.update('compiler.path', process.env.NOVA_TEST_COMPILER, vscode.ConfigurationTarget.Global);
     await config.update('home', process.env.NOVA_TEST_HOME, vscode.ConfigurationTarget.Global);
@@ -39,6 +45,14 @@ suite('Nova extension', () => {
     assert.ok(ext, 'the extension is installed');
     const api = await until('the extension to activate', () => (ext.isActive ? ext.exports : undefined));
     await until('the language server to run', () => api.client()?.isRunning());
+    if (process.env.NOVA_TEST_BUNDLED) {
+      // the tools it runs are the ones in the package
+      const exe = process.platform === 'win32' ? '.exe' : '';
+      for (const tool of ['nova', 'nova-lsp']) {
+        assert.ok(require('fs').existsSync(path.join(ext.extensionPath, 'bin', tool + exe)), `bin/${tool} is in the package`);
+      }
+      assert.ok(require('fs').existsSync(path.join(ext.extensionPath, 'stdlib')), 'stdlib/ is in the package');
+    }
     const commands = await vscode.commands.getCommands(true);
     for (const c of ['nova.runFile', 'nova.checkFile', 'nova.openRepl', 'nova.restartServer']) {
       assert.ok(commands.includes(c), c);
