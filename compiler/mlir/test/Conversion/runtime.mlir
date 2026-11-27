@@ -27,8 +27,8 @@ func.func @show(%i: i32, %f: f32, %d: f64, %b: i1) {
   return
 }
 
-// print(a, b, c) and print(): the values before the last are followed by a space (continues), and a print with no
-// value prints an empty line
+// print(a, b, c) and print(): the values before the last are followed by a space (continues), and nova.newline
+// prints an empty line
 // CHECK-LABEL: func.func @several(%arg0: i32, %arg1: f64, %arg2: i1) {
 func.func @several(%i: i32, %d: f64, %b: i1) {
   // CHECK-NEXT: call @nova_print_i32_sp(%arg0) : (i32) -> ()
@@ -37,10 +37,10 @@ func.func @several(%i: i32, %d: f64, %b: i1) {
   // CHECK-NEXT: call @nova_print_i32(%[[B]]) : (i32) -> ()
   // CHECK-NEXT: call @nova_print_newline() : () -> ()
   // CHECK-NEXT: return
-  nova.print %i : i32 {continues}
-  nova.print %d : f64 {continues}
+  nova.print %i {continues} : i32
+  nova.print %d {continues} : f64
   nova.print %b : i1
-  nova.print
+  nova.newline
   return
 }
 

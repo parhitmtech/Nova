@@ -936,7 +936,7 @@ llvm::SmallVector<mlir::Value> Lowerer::builtin(uint32_t n, llvm::StringRef name
     {
         // print(a, b, ...), as Python's: a nova.print per value, each but the last followed by a space (continues);
         // print() prints an empty line
-        if (vals.empty()) builder.create<nova::PrintOp>(loc(n), mlir::Value(), /*continues=*/false);
+        if (vals.empty()) builder.create<nova::NewlineOp>(loc(n));
         for (size_t k = 0; k < vals.size(); k++)
             builder.create<nova::PrintOp>(loc(n), vals[k], /*continues=*/k + 1 < vals.size());
         return {};  // print gives nothing

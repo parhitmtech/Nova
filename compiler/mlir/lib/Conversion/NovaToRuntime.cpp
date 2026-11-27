@@ -50,13 +50,6 @@ struct PrintLowering : mlir::OpConversionPattern<nova::PrintOp>
     {
         mlir::Value x = adaptor.getValue();
         auto module = op->getParentOfType<mlir::ModuleOp>();
-        if (!x)  // print(): an empty line
-        {
-            runtime_function(rewriter, module, "nova_print_newline", rewriter.getFunctionType({}, {}));
-            rewriter.replaceOpWithNewOp<mlir::func::CallOp>(op, "nova_print_newline", mlir::TypeRange{},
-                                                            mlir::ValueRange{});
-            return mlir::success();
-        }
         mlir::Type t = x.getType();
         std::string name;
         if (t.isInteger(1))  // a bool prints as the int 1 or 0
@@ -73,6 +66,22 @@ struct PrintLowering : mlir::OpConversionPattern<nova::PrintOp>
         auto type = rewriter.getFunctionType({t}, {});
         runtime_function(rewriter, module, name, type);
         rewriter.replaceOpWithNewOp<mlir::func::CallOp>(op, name, mlir::TypeRange{}, x);
+        return mlir::success();
+    }
+};
+
+// nova.newline (print()) is func.call @nova_print_newline()
+struct NewlineLowering : mlir::OpConversionPattern<nova::NewlineOp>
+{
+    using OpConversionPattern::OpConversionPattern;
+
+    mlir::LogicalResult matchAndRewrite(nova::NewlineOp op, OpAdaptor,
+                                        mlir::ConversionPatternRewriter& rewriter) const override
+    {
+        auto module = op->getParentOfType<mlir::ModuleOp>();
+        runtime_function(rewriter, module, "nova_print_newline", rewriter.getFunctionType({}, {}));
+        rewriter.replaceOpWithNewOp<mlir::func::CallOp>(op, "nova_print_newline", mlir::TypeRange{},
+                                                        mlir::ValueRange{});
         return mlir::success();
     }
 };
@@ -119,7 +128,7 @@ struct ConvertNovaToRuntime : mlir::PassWrapper<ConvertNovaToRuntime, mlir::Oper
                                mlir::ub::UBDialect>();
 
         mlir::RewritePatternSet patterns(&getContext());
-        patterns.add<PrintLowering>(&getContext());
+        patterns.add<PrintLowering, NewlineLowering>(&getContext());
 
         // Partial: ops the target does not name (none yet) may stay; an illegal op left over fails the pass
         if (mlir::failed(mlir::applyPartialConversion(m, target, std::move(patterns)))) signalPassFailure();
