@@ -2,7 +2,7 @@
   "name": "nova-programming-language",
   "displayName": "Nova Compiler",
   "description": "Nova: a compiled, statically typed language with Python's syntax, built for machine learning.",
-  "version": "0.3.1",
+  "version": "0.5.0",
   "preview": true,
   "publisher": "parhitmathur",
   "license": "Apache-2.0",
@@ -162,14 +162,8 @@
       {
         "id": "nova.gettingStarted",
         "title": "Get started with Nova",
-        "description": "Write and run your first Nova program.",
+        "description": "Write, run and debug your first Nova program.",
         "steps": [
-          {
-            "id": "nova.tools",
-            "title": "Point the extension at Nova's tools",
-            "description": "Build Nova's compiler and language server, and tell the extension where they are.\n[Open the Nova settings](command:workbench.action.openSettings?%22nova%22)",
-            "media": { "markdown": "walkthrough/tools.md" }
-          },
           {
             "id": "nova.write",
             "title": "Write a program",
@@ -182,6 +176,19 @@
             "description": "Press Ctrl+F5, or the run button at the top of the editor. Errors show as you type, each with a link that explains it.",
             "media": { "markdown": "walkthrough/run.md" },
             "completionEvents": ["onCommand:nova.runFile"]
+          },
+          {
+            "id": "nova.debug",
+            "title": "Debug it",
+            "description": "Click left of a line number to set a breakpoint, then press F5. Step through the program and watch its variables change.\n[Debug File](command:nova.debugFile)",
+            "media": { "markdown": "walkthrough/debug.md" },
+            "completionEvents": ["onCommand:nova.debugFile"]
+          },
+          {
+            "id": "nova.tools",
+            "title": "Use your own builds of Nova (optional)",
+            "description": "The extension ships Nova's tools. To use ones you built yourself, set their paths.\n[Open the Nova settings](command:workbench.action.openSettings?%22nova%22)",
+            "media": { "markdown": "walkthrough/tools.md" }
           }
         ]
       }

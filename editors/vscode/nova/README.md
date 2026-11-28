@@ -22,7 +22,7 @@ ignite:                           # the entry point
 > **Preview.** The extension is a pre-release, for Linux (x64) and Windows (x64).
 
 **New to Nova?** [Getting started](https://github.com/parhitmtech/Nova/blob/main/docs/GETTING_STARTED.md) takes
-five minutes: a first program, running it, reading its errors, and the REPL.
+five minutes: a first program, running it, reading its errors, debugging it, and the REPL.
 
 ## Features
 
@@ -37,6 +37,9 @@ five minutes: a first program, running it, reading its errors, and the REPL.
   value's class (or a vector's, a map's, a tensor's): even while the line is half written.
 - **Signature help** in a call, with the argument being written.
 - **Syntax highlighting**, also in Markdown code blocks (```` ```nova ````).
+- **Debugging** (F5): breakpoints, Step Over, Into and Out, the call stack, and every variable's value, with an
+  object's fields, a vector's elements and a tensor's rows to expand. A runtime error stops the program on the line
+  that failed. See [Debugging](#debugging).
 - **Run File** (Ctrl+F5, or ▷ at the top of the editor), **Check File** and the **REPL**, in VS Code's terminal,
   where an error's `file:line:column` is a link.
 - **Snippets** for the entry point, functions, classes, loops and a training loop, and a getting-started
@@ -71,11 +74,42 @@ the repository, which holds `stdlib/`.
 
 `.nova` files are indented with four spaces (Nova does not allow tabs in indentation).
 
+## Debugging
+
+Click left of a line number to set a breakpoint, then press **F5** (or **Debug File** in the ▷ menu at the top of
+the editor). No `launch.json` is needed. While the program is stopped:
+
+- **Variables** shows every variable in scope; expand an object, a vector, a map or a tensor to see inside it.
+- **Call Stack** shows the calls that led there; each frame has its own variables (a recursive function's too).
+- Hover over a name for its value, or add an expression to **Watch**: `p.x`, `v[0]`, `t[1]`.
+- **Step Over** (F10), **Step Into** (F11), **Step Out** (Shift+F11) and **Continue** (F5).
+
+What the program prints appears in the **Debug Console**; `input()` asks for its value in a box at the top of the
+window. If the program fails at run time, it stops on the line that failed, with the error's message and code, so
+you can see why. Debugging runs the program, so like Run File it needs a trusted folder.
+
+To keep a configuration, add one to `launch.json`:
+
+```json
+{
+  "type": "nova",
+  "request": "launch",
+  "name": "Debug Nova File",
+  "program": "${file}",
+  "stopOnEntry": false
+}
+```
+
+`stopOnEntry` stops at the program's first statement; `cwd` sets the folder it runs in (default: the program's).
+A breakpoint set while the program runs takes effect at its next stop, and there is no Pause: set a breakpoint
+where you want the program to stop.
+
 ## Commands
 
 | Command | Does |
 |---|---|
 | **Nova: Run File** | Runs the file in the Nova terminal |
+| **Nova: Debug File** | Runs it in the debugger (F5 does the same for a `.nova` file) |
 | **Nova: Run File with Optimizations** | Runs it with the compiler's optimizations (`--optimize`) |
 | **Nova: Check File** | Checks it without running it: every error, and the warnings |
 | **Nova: Open REPL** | An interactive Nova session |

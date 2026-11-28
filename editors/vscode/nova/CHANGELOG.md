@@ -2,7 +2,25 @@
 
 All notable changes to the Nova Compiler extension. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
-Odd minor versions (0.1, 0.3) are pre-releases.
+Odd minor versions (0.1, 0.3, 0.5) are pre-releases.
+
+## [0.5.0] (pre-release)
+
+### Added
+
+- **Debugging.** Press F5 on a `.nova` file (no `launch.json` needed), or use **Debug File**: breakpoints, Step
+  Over, Into and Out, the call stack with each frame's variables (a recursive function's too), and every value,
+  with an object's fields, a vector's or a map's elements and a tensor's rows to expand. Hover over a name, or
+  watch an expression such as `p.x`, for its value.
+- The program's output in the Debug Console, and `input()` asked for in a box.
+- A runtime error stops the program on the line that failed, with its message, before it ends.
+- A `nova` configuration type for `launch.json`, with `program`, `stopOnEntry` and `cwd`.
+- A **Debug it** step in the getting-started walkthrough.
+
+### Changed
+
+- The walkthrough no longer starts by asking to build Nova's tools: the extension ships them. Setting your own
+  builds is its last, optional step.
 
 ## [0.3.1] (pre-release)
 
