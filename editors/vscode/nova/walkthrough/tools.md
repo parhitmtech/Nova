@@ -1,11 +1,13 @@
 # Nova's tools
 
-The extension uses two programs from Nova's compiler:
+Nothing to set up: the extension ships Nova's tools, built to run with nothing else installed on Linux (x64) and
+Windows (x64).
 
 - **`nova-lsp`**, the language server: errors as you type, hover, go to definition, completion.
-- **`nova`**, the compiler and interpreter: **Run File** and the REPL.
+- **`nova`**, the compiler and interpreter: **Run File**, the debugger and the REPL.
+- The standard library, which `orbit` imports from.
 
-Build them from the repository:
+To use tools you built yourself instead (a newer compiler, say), build them from the repository:
 
 ```bash
 git clone https://github.com/parhitmtech/Nova.git
@@ -13,7 +15,7 @@ make -C Nova/compiler          # compiler/build/nova
 make -C Nova/compiler lsp      # compiler/build/nova-lsp
 ```
 
-Then set, in VS Code's settings:
+and set, in VS Code's settings:
 
 | Setting | Value |
 |---|---|
@@ -21,4 +23,4 @@ Then set, in VS Code's settings:
 | `nova.compiler.path` | `.../Nova/compiler/build/nova` |
 | `nova.home` | `.../Nova/compiler` (it holds `stdlib/`, the standard library) |
 
-If the programs are on your `PATH`, and `NOVA_HOME` is set, no setting is needed.
+Clear a setting to go back to the tool the extension ships.

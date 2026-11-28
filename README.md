@@ -56,8 +56,9 @@ library inside: nothing else to install, on Linux (x64) and Windows (x64).
   [Open VSX](https://open-vsx.org/extension/parhitmathur/nova-programming-language) (VSCodium, Cursor and others)
 
 You get errors as you type (each with a code that links to its explanation), quick fixes, hover, go to definition,
-completion, Run File (**Ctrl+F5**) and a REPL. **[Getting started](docs/GETTING_STARTED.md)** goes from installing to
-a first program, its errors and the REPL in five minutes. To build everything from source instead, see the
+completion, Run File (**Ctrl+F5**), a step debugger (**F5**: breakpoints, stepping, the call stack and every
+variable) and a REPL. **[Getting started](docs/GETTING_STARTED.md)** goes from installing to a first program, its
+errors, debugging it and the REPL in five minutes. To build everything from source instead, see the
 [Quick start](#-quick-start).
 
 ## 💡 Why Nova

@@ -51,6 +51,20 @@ Press **Ctrl+F5**, or click **▷** at the top of the editor. The program runs i
 
 **Nova: Check File** in the command palette (**Ctrl+Shift+P**) checks the file without running it.
 
+### Step through it
+
+Click left of line 2's number to set a breakpoint (a red dot), then press **F5**. The program stops in `square`,
+before line 2 runs:
+
+- **Variables** shows `x = 1`, and **Call Stack** shows `square` called from `ignite` on line 7; click `ignite` to
+  see its `total = 0` and `i = 1`.
+- **F5** runs to the breakpoint again: `x` is 2, then 3, then 4, while `ignite`'s `total` grows from 0 to 1, 5
+  and 14.
+- **F10** (Step Over) runs a line; **F11** (Step Into) goes into a call; **Shift+F11** (Step Out) returns to the
+  caller. Hover over a variable in the editor to see its value.
+
+A program that fails at run time stops on the line that failed, with its variables, so you can see why.
+
 ## 4. Read an error
 
 Add a semicolon to the loop's body, `total += square(i);`. A red underline appears under it. Hover over it, or
@@ -131,4 +145,5 @@ the snippet for a complete training loop.
 | "Nova's compiler (nova) was not found", or "Nova's language server (nova-lsp) was not found" | `nova.compiler.path` or `nova.server.path` names a file that does not exist: clear the setting, and the extension uses the tools it ships. |
 | "Nova runs programs in trusted workspaces only" | Nova runs no program in a folder you have not trusted (**Workspace Trust**): trust the folder to run programs. Errors and completion work either way. |
 | "not available for your platform" | The extension supports Linux (x64) and Windows (x64) for now. |
+| The debugger does not stop at a breakpoint set while the program runs | It takes effect at the program's next stop. Set breakpoints before you press F5, or step to reach them. |
 | Anything else | **Nova: Show Output** shows the extension's log. Please [report it](https://github.com/parhitmtech/Nova/issues) with that log. |
