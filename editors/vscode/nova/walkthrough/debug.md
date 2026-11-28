@@ -19,7 +19,10 @@ While it is stopped:
 | Step Over | F10 | Runs the current line, calls included |
 | Step Into | F11 | Goes into the function the line calls |
 | Step Out | Shift+F11 | Runs to the end of this function, and stops in its caller |
+| Pause | F6 | Stops the running program where it is (a loop that does not end, say) |
 | Stop | Shift+F5 | Ends the program |
+
+Breakpoints can be set and removed while the program runs: they apply at once.
 
 If the program calls `input()`, a box at the top of the window asks for the value. If it fails at run time (a
 division by zero, an index out of range), it stops on the line that failed, with its variables, before it ends.

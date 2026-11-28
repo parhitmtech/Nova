@@ -2,7 +2,7 @@
   "name": "nova-programming-language",
   "displayName": "Nova Compiler",
   "description": "Nova: a compiled, statically typed language with Python's syntax, built for machine learning.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "preview": true,
   "publisher": "parhitmathur",
   "license": "Apache-2.0",

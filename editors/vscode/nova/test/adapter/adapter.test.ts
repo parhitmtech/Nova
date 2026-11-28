@@ -105,6 +105,25 @@ suite('Nova debug adapter', () => {
     assert.strictEqual((await output).trim(), '42');
   });
 
+  test('Pause stops a running program, even in a loop on one line', async () => {
+    await Promise.all([dc.configurationSequence(), dc.launch(launch('spin.nova'))]);
+    await new Promise(r => setTimeout(r, 300));  // it runs
+    const stopped = dc.waitForEvent('stopped') as Promise<DebugProtocol.StoppedEvent>;
+    await dc.pauseRequest({ threadId: 1 });
+    assert.strictEqual((await stopped).body.reason, 'pause');
+    assert.deepStrictEqual(await where(), ['ignite:3']);
+    assert.match((await locals())[0], /^n=\d+$/);
+  });
+
+  test('a breakpoint set while the program runs stops it', async () => {
+    await Promise.all([dc.configurationSequence(), dc.launch(launch('count.nova'))]);
+    await new Promise(r => setTimeout(r, 300));  // it runs, with no breakpoint
+    const stopped = dc.waitForEvent('stopped') as Promise<DebugProtocol.StoppedEvent>;
+    await dc.setBreakpointsRequest({ source: { path: fixture('count.nova') }, breakpoints: [{ line: 4 }] });
+    assert.strictEqual((await stopped).body.reason, 'breakpoint');
+    assert.deepStrictEqual(await where(), ['ignite:4']);
+  });
+
   test('a runtime error stops the program there, with its message', async () => {
     const stopped = dc.waitForEvent('stopped') as Promise<DebugProtocol.StoppedEvent>;
     await Promise.all([dc.configurationSequence(), dc.launch(launch('divide.nova'))]);

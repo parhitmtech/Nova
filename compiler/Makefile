@@ -7,7 +7,7 @@
 ## (apt-get install libssh2-1-dev).
 
 CXXFLAGS ?= -O2
-CPPFLAGS += -std=c++17 -Iinclude $(shell pkg-config --cflags libssh2 2>/dev/null)
+CPPFLAGS += -std=c++17 -Iinclude -pthread $(shell pkg-config --cflags libssh2 2>/dev/null)  # -pthread: the debugger's reader thread
 LDLIBS   += $(shell pkg-config --libs libssh2 2>/dev/null)
 
 ifeq ($(OS),Windows_NT)

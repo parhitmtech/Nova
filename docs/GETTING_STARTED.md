@@ -145,5 +145,4 @@ the snippet for a complete training loop.
 | "Nova's compiler (nova) was not found", or "Nova's language server (nova-lsp) was not found" | `nova.compiler.path` or `nova.server.path` names a file that does not exist: clear the setting, and the extension uses the tools it ships. |
 | "Nova runs programs in trusted workspaces only" | Nova runs no program in a folder you have not trusted (**Workspace Trust**): trust the folder to run programs. Errors and completion work either way. |
 | "not available for your platform" | The extension supports Linux (x64) and Windows (x64) for now. |
-| The debugger does not stop at a breakpoint set while the program runs | It takes effect at the program's next stop. Set breakpoints before you press F5, or step to reach them. |
 | Anything else | **Nova: Show Output** shows the extension's log. Please [report it](https://github.com/parhitmtech/Nova/issues) with that log. |

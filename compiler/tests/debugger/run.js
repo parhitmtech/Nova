@@ -1,15 +1,18 @@
 #!/usr/bin/env node
 // The step debugger's tests (nova --debug; the protocol is in include/debugger.h). Each session runs a program in
-// this folder under the debugger, sends its commands, and compares what comes back, in order: each stop (its reason
-// and every frame, innermost first, with its variables), each "input" request, and the program's output.
+// this folder under the debugger and drives it as a front end does: at "ready" and at each stop it sends the
+// session's next commands, up to one that runs the program (continue, next, stepIn, stepOut) or stop; at "input" it
+// sends the next one as the value. "live" commands go while the program runs, a delay after it starts (a pause, a
+// breakpoint). What comes back is compared, in order: each stop (its reason and every frame, innermost first, with
+// its variables), each "input" request, and the program's output.
 //
 //   node tests/debugger/run.js            (the compiler: NOVA_COMPILER_PATH, or build/nova)
 //
 // A stop is written "reason frame | frame ...", a frame "name:line a=1 b=2" (a variable's value as the debugger
-// shows it); "out: text" is a line the program printed, "input" a request for input().
+// shows it); "out: text" is a line the program printed, "input" a request for input(). An expected line can be a
+// regular expression, for a value the moment decides (where a pause stops a loop).
 
-const { spawnSync } = require("child_process");
-const fs = require("fs");
+const { spawn } = require("child_process");
 const path = require("path");
 
 const HERE = __dirname;
@@ -18,6 +21,7 @@ const NOVA = process.env.NOVA_COMPILER_PATH ||
   path.join(COMPILER_ROOT, "build", process.platform === "win32" ? "nova.exe" : "nova");
 
 const file = name => path.join(HERE, name);
+const RUNS = new Set(["continue", "next", "stepIn", "stepOut", "stop"]);
 
 const sessions = [
   {
@@ -81,53 +85,104 @@ const sessions = [
     commands: ["stepIn", "stop"],
     expect: ["entry ignite:6 total=0"],
   },
+  {
+    name: "pause stops a running program, even in a loop on one line",
+    program: "spin.nova",
+    commands: ["continue", "stop"],
+    live: [{ delay: 300, send: "pause" }],
+    expect: [/^pause ignite:3 n=\d+$/],
+  },
+  {
+    name: "a breakpoint set while the program runs stops it",
+    program: "count.nova",
+    commands: ["continue", "stop"],
+    live: [{ delay: 300, send: `breakpoints ${file("count.nova")}\t4` }],
+    expect: [/^breakpoint ignite:4 n=\d+$/],
+  },
+  {
+    name: "stop ends a running program",
+    program: "spin.nova",
+    commands: ["continue"],
+    live: [{ delay: 300, send: "stop" }],
+    expect: [],
+  },
 ];
 
 function assert(ok, message) {
   if (!ok) throw new Error(message);
 }
 
-// What the debugger sent, in order: events (after \x1e, one per line) and the program's output lines
+// Runs a session as a front end would: what the debugger sent, in order (events and the program's output lines)
 function run(session) {
-  const result = spawnSync(NOVA, ["--debug", file(session.program)], {
-    input: session.commands.join("\n") + "\n",
-    encoding: "utf8",
-    timeout: 20000,
-    env: { ...process.env, NOVA_HOME: COMPILER_ROOT },
+  return new Promise((resolve, reject) => {
+    const nova = spawn(NOVA, ["--debug", file(session.program)], { env: { ...process.env, NOVA_HOME: COMPILER_ROOT } });
+    const seen = [], stops = [];
+    let next = 0, out = "", stderr = "", started = false;
+    const send = line => nova.stdin.write(line + "\n");
+    // The session's next commands, up to one that runs the program (or one, the value input() asked for)
+    const answer = input => {
+      while (next < session.commands.length) {
+        const command = session.commands[next++];
+        send(command);
+        if (input || RUNS.has(command)) break;
+      }
+      if (!started) {
+        started = true;
+        for (const live of session.live || []) setTimeout(() => send(live.send), live.delay);
+      }
+    };
+    const timer = setTimeout(() => { nova.kill(); reject(new Error("timed out")); }, 30000);
+    nova.stdout.setEncoding("utf8");
+    nova.stderr.setEncoding("utf8");
+    nova.stderr.on("data", d => { stderr += d; });
+    nova.stdout.on("data", chunk => {
+      out += chunk;
+      let end;
+      while ((end = out.indexOf("\n")) >= 0) {
+        const line = out.slice(0, end);
+        out = out.slice(end + 1);
+        const at = line.indexOf("\x1e");
+        const text = at < 0 ? line : line.slice(0, at);
+        if (text.trim()) seen.push(`out: ${text.trim()}`);
+        if (at < 0) continue;
+        const event = JSON.parse(line.slice(at + 1));
+        if (event.event === "input") seen.push("input");
+        if (event.event === "stopped") {
+          stops.push(event);
+          const frames = event.frames.map(f =>
+            [`${f.name}:${f.line}`, ...f.variables.map(v => `${v.name}=${v.value}`)].join(" "));
+          seen.push(`${event.reason} ${frames.join(" | ")}`);
+        }
+        answer(event.event === "input");
+      }
+    });
+    nova.on("exit", status => {
+      clearTimeout(timer);
+      if (out.trim()) seen.push(`out: ${out.trim()}`);
+      resolve({ seen, stops, status, stderr });
+    });
   });
-  if (result.error) throw result.error;
-  const seen = [], stops = [];
-  for (const line of result.stdout.split("\n")) {
-    const at = line.indexOf("\x1e");
-    const out = at < 0 ? line : line.slice(0, at);
-    if (out.trim()) seen.push(`out: ${out.trim()}`);
-    if (at < 0) continue;
-    const event = JSON.parse(line.slice(at + 1));
-    if (event.event === "input") seen.push("input");
-    if (event.event !== "stopped") continue;
-    stops.push(event);
-    const frames = event.frames.map(f =>
-      [`${f.name}:${f.line}`, ...f.variables.map(v => `${v.name}=${v.value}`)].join(" "));
-    seen.push(`${event.reason} ${frames.join(" | ")}`);
-  }
-  return { seen, stops, status: result.status, stderr: result.stderr };
 }
 
+const matches = (want, got) => (want instanceof RegExp ? want.test(got || "") : want === got);
+
 let failed = 0;
-for (const session of sessions) {
-  try {
-    const { seen, stops, status, stderr } = run(session);
-    for (let i = 0; i < Math.max(seen.length, session.expect.length); i++) {
-      assert(seen[i] === session.expect[i],
-        `step ${i + 1}\n      expected: ${session.expect[i]}\n      got:      ${seen[i]}`);
+(async () => {
+  for (const session of sessions) {
+    try {
+      const { seen, stops, status, stderr } = await run(session);
+      for (let i = 0; i < Math.max(seen.length, session.expect.length); i++) {
+        assert(matches(session.expect[i], seen[i]),
+          `step ${i + 1}\n      expected: ${session.expect[i]}\n      got:      ${seen[i]}`);
+      }
+      assert(status === (session.exitStatus || 0), `exit status ${status}\n${stderr}`);
+      if (session.check) session.check(stops);
+      console.log(`  PASS  ${session.name}`);
+    } catch (e) {
+      failed++;
+      console.log(`  FAIL  ${session.name}\n      ${e.message}`);
     }
-    assert(status === (session.exitStatus || 0), `exit status ${status}\n${stderr}`);
-    if (session.check) session.check(stops);
-    console.log(`  PASS  ${session.name}`);
-  } catch (e) {
-    failed++;
-    console.log(`  FAIL  ${session.name}\n      ${e.message}`);
   }
-}
-console.log(`\n${sessions.length - failed} passed, ${failed} failed`);
-process.exit(failed ? 1 : 0);
+  console.log(`\n${sessions.length - failed} passed, ${failed} failed`);
+  process.exit(failed ? 1 : 0);
+})();

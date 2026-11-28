@@ -1,13 +1,18 @@
 // The step debugger (nova --debug; the protocol is described in debugger.h), and the benchmark's input replay.
+#include <atomic>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <map>
+#include <mutex>
 #include <set>
 #include <stack>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -356,8 +361,27 @@ string frames_json(const InstructionNode* pc)
 }
 
 // ── Commands ──────────────────────────────────────────────────────────────────
-// The next line in, without its line break; "stop" at the end of input (the front end has gone)
-string read_line()
+// A thread reads the front end's lines as they come, so the front end is heard while the program runs: "pause" sets a
+// flag the program's thread checks before each instruction, and every other line waits in a queue. The program's
+// thread takes lines from the queue at a stop, at input(), and while it runs whenever one is waiting (breakpoints
+// change at once; stop ends the program). The queue is made once and never freed: at exit, the reader may still be
+// waiting for a line.
+struct Inbox
+{
+    mutex lock;
+    condition_variable arrived;
+    deque<string> lines;
+};
+Inbox* inbox = nullptr;
+atomic<bool> waiting{false};     // a line is in the queue
+atomic<bool> pauseAsked{false};  // "pause" came: stop at the next instruction with a place
+
+// The end of input, in the queue: the front end has gone. It ends the program where a command is needed (a stop,
+// input()), as "stop" does; a running program runs on to there.
+const char* const EndOfInput = "\x04";
+
+// The next line on stdin, without its line break; EndOfInput at the end
+string read_stdin_line()
 {
     string line;
     char buf[4096];
@@ -366,9 +390,70 @@ string read_line()
         line += buf;
         if (!line.empty() && line.back() == '\n') break;
     }
-    if (line.empty() && feof(stdin)) return "stop";
+    if (line.empty() && feof(stdin)) return EndOfInput;
     while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
     return line;
+}
+
+void read_commands()
+{
+    for (;;)
+    {
+        string line = read_stdin_line();
+        if (line == "pause")
+        {
+            pauseAsked.store(true);
+            continue;
+        }
+        {
+            lock_guard<mutex> hold(inbox->lock);
+            inbox->lines.push_back(line);
+            waiting.store(true);
+        }
+        inbox->arrived.notify_one();
+        if (line == EndOfInput) return;
+    }
+}
+
+// The next line from the front end: waits for one; "stop" when the front end has gone
+string read_line()
+{
+    unique_lock<mutex> hold(inbox->lock);
+    inbox->arrived.wait(hold, [] { return !inbox->lines.empty(); });
+    string line = inbox->lines.front();
+    if (line == EndOfInput) return "stop";  // it stays in the queue: every later read is a stop too
+    inbox->lines.pop_front();
+    waiting.store(!inbox->lines.empty());
+    return line;
+}
+
+void set_breakpoints(const string& args);
+
+// While the program runs: the waiting lines that are for a running program, breakpoints and stop. Any other (a step,
+// say, sent just before the program stops) stays in the queue for the stop to read.
+void take_running_commands()
+{
+    for (;;)
+    {
+        string line;
+        {
+            lock_guard<mutex> hold(inbox->lock);
+            if (inbox->lines.empty() ||
+                (inbox->lines.front().rfind("breakpoints ", 0) != 0 && inbox->lines.front() != "stop"))
+            {
+                waiting.store(false);
+                return;
+            }
+            line = inbox->lines.front();
+            inbox->lines.pop_front();
+        }
+        if (line == "stop")
+        {
+            fflush(stdout);
+            exit(0);
+        }
+        set_breakpoints(line.substr(12));
+    }
 }
 
 // "breakpoints <file>\t<line>,<line>..."
@@ -411,6 +496,7 @@ void wait_for_command(Place at, int depth)
 
 void stop(const char* reason, const string& text, const InstructionNode* pc, Place at, int depth)
 {
+    pauseAsked.store(false);  // a pause asked for now is answered by this stop
     send("{\"event\":\"stopped\",\"reason\":\"" + string(reason) + "\",\"text\":" + quote(text) +
          ",\"frames\":" + frames_json(pc) + "}");
     wait_for_command(at, depth);
@@ -419,6 +505,8 @@ void stop(const char* reason, const string& text, const InstructionNode* pc, Pla
 
 void debugger_start()
 {
+    inbox = new Inbox();
+    thread(read_commands).detach();
     send("{\"event\":\"ready\"}");
     wait_for_command(Place{}, 0);
     atEntry = mode == Mode::StepIn;
@@ -426,9 +514,11 @@ void debugger_start()
 
 // A statement starts when the instruction's line differs from the last one's, or a call or a return changed the
 // depth. Stepping stops at the next statement (stepIn), at the next in this function or its caller (next), or in
-// the caller (stepOut); a breakpoint stops the program when a statement starts on its line.
+// the caller (stepOut); a breakpoint stops the program when a statement starts on its line. A pause stops it at the
+// next instruction with a place, statement or not: a loop on one line never starts another statement.
 void debugger_at(InstructionNode* pc)
 {
+    if (waiting.load(memory_order_relaxed)) take_running_commands();
     Place p = place_of(pc);
     if (p.file < 0) return;  // an instruction lowering gave no place (a jump's label): not a statement
     int depth = (int)callStack.size();
@@ -437,6 +527,12 @@ void debugger_at(InstructionNode* pc)
     int returnDepth = lastDepth;  // a return lowers the depth: the caller's statement goes on, it does not start
     last = p;
     lastDepth = depth;
+    if (pauseAsked.load(memory_order_relaxed))
+    {
+        atEntry = false;
+        stop("pause", "", pc, p, depth);
+        return;
+    }
     if (!statement) return;
 
     const char* reason = nullptr;
@@ -465,6 +561,11 @@ int debugger_read_input()
 {
     send("{\"event\":\"input\"}");
     string line = read_line();
+    if (line == "stop")  // the front end has gone
+    {
+        fflush(stdout);
+        exit(0);
+    }
     return atoi(line.c_str());
 }
 
