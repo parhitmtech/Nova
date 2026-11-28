@@ -32,6 +32,7 @@
 #include "runtime.h"
 #include "tensor_ops.h"
 #include "interp_internal.h"
+#include "debugger.h"
 
 using namespace std;
 
@@ -45,6 +46,7 @@ InstructionNode* exec_in(InstructionNode* pc)
                 if (input_replay_index < (int)input_replay_buffer.size())
                     val = input_replay_buffer[input_replay_index++];
             }
+            else if (debug_mode) val = debugger_read_input();  // the debugger's front end gives it
             else
             {
                 // ── live stdin mode ───────────────────────────────────────

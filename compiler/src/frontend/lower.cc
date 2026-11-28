@@ -20,10 +20,12 @@
 #include <unordered_map>
 #include <vector>
 #include "lower.h"
+#include "debugger.h"
 
 using namespace std;
 
-extern map<string, int> symbolTable;        // the ignite block's variables, which the debugger shows
+extern bool debug_mode;                     // nova --debug: record what the debugger shows (debugger.h)
+extern map<string, int> symbolTable;        // the ignite block's variables
 extern map<string, int> floatSymbolTable;   // (state.cc)
 extern map<string, int> doubleSymbolTable;
 extern map<string, vector<int>> functionReturnSlots;  // read by the tensor-free pass
@@ -333,6 +335,12 @@ namespace
             };
             unordered_map<uint32_t, Variable> variables;  // by entity
 
+            // In debug mode: the record of the function being lowered (debug_functions; 0: the top level), and where
+            // each block being lowered ends (a variable is in scope from its declaration to there)
+            size_t debugFunction = 0;
+            vector<SourceLoc> scopeEnds;
+            SourceLoc scopeBegin = 0;  // where the next declarations' scope begins, when not at themselves (a for's)
+
             // A function or method, or a copy of one (key: function_key)
             struct Function
             {
@@ -638,6 +646,17 @@ namespace
         VarType t = var_type_of(entity);
         int slot = new_slot(t);
         variables[entity].slot = slot;
+        if (debug_mode && debugFunction < debug_functions.size())
+        {
+            DebugVariable v;
+            v.name = string(names.text(in.entities[entity].name));
+            v.type = t;
+            v.typeName = type_name(in, var_type_id(entity));
+            v.slot = slot;
+            v.scopeBegin = scopeBegin ? scopeBegin : tree.range(in.entities[entity].decl).begin;
+            if (!scopeEnds.empty()) v.scopeEnd = scopeEnds.back();
+            debug_functions[debugFunction].variables.push_back(v);
+        }
         if (function == NoNode)
         {
             string name(names.text(in.entities[entity].name));
@@ -655,6 +674,12 @@ namespace
     // classes' methods go into virtualTable once all are lowered.
     InstructionNode* Lowerer::run()
     {
+        if (debug_mode)
+        {
+            debug_functions.assign(1, DebugFunction());
+            debug_functions[0].name = "ignite";
+            debug_classes.clear();
+        }
         for (uint32_t n : tree.children(tree.root()))
         {
             if (tree.kind(n) != NodeKind::ClassDecl) continue;
@@ -718,6 +743,14 @@ namespace
         const Signature& sig = *signature_of(in, fn, instance);
         vector<uint32_t> kids = tree.children(fn);  // ParamList, ReturnTypes if written, Block
         f.slotBase = next_available;
+        size_t outerDebugFunction = debugFunction;
+        if (debug_mode)
+        {
+            debugFunction = debug_functions.size();
+            debug_functions.emplace_back();
+            debug_functions.back().slotBase = f.slotBase;
+            scopeEnds.push_back(tree.range(fn).end);
+        }
         for (uint32_t p : tree.children(kids[0]))
         {
             if (tree.token(p).kind == SELF) continue;
@@ -731,7 +764,24 @@ namespace
         bool functionCopy = instance != NoInstance && !method;
         string name = functionCopy ? copy_name(fn, instance) : text(fn);
         if (method) f.self = alloc_slot();
-        else
+        if (debug_mode)
+        {
+            DebugFunction& d = debug_functions[debugFunction];
+            d.name = method ? (instance == NoInstance ? text(methods[fn]) : copy_name(methods[fn], instance)) + "." +
+                              text(fn)
+                            : name;
+            if (method)
+            {
+                DebugVariable self;
+                self.name = "self";
+                self.type = TYPE_CLASS;
+                self.slot = f.self;
+                self.scopeBegin = tree.range(fn).begin;
+                self.scopeEnd = tree.range(fn).end;
+                d.variables.push_back(self);
+            }
+        }
+        if (!method)
         {
             functionParamTypes[name] = f.paramTypes;
             functionReturnType[name] = f.returnTypes[0];
@@ -742,6 +792,12 @@ namespace
         add(RET, line(fn))->ret_inst = {f.returns[0], f.returnTypes[0]};
         f.head = head;
         f.slotCount = next_available - f.slotBase;
+        if (debug_mode)
+        {
+            debug_functions[debugFunction].slotCount = f.slotCount;
+            scopeEnds.pop_back();
+            debugFunction = outerDebugFunction;
+        }
         if (method)
         {
             string cls = instance == NoInstance ? text(methods[fn]) : copy_name(methods[fn], instance);
@@ -860,7 +916,9 @@ namespace
 
     void Lowerer::block(uint32_t n)
     {
+        if (debug_mode) scopeEnds.push_back(tree.range(n).end);
         for (uint32_t s : tree.children(n)) statement(s);
+        if (debug_mode) scopeEnds.pop_back();
     }
 
     void Lowerer::statement(uint32_t n)
@@ -1133,7 +1191,14 @@ namespace
     void Lowerer::for_statement(uint32_t n)
     {
         vector<uint32_t> kids = tree.children(n);  // the start, the condition, the step (each may be Empty), Block
+        // A variable the start declares is in scope in the whole loop, from 'for' (where each iteration's test is)
+        if (debug_mode)
+        {
+            scopeEnds.push_back(tree.range(n).end);
+            scopeBegin = tree.range(n).begin;
+        }
         statement(kids[0]);
+        scopeBegin = 0;
         InstructionNode* start = label(line(n));
         InstructionNode* step = label(line(n));
         InstructionNode* end = label(line(n));
@@ -1146,6 +1211,7 @@ namespace
         statement(kids[2]);
         jump(start, line(n));
         append(end);
+        if (debug_mode) scopeEnds.pop_back();
     }
 
     // The value is compared with each case in turn; a case that matches jumps to its block, and each block ends by
@@ -1937,6 +2003,18 @@ namespace
         Class& c = classes[cls];
         c.id = id;
         c.fields = fields;
+        if (debug_mode)
+        {
+            DebugClass& d = debug_classes[id];
+            d.name = class_copy(cls) == NoInstance ? text(decl) : copy_name(decl, class_copy(cls));
+            d.fields.clear();
+            d.fieldTypes.clear();
+            for (const Field& field : fields)
+            {
+                d.fields.push_back(text(field.decl));
+                d.fieldTypes.push_back(field_type(field.decl, field.copy));
+            }
+        }
         return c;
     }
 

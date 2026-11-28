@@ -77,6 +77,8 @@ jobs:
         run: node tests/run.js
         env:
           NOVA_TEST_ARGS: --optimize
+      - name: The step debugger (whole sessions)
+        run: node tests/debugger/run.js
 
   sanitizers:
     name: Compiler (ASan + UBSan)
@@ -101,6 +103,11 @@ jobs:
           # The parser never frees its IR, so leak reports are noise for now.
           ASAN_OPTIONS: detect_leaks=0
           UBSAN_OPTIONS: print_stacktrace=1
+      - name: The step debugger under sanitizers
+        run: node tests/debugger/run.js
+        env:
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: print_stacktrace=1,halt_on_error=1
 
   # The front end runs on every keystroke in an editor, so no input may crash it: libFuzzer feeds it changed
   # versions of the golden tests and the standard library, under ASan and UBSan, for two minutes per pull request.

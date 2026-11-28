@@ -33,6 +33,7 @@
 #include "codegen.h"
 #include "integrations.h"
 #include "runtime.h"
+#include "debugger.h"
 #include "tensor_ops.h"
 
 using namespace std;
@@ -70,7 +71,7 @@ int main(int argc, char* argv[])
         if (arg == "--optimize")       { flag_optimize       = true; continue; }
         if (arg == "--benchmark")      { flag_benchmark      = true; continue; }
         if (arg == "--repl")           { flag_repl           = true; continue; }
-        if (arg == "--debug")          { debug_mode = true; debug_step = true; continue; }
+        if (arg == "--debug")          { debug_mode = true; continue; }
         if (arg == "--emit-cuda")      { flag_emit_cuda      = true; continue; }
         if (arg == "--warnings")       { flag_warnings       = true; continue; }
         if (arg == "--diagnostics=json" || arg == "--diagnostics=text")
@@ -194,36 +195,6 @@ int main(int argc, char* argv[])
         program = lower_tree(tree, checked);
     }
 
-    //Calculate how many lines were added by imports
-    if (debug_mode)
-    {
-        int processed_lines = (int)std::count(processed.begin(), processed.end(), '\n');
-        int raw_lines = 0;
-        if (!inputFile.empty())
-        {
-            string raw = read_file(inputFile);
-            raw_lines = (int)std::count(raw.begin(), raw.end(), '\n');
-        }
-        import_line_offset = std::max(0, processed_lines - raw_lines);
-    }
-
-    if (debug_mode)
-    {
-        debug_symbol_snapshot.clear();
-        for (auto& kv : symbolTable)
-        {
-            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_INT};
-        }
-        for (auto& kv : floatSymbolTable)
-        {
-            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_FLOAT};
-        }
-        for (auto& kv : doubleSymbolTable)
-        {
-            debug_symbol_snapshot[kv.first] = {kv.second, TYPE_DOUBLE};
-        }
-    }
-
     // optimize 
     if (flag_optimize)
     {
@@ -311,6 +282,7 @@ int main(int argc, char* argv[])
     // normal single execution
     input_replay_index = -1;  // live stdin mode
 
+    if (debug_mode) debugger_start();  // the step debugger: "ready", then the breakpoints and the first command
     execute_program(program);
     fflush(stdout);
 

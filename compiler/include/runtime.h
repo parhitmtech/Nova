@@ -31,21 +31,15 @@ extern std::stack<CallFrame> callStack;
 extern const struct InstructionNode* runtime_pc;  // the instruction running, for runtime errors (errors.cc)
 extern std::string program_file;                    // the file being run, as given (main.cc)
 extern bool suppress_output;
-extern bool debug_mode;
-extern bool debug_step;                 // pause on every instruction (vs. only at breakpoints)
-extern std::set<int> debug_breakpoints;
+extern bool debug_mode;                 // nova --debug: the step debugger (debugger.h) runs the program
 extern std::unordered_set<InstructionNode*> pure_functions;
 extern std::unordered_set<InstructionNode*> recursive_functions;
 extern std::map<InstructionNode*, std::map<std::vector<int>, std::vector<int>>> memo_cache;
-extern std::map<std::string, std::pair<int, VarType>> debug_symbol_snapshot;  // name -> {slot, type}
-extern int import_line_offset;          // lines added by imports (skipped by the debugger)
 extern std::string hf_api_token;
 
 // src/driver/debugger.cc — benchmark mode replays the first run's stdin.
 extern std::vector<int> input_replay_buffer;
 extern int input_replay_index;          // -1 = live stdin mode
-void debug_print_state(int line_no);
-std::string debug_wait_command();
 
 // src/frontend/imports.cc
 std::string read_file(const std::string& path);

@@ -1,0 +1,16 @@
+orbit helpers
+
+class P:
+    int x
+    double w
+    def init():
+        self.x = 3
+        self.w = 0.5
+
+ignite:
+    P p = P()
+    vector<int> v = vector<int>()
+    v.push(4)
+    Tensor t = ones(2, 2)
+    int y = twice(p.x)
+    print(t.rows + y + v[0])
