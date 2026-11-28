@@ -4,6 +4,14 @@ All notable changes to the Nova Compiler extension. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 Odd minor versions (0.1, 0.3, 0.5) are pre-releases.
 
+## [0.5.1] (pre-release)
+
+### Added
+
+- **Pause** (F6) stops a running program where it is, even in a loop on one line.
+- Breakpoints set or removed while the program runs apply at once (they applied at its next stop).
+- Stopping the debugger ends a running program at once, where it is.
+
 ## [0.5.0] (pre-release)
 
 ### Added

@@ -8,11 +8,14 @@
 //   out (events): one line each, "\x1e" + JSON + "\n", among the program's output: the \x1e (ASCII's record
 //                 separator) marks where an event starts, even after a print that did not end its line.
 //                 {"event":"ready"}  the program is compiled; breakpoints and a first command are expected
-//                 {"event":"stopped","reason":"entry|step|breakpoint|exception","text":"...","frames":[...]}
+//                 {"event":"stopped","reason":"entry|step|breakpoint|pause|exception","text":"...","frames":[...]}
 //                 {"event":"input"}  the program called input(): the next line in is its value
-//   in (commands): one per line
-//                 breakpoints <file>\t<line>,<line>...   (replaces that file's; lines are 1-based)
-//                 continue | next | stepIn | stepOut | stop
+//   in (commands): one per line, read as they come, while the program runs too (a thread reads them)
+//                 breakpoints <file>\t<line>,<line>...   (replaces that file's, at once; lines are 1-based)
+//                 pause                                  (stops the running program at its next instruction)
+//                 continue | next | stepIn | stepOut     (at a stop)
+//                 stop                                   (ends the program, stopped or running)
+//                 The end of input (the front end has gone) ends the program at its next stop or input().
 //
 // A frame is {"name","file","line","column","variables":[...]}, innermost first; a variable is
 // {"name","type","value"} and, for a tensor, a container or an object, "children" (variables too).

@@ -155,8 +155,8 @@ export class NovaDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
-  // A file's breakpoints, all at once. The debugger reads them when the program stops (or before it starts), so
-  // one set while the program runs applies from its next stop.
+  // A file's breakpoints, all at once. The debugger reads them as they come, while the program runs too, so they
+  // apply at once.
   protected setBreakPointsRequest(response: DebugProtocol.SetBreakpointsResponse,
                                   args: DebugProtocol.SetBreakpointsArguments): void {
     const lines = (args.breakpoints ?? []).map(b => this.convertClientLineToDebugger(b.line));
@@ -250,8 +250,10 @@ export class NovaDebugSession extends DebugSession {
     this.tell(command);
   }
 
+  // The debugger stops the running program at its next instruction, and says so with a stop (reason "pause")
   protected pauseRequest(response: DebugProtocol.PauseResponse): void {
-    this.sendErrorResponse(response, 2, 'Nova stops at breakpoints and steps: set a breakpoint to stop the program');
+    this.tell('pause');
+    this.sendResponse(response);
   }
 
   // input(): the extension asks for the value and sends it here
@@ -274,7 +276,8 @@ export class NovaDebugSession extends DebugSession {
     this.sendResponse(response);
   }
 
-  // stop ends the program where it is; one that does not read it (running) is killed
+  // stop ends the program where it is, stopped or running; one that does not end soon (stuck in a long tensor
+  // operation, say) is killed
   private endProgram(): void {
     const nova = this.nova;
     if (!nova || nova.exitCode !== null) return;

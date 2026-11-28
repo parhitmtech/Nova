@@ -254,7 +254,9 @@ instruction's, or a call or a return changed the depth. Step in stops at the nex
 in the same function or its caller; step out in the caller. A breakpoint is a file and a line, compared through
 the source manager's presumed locations, so breakpoints work inside imported modules. Each stop sends every frame of
 the call stack with its variables' values; a front end drives it with one command per line on stdin, and its events
-are lines on stdout that start with `\x1e` (ASCII's record separator), among the program's own output.
+are lines on stdout that start with `\x1e` (ASCII's record separator), among the program's own output. A thread
+reads the commands as they come, so the front end is heard while the program runs: a pause sets a flag the
+interpreter checks before each instruction (one atomic load), and breakpoints change at once.
 
 **Alternatives.** A debugger on the native code (DWARF from MLIR's LLVM output, and gdb or lldb through VS Code's
 C++ adapter); a protocol on a socket or a separate file descriptor; the front end asking for each frame's variables
@@ -267,7 +269,10 @@ unless a later call of the same function has saved them, in that call's saved co
 recursion shows its own `n`. Sharing stdio keeps the process model as simple as running a program (no port, no
 second descriptor, the same on Linux and Windows); the record separator marks an event even after a `print` that did
 not end its line. Sending the whole state at each stop makes the protocol stateless on the debugger's side; programs
-stop at human speed, so the size does not matter.
+stop at human speed, so the size does not matter. A reader thread, rather than polling stdin between instructions,
+is portable (a pipe cannot be polled the same way on Linux and Windows) and costs the running program nothing but the
+flag's load. A pause stops at the next instruction with a source line, not the next statement: a loop on one line
+never starts another statement, and it is the loop a pause is most often for.
 
 **Cost.** Floats and doubles are not saved by calls, so a recursive function's float locals show their current
 value in every frame (as the interpreter itself reads them). A tensor freed after its last use shows as freed: the

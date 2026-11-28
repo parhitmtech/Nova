@@ -83,6 +83,7 @@ the editor). No `launch.json` is needed. While the program is stopped:
 - **Call Stack** shows the calls that led there; each frame has its own variables (a recursive function's too).
 - Hover over a name for its value, or add an expression to **Watch**: `p.x`, `v[0]`, `t[1]`.
 - **Step Over** (F10), **Step Into** (F11), **Step Out** (Shift+F11) and **Continue** (F5).
+- **Pause** (F6) stops a running program where it is, even in a loop; a breakpoint set while it runs stops it there.
 
 What the program prints appears in the **Debug Console**; `input()` asks for its value in a box at the top of the
 window. If the program fails at run time, it stops on the line that failed, with the error's message and code, so
@@ -101,8 +102,6 @@ To keep a configuration, add one to `launch.json`:
 ```
 
 `stopOnEntry` stops at the program's first statement; `cwd` sets the folder it runs in (default: the program's).
-A breakpoint set while the program runs takes effect at its next stop, and there is no Pause: set a breakpoint
-where you want the program to stop.
 
 ## Commands
 
