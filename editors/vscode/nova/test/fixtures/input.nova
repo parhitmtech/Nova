@@ -1,0 +1,3 @@
+ignite:
+    int x = input()
+    print(x * 2)

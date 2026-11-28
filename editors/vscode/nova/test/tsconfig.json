@@ -11,5 +11,5 @@
     "rootDir": ".",
     "types": ["node", "mocha", "vscode"]
   },
-  "include": ["runTests.ts", "suite/**/*.ts"]
+  "include": ["runTests.ts", "suite/**/*.ts", "adapter/**/*.ts"]
 }
