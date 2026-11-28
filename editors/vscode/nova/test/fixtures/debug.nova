@@ -1,0 +1,15 @@
+class P:
+    int x
+    def init():
+        self.x = 3
+
+def square(int n) -> int:
+    int r = n * n
+    return r
+
+ignite:
+    P p = P()
+    int total = 0
+    for (int i = 1; i <= 2; i += 1):
+        total += square(i)
+    print(total)

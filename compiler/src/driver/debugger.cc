@@ -50,12 +50,19 @@ unordered_map<const InstructionNode*, Place> places;
 map<string, int> fileIds;     // by the file name as the source manager has it
 vector<string> fileKeys;      // by id: the name normalized, to compare with a breakpoint's file
 
-// A path as a key: absolute, with '/', and on Windows in lower case (its file names ignore case)
-string path_key(const string& path)
+// A file's absolute path, as the system writes it: what a frame tells the front end, which opens the file there
+string full_path(const string& path)
 {
     error_code ec;
     filesystem::path p = filesystem::weakly_canonical(filesystem::absolute(filesystem::path(path), ec), ec);
-    string key = (ec ? filesystem::path(path) : p).generic_string();
+    return (ec ? filesystem::path(path) : p).make_preferred().string();
+}
+
+// A path as a key, to compare a breakpoint's file with a program's: absolute, with '/', and on Windows in lower case
+// (its file names ignore case)
+string path_key(const string& path)
+{
+    string key = filesystem::path(full_path(path)).generic_string();
 #ifdef _WIN32
     for (char& c : key) c = (char)tolower((unsigned char)c);
 #endif
@@ -311,7 +318,7 @@ double slot_value(const vector<CallFrame>& calls, int depth, const DebugFunction
 string frame_json(const vector<CallFrame>& calls, int depth, const DebugFunction* f, SourceLoc loc)
 {
     PresumedLoc p = loc ? sourceManager.presumed(loc) : PresumedLoc{};
-    string s = "{\"name\":" + quote(f ? f->name : "?") + ",\"file\":" + quote(p.file.empty() ? "" : path_key(p.file)) +
+    string s = "{\"name\":" + quote(f ? f->name : "?") + ",\"file\":" + quote(p.file.empty() ? "" : full_path(p.file)) +
                ",\"line\":" + to_string(p.line) + ",\"column\":" + to_string(p.column) + ",\"variables\":[";
     if (f)
     {

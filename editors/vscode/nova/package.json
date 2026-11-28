@@ -56,6 +56,7 @@
     },
     "commands": [
       { "command": "nova.runFile", "title": "Run File", "category": "Nova", "icon": "$(play)" },
+      { "command": "nova.debugFile", "title": "Debug File", "category": "Nova", "icon": "$(debug-alt)" },
       { "command": "nova.runFileOptimized", "title": "Run File with Optimizations", "category": "Nova" },
       { "command": "nova.checkFile", "title": "Check File (without Running It)", "category": "Nova" },
       { "command": "nova.openRepl", "title": "Open REPL", "category": "Nova" },
@@ -64,18 +65,62 @@
     ],
     "menus": {
       "editor/title/run": [
-        { "command": "nova.runFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "navigation@0" }
+        { "command": "nova.runFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "navigation@0" },
+        { "command": "nova.debugFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "navigation@1" }
       ],
       "editor/context": [
         { "command": "nova.runFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "nova@1" },
+        { "command": "nova.debugFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "nova@1" },
         { "command": "nova.checkFile", "when": "editorLangId == nova && isWorkspaceTrusted", "group": "nova@2" }
       ],
       "commandPalette": [
         { "command": "nova.runFile", "when": "editorLangId == nova" },
+        { "command": "nova.debugFile", "when": "editorLangId == nova" },
         { "command": "nova.runFileOptimized", "when": "editorLangId == nova" },
         { "command": "nova.checkFile", "when": "editorLangId == nova" }
       ]
     },
+    "breakpoints": [
+      { "language": "nova" }
+    ],
+    "debuggers": [
+      {
+        "type": "nova",
+        "label": "Nova",
+        "languages": ["nova"],
+        "configurationAttributes": {
+          "launch": {
+            "required": ["program"],
+            "properties": {
+              "program": {
+                "type": "string",
+                "default": "${file}",
+                "description": "The .nova file to debug."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stop at the program's first statement."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "The folder the program runs in. Default: the program's folder."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          { "type": "nova", "request": "launch", "name": "Debug Nova File", "program": "${file}" }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Nova: Debug File",
+            "description": "Debug the .nova file in the editor",
+            "body": { "type": "nova", "request": "launch", "name": "Debug Nova File", "program": "^\"\\${file}\"" }
+          }
+        ]
+      }
+    ],
     "keybindings": [
       { "command": "nova.runFile", "key": "ctrl+f5", "mac": "cmd+f5", "when": "editorLangId == nova" }
     ],
@@ -143,20 +188,24 @@
     ]
   },
   "scripts": {
-    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --target=node20 --sourcemap",
+    "build": "esbuild src/extension.ts src/debugAdapter.ts --bundle --outdir=dist --external:vscode --format=cjs --platform=node --target=node20 --sourcemap",
     "watch": "npm run build -- --watch",
     "typecheck": "tsc --noEmit",
     "test:grammar": "vscode-tmgrammar-test -g syntaxes/nova.tmLanguage.json \"test/grammar/*.nova\"",
     "test:extension": "tsc -p test && node test/out/runTests.js",
+    "test:adapter": "npm run build && tsc -p test && mocha --ui tdd --timeout 60000 test/out/adapter/*.test.js",
     "test": "npm run test:grammar && npm run test:extension",
     "vscode:prepublish": "npm run build -- --minify",
     "package": "vsce package --no-dependencies"
   },
   "dependencies": {
+    "@vscode/debugadapter": "1.68.0",
     "vscode-languageclient": "10.1.2"
   },
   "devDependencies": {
     "@types/mocha": "10.0.10",
+    "@vscode/debugadapter-testsupport": "1.68.0",
+    "@vscode/debugprotocol": "1.68.0",
     "@types/node": "22.20.5",
     "@types/vscode": "1.91.0",
     "@vscode/test-electron": "3.1.0",

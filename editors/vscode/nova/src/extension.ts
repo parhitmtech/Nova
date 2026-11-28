@@ -1,10 +1,11 @@
-// The Nova extension: starts nova-lsp (Nova's language server) for .nova files, and adds commands to run a file,
-// check it and open a REPL with Nova's interpreter. Everything the editor knows about a program comes from the
-// compiler itself, through the language server.
+// The Nova extension: starts nova-lsp (Nova's language server) for .nova files, adds commands to run a file, check
+// it and open a REPL with Nova's interpreter, and debugs a program (debugAdapter.ts, on Nova's step debugger).
+// Everything the editor knows about a program comes from the compiler itself.
 import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { LanguageClient, LanguageClientOptions, ServerOptions, State, TransportKind } from 'vscode-languageclient/node';
+import { INPUT_EVENT, INPUT_REQUEST, NovaDebugSession } from './debugAdapter';
 
 let client: LanguageClient | undefined;
 let output: vscode.LogOutputChannel;
@@ -162,6 +163,59 @@ async function openRepl(context: vscode.ExtensionContext) {
   terminal.show();
 }
 
+// Debugging. F5 on a .nova file needs no launch.json: the configuration is made for the file in the editor. Each
+// configuration gets the compiler's path and the standard library's folder, as Run File uses them.
+class DebugConfigurations implements vscode.DebugConfigurationProvider {
+  constructor(private readonly context: vscode.ExtensionContext) {}
+
+  resolveDebugConfiguration(_folder: vscode.WorkspaceFolder | undefined,
+                            config: vscode.DebugConfiguration): vscode.DebugConfiguration | undefined {
+    if (!config.type && !config.request && !config.name) {  // F5 without a launch.json
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== 'nova') {
+        vscode.window.showInformationMessage('Open a .nova file to debug it.');
+        return undefined;
+      }
+      config = { type: 'nova', request: 'launch', name: 'Debug File', program: '${file}' };
+    }
+    if (!config.program) config.program = '${file}';
+    if (!vscode.workspace.isTrusted) {
+      vscode.window.showWarningMessage('Nova runs programs in trusted workspaces only: trust this folder to debug it.');
+      return undefined;
+    }
+    const nova = findTool(this.context, 'compiler.path', 'nova');
+    if (!nova) {
+      vscode.window.showErrorMessage("Nova's compiler (nova) was not found. If nova.compiler.path is set, check it, " +
+        'or clear it to use the one the extension ships.');
+      return undefined;
+    }
+    config.novaPath = nova;
+    config.novaHome = novaHome(this.context);
+    return config;
+  }
+}
+
+async function debugFile() {
+  const editor = vscode.window.activeTextEditor;
+  if (!editor || editor.document.languageId !== 'nova' || editor.document.isUntitled) {
+    vscode.window.showInformationMessage('Open a saved .nova file to debug it.');
+    return;
+  }
+  if (editor.document.isDirty && !(await editor.document.save())) return;
+  await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(editor.document.uri), {
+    type: 'nova', request: 'launch', name: 'Debug File', program: editor.document.uri.fsPath,
+  });
+}
+
+// input() in a program being debugged: the value comes from an input box
+async function answerInput(e: vscode.DebugSessionCustomEvent) {
+  if (e.session.type !== 'nova' || e.event !== INPUT_EVENT) return;
+  const value = await vscode.window.showInputBox({
+    title: 'Nova: input()', prompt: 'The program asks for a number', ignoreFocusOut: true,
+  });
+  await e.session.customRequest(INPUT_REQUEST, { value: value ?? '' });
+}
+
 export async function activate(context: vscode.ExtensionContext): Promise<{ client: () => LanguageClient | undefined }> {
   output = vscode.window.createOutputChannel('Nova', { log: true });
   status = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 0);
@@ -174,6 +228,12 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ clie
     vscode.commands.registerCommand('nova.checkFile', () => runNova(context, ['--check'])),
     vscode.commands.registerCommand('nova.openRepl', () => openRepl(context)),
     vscode.commands.registerCommand('nova.showOutput', () => output.show()),
+    vscode.commands.registerCommand('nova.debugFile', debugFile),
+    vscode.debug.registerDebugConfigurationProvider('nova', new DebugConfigurations(context)),
+    vscode.debug.registerDebugAdapterDescriptorFactory('nova', {
+      createDebugAdapterDescriptor: () => new vscode.DebugAdapterInlineImplementation(new NovaDebugSession()),
+    }),
+    vscode.debug.onDidReceiveDebugSessionCustomEvent(answerInput),
     vscode.commands.registerCommand('nova.restartServer', async () => {
       await stopServer();
       await startServer(context);

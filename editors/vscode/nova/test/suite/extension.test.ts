@@ -128,4 +128,33 @@ suite('Nova extension', () => {
     const terminal = await until('the Nova terminal', () => vscode.window.terminals.find(t => t.name === 'Nova'));
     assert.ok(terminal);
   });
+
+  test('Debug File stops at a breakpoint, with the call stack and each frame\'s variables', async () => {
+    const doc = await open('debug.nova');
+    const breakpoint = new vscode.SourceBreakpoint(new vscode.Location(doc.uri, new vscode.Position(6, 0)));  // line 7
+    vscode.debug.addBreakpoints([breakpoint]);
+    let stopped = false;
+    const tracker = vscode.debug.registerDebugAdapterTrackerFactory('nova', {
+      createDebugAdapterTracker: () => ({
+        onDidSendMessage: (m: { type: string; event?: string }) => { if (m.type === 'event' && m.event === 'stopped') stopped = true; },
+      }),
+    });
+    try {
+      await vscode.commands.executeCommand('nova.debugFile');
+      const session = await until('a Nova debug session', () => vscode.debug.activeDebugSession);
+      assert.strictEqual(session.type, 'nova');
+      await until('the stop at the breakpoint', () => stopped);
+      const stack = await session.customRequest('stackTrace', { threadId: 1 });
+      const frames = stack.stackFrames.map((f: { name: string; line: number }) => `${f.name}:${f.line}`);
+      assert.deepStrictEqual(frames, ['square:7', 'ignite:14']);
+      const scopes = await session.customRequest('scopes', { frameId: stack.stackFrames[0].id });
+      const vars = await session.customRequest('variables', { variablesReference: scopes.scopes[0].variablesReference });
+      assert.deepStrictEqual(vars.variables.map((v: { name: string; value: string }) => `${v.name}=${v.value}`),
+        ['n=1', 'r=0']);
+      await vscode.debug.stopDebugging(session);
+    } finally {
+      tracker.dispose();
+      vscode.debug.removeBreakpoints([breakpoint]);
+    }
+  });
 });

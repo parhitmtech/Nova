@@ -230,6 +230,8 @@ jobs:
         run: make -j4 && make lsp
       - name: Build the extension
         run: npm run build
+      - name: The debug adapter, driven through the Debug Adapter Protocol
+        run: npm run test:adapter
       - name: In VS Code 1.91, the oldest the extension supports
         run: xvfb-run -a npm run test:extension
       - name: In the latest VS Code
@@ -243,7 +245,7 @@ jobs:
           unzip -Z1 nova-*.vsix | sort > files.txt
           cat files.txt
           for f in extension/package.json extension/LICENSE.txt extension/icon.png extension/readme.md \
-                   extension/changelog.md extension/language-configuration.json extension/dist/extension.js \
+                   extension/changelog.md extension/language-configuration.json extension/dist/extension.js                    extension/dist/debugAdapter.js \
                    extension/syntaxes/nova.tmLanguage.json extension/snippets/nova.json; do
             grep -qx "$f" files.txt || { echo "::error::$f is missing from the package"; exit 1; }
           done
