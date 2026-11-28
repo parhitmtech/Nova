@@ -43,7 +43,7 @@ LSP_SRCS := lsp/server.cc lsp/analysis.cc lsp/json.cc \
 
 export NOVA_HOME := $(CURDIR)
 
-.PHONY: all build test clean lsp lsp-test
+.PHONY: all build test clean lsp lsp-test debug-test
 
 all: build
 
@@ -64,6 +64,10 @@ $(BIN): $(SRCS) $(HDRS)
 
 test: build
 	NOVA_COMPILER_PATH=$(CURDIR)/$(BIN) node tests/run.js $(FILTER)
+
+# The step debugger (nova --debug): whole sessions, their stops, frames and values
+debug-test: build
+	NOVA_COMPILER_PATH=$(CURDIR)/$(BIN) node tests/debugger/run.js
 
 clean:
 	rm -rf $(BUILD) _test_*

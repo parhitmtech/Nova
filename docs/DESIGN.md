@@ -244,6 +244,36 @@ parse, so hover and completion answer from the last version that did (after `p.`
 **Cost.** Completion inside a broken file is approximate (positions come from the last version that parsed), and
 scope is approximated by "declared earlier in the same function".
 
+### D6. A step debugger inside the interpreter
+
+**Decision.** `nova --debug` runs the program in the interpreter with a hook before each instruction
+(`debugger_at`). Lowering records, in debug mode only, each function's variables: their slots, their types as Nova
+writes them, and their scope as a range of source locations (from the declaration, or a `for`'s start, to the end
+of its block). The debugger stops at *statements*: an instruction starts one when its line differs from the last
+instruction's, or a call or a return changed the depth. Step in stops at the next statement; next at the next one
+in the same function or its caller; step out in the caller. A breakpoint is a file and a line, compared through
+the source manager's presumed locations, so breakpoints work inside imported modules. Each stop sends every frame of
+the call stack with its variables' values; a front end drives it with one command per line on stdin, and its events
+are lines on stdout that start with `\x1e` (ASCII's record separator), among the program's own output.
+
+**Alternatives.** A debugger on the native code (DWARF from MLIR's LLVM output, and gdb or lldb through VS Code's
+C++ adapter); a protocol on a socket or a separate file descriptor; the front end asking for each frame's variables
+(as the Debug Adapter Protocol does) instead of getting them all at each stop.
+
+**Why.** The interpreter is the reference implementation, and it already knows each instruction's source location
+(for runtime errors), so stopping at a statement needs only a comparison per instruction. A frame's values need no
+new bookkeeping: a call saves its function's slots and puts them back on return, so a frame's values are in its slots
+unless a later call of the same function has saved them, in that call's saved copy. That is how each frame of a
+recursion shows its own `n`. Sharing stdio keeps the process model as simple as running a program (no port, no
+second descriptor, the same on Linux and Windows); the record separator marks an event even after a `print` that did
+not end its line. Sending the whole state at each stop makes the protocol stateless on the debugger's side; programs
+stop at human speed, so the size does not matter.
+
+**Cost.** Floats and doubles are not saved by calls, so a recursive function's float locals show their current
+value in every frame (as the interpreter itself reads them). A tensor freed after its last use shows as freed: the
+debugger does not change when memory is released, so a program behaves the same under it. The check is a hash lookup
+per instruction, so a program that runs to a breakpoint runs a few times slower than without the debugger.
+
 ## Proposed: step C, the `nova` dialect
 
 The plan for Nova IR as an MLIR dialect in SSA form (roadmap step C), for review before it is built.

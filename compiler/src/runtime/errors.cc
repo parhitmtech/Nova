@@ -9,6 +9,7 @@
 #include "compiler.h"
 #include "diagnostics.h"
 #include "runtime.h"
+#include "debugger.h"
 
 using namespace std;
 
@@ -54,6 +55,8 @@ namespace
 [[noreturn]] void runtime_failure(DiagCode code, int line, const string& message)
 {
     fflush(stdout);  // what the program printed comes first
+    // The step debugger stops at the error first, so its variables and call stack can be seen
+    if (debug_mode) debugger_runtime_error(string(diag_info(code).code) + ": " + message);
     diagnostics.clear();  // warnings were printed before the program ran
     diagnostics.set_error_limit(0);
     const InstructionNode* pc = runtime_pc;

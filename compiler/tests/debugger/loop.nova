@@ -1,0 +1,9 @@
+def square(int x) -> int:
+    int y = x * x
+    return y
+
+ignite:
+    int total = 0
+    for (int i = 1; i <= 3; i += 1):
+        total += square(i)
+    print(total)

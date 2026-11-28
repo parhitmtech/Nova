@@ -1,0 +1,32 @@
+class Counter:
+    int count
+    string label
+
+    def init():
+        self.count = 0
+
+    def bump(int by):
+        self.count += by
+
+def fact(int n) -> int:
+    if (n <= 1):
+        return 1
+    return n * fact(n - 1)
+
+ignite:
+    Counter c = Counter()
+    c.label = "clicks"
+    c.bump(5)
+    vector<int> v = vector<int>()
+    v.push(10)
+    v.push(20)
+    map<string, int> m = map<string, int>()
+    m["a"] = 1
+    Tensor t = ones(2, 3)
+    string s = "hi"
+    double d = 2.5
+    bool ok = true
+    int f = fact(3)
+    int x = input()
+    print(f + x)
+    int z = 10 / (x - x)

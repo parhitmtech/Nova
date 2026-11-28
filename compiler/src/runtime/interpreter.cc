@@ -31,6 +31,7 @@
 #include "runtime.h"
 #include "tensor_ops.h"
 #include "interp_internal.h"
+#include "debugger.h"
 
 using namespace std;
 
@@ -50,30 +51,7 @@ void execute_program(struct InstructionNode* program)
 
     while (pc != NULL)
     {
-        // Debug mode pause
-        if (debug_mode && pc->line_no > 0 && pc->line_no > import_line_offset)
-        {
-            bool should_pause = debug_step;
-            if (!should_pause && debug_breakpoints.count(pc->line_no - import_line_offset))
-            {
-                should_pause = true;
-            }
-            if (should_pause)
-            {
-                debug_print_state(pc->line_no - import_line_offset);
-                string cmd = debug_wait_command();
-                if (cmd == "stop")
-                {
-                    printf("__DEBUG__{\"type\":\"stopped\"}\n");
-                    fflush(stdout);
-                    return;
-                }
-                else if (cmd == "continue")
-                {
-                    debug_step = false;
-                }
-            }
-        }
+        if (debug_mode) debugger_at(pc);  // the step debugger: stops here when stepping or at a breakpoint
         // Decrement budget for every instruction.
         // TENSOR_CALL grants a large bonus so ML programs are never falsely killed.
         if (pc->type == TENSOR_CALL)

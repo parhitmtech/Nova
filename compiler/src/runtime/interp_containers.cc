@@ -10,6 +10,7 @@
 #include "compiler.h"
 #include "tensor_ops.h"
 #include "interp_internal.h"
+#include "debugger.h"
 
 using namespace std;
 
@@ -58,6 +59,29 @@ static Container& container_at(int h, int line)
 }
 
 bool containers_live(int h) { return h > 0 && h < (int)container_heap.size() && !container_heap[h].freed; }
+
+// For the debugger: a vector's elements by index, a map's by key (written as text)
+bool containers_describe(int h, bool& isMap, VarType& elem, vector<pair<string, double>>& items)
+{
+    if (!containers_live(h)) return false;
+    const Container& c = container_heap[h];
+    isMap = c.isMap;
+    elem = c.elem;
+    items.clear();
+    if (!c.isMap)
+    {
+        for (size_t i = 0; i < c.items.size(); i++) items.push_back({to_string(i), c.items[i]});
+    }
+    else if (c.key == TYPE_STRING)
+    {
+        for (const auto& kv : c.stringKeys) items.push_back({"\"" + kv.first + "\"", kv.second});
+    }
+    else
+    {
+        for (const auto& kv : c.intKeys) items.push_back({to_string(kv.first), kv.second});
+    }
+    return true;
+}
 
 void containers_retain(int h)
 {

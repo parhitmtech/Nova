@@ -31,12 +31,9 @@ using namespace std;
 
 bool suppress_output = false;
 
-// Debug mode
-bool debug_mode = false;
-bool debug_step = false;  // true = pause on every instruction, false = continue until breakpoint
-set<int> debug_breakpoints;  // set of line numbers with break points
+bool debug_mode = false;  // nova --debug
 
-// The ignite block's variables by name, which the debugger shows (lowering fills them)
+// The ignite block's variables by name (lowering fills them)
 map<string, int> symbolTable;
 map<string, int> floatSymbolTable;
 map<string, int> doubleSymbolTable;
@@ -55,10 +52,6 @@ unordered_set<InstructionNode*> recursive_functions;
 map<InstructionNode*, map<vector<int>, vector<int>>> memo_cache;
 
 stack<CallFrame> callStack;
-
-// Add near debug globals
-map<string, pair<int, VarType>> debug_symbol_snapshot;  // name -> {slot, type}
-int import_line_offset = 0; // lines added by imports - used to skip imported code
 
 // Classes: each class's methods by id, as virtual calls find them, and by name
 map<int, map<int, MethodTarget>> virtualTable;

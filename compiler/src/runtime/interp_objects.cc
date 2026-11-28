@@ -17,6 +17,7 @@
 #include "compiler.h"
 #include "tensor_ops.h"
 #include "interp_internal.h"
+#include "debugger.h"
 
 using namespace std;
 
@@ -169,6 +170,15 @@ static Object& object_at(int h, int line)
 }
 
 int objects_class_of(int h, int line) { return object_at(h, line).cls; }
+
+// For the debugger: false for none or a freed object (it shows them, where object_at would stop the program)
+bool objects_describe(int h, int& cls, vector<double>& fields)
+{
+    if (h <= 0 || h >= (int)object_heap.size() || object_heap[h].freed) return false;
+    cls = object_heap[h].cls;
+    fields = object_heap[h].fields;
+    return true;
+}
 
 InstructionNode* exec_object_call(InstructionNode* pc)
 {
