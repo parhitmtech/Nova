@@ -16,6 +16,13 @@
 #include <unordered_map>
 #include <vector>
 
+#ifdef _WIN32
+#include <io.h>      // _read
+#else
+#include <cerrno>
+#include <unistd.h>  // read
+#endif
+
 #include "compiler.h"
 #include "debugger.h"
 #include "runtime.h"
@@ -381,18 +388,37 @@ atomic<bool> pauseAsked{false};  // "pause" came: stop at the next instruction w
 const char* const EndOfInput = "\x04";
 
 // The next line on stdin, without its line break; EndOfInput at the end
+// It reads file descriptor 0 itself, never the stdin stream: a thread waiting in fgets holds the stream's lock, and
+// exit() (which flushes every stream, taking each one's lock) would wait for it forever.
 string read_stdin_line()
 {
-    string line;
-    char buf[4096];
-    while (fgets(buf, sizeof buf, stdin))
+    static string pending;  // read, not yet returned
+    for (;;)
     {
-        line += buf;
-        if (!line.empty() && line.back() == '\n') break;
+        size_t end = pending.find('\n');
+        if (end != string::npos)
+        {
+            string line = pending.substr(0, end);
+            pending.erase(0, end + 1);
+            while (!line.empty() && line.back() == '\r') line.pop_back();
+            return line;
+        }
+        char buf[4096];
+#ifdef _WIN32
+        int n = _read(0, buf, sizeof buf);
+#else
+        ssize_t n = read(0, buf, sizeof buf);
+        if (n < 0 && errno == EINTR) continue;
+#endif
+        if (n <= 0)  // the end of input: what is left, then the end
+        {
+            if (pending.empty()) return EndOfInput;
+            string line;
+            line.swap(pending);
+            return line;
+        }
+        pending.append(buf, (size_t)n);
     }
-    if (line.empty() && feof(stdin)) return EndOfInput;
-    while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
-    return line;
 }
 
 void read_commands()
